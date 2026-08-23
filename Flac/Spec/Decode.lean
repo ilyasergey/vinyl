@@ -2053,14 +2053,16 @@ theorem decodeOption_eq_reference (bytes : ByteArray) :
     decodeOption bytes = Stream.decodeReference bytes := by
   have h0 : bytesToBits bytes = toStream (⟨bytes, 0⟩ : BitReader) := by
     simp [toStream]
-  simp only [decodeOption, Stream.decodeReference, h0]
+  simp only [decodeOption, decodeArrays, Stream.decodeReference, h0]
   rw [readBits_sim 32 ⟨bytes, 0⟩]
   match h1 : BitReader.readBits 32 ⟨bytes, 0⟩ with
   | none => rfl
   | some (marker, br1) =>
     simp only [Option.map_some]
     by_cases hm : marker = 0x664C6143
-    case neg => rw [if_neg hm, if_neg hm]
+    case neg =>
+      rw [if_neg hm, if_neg hm]
+      rfl
     rw [if_pos hm, if_pos hm]
     have hf1 : (toStream br1).length = br1.remaining := by
       rw [length_toStream]; rfl
@@ -2431,6 +2433,38 @@ theorem decodePcm16_encodePcm16 {ch : Nat} {bytes flac : ByteArray}
     decodePcm16 flac = .ok bytes :=
   decodePcm16_encodePcm16Cfg h
 
+/-- The array serializer on decoded channels agrees with the list one. -/
+theorem pcm16FastA_eq (arrs : List (Array Int)) :
+    pcm16FastA arrs = pcm16Fast (arrs.map (·.toList)) := by
+  unfold pcm16FastA pcm16Fast
+  have harr : (arrs.map (·.toList)).map List.toArray = arrs := by
+    rw [List.map_map]
+    induction arrs with
+    | nil => rfl
+    | cons a as ih =>
+      show (a.toList.toArray) :: List.map _ as = a :: as
+      rw [Array.toArray_toList, ih]
+  have hlen : ((arrs.map (·.toList)).headD []).length = (arrs.headD #[]).size := by
+    cases arrs with
+    | nil => rfl
+    | cons a as => show a.toList.length = a.size; exact Array.length_toList
+  have hcount : (arrs.map (·.toList)).length = arrs.length := List.length_map _
+  rw [harr, hlen, hcount]
+
+/-- The array-side byte decoder computes exactly what the list-side one
+    does: `decodeOption` is `decodeArrays` plus the conversion, and both
+    serializers agree on the converted samples. -/
+theorem decodePcm16A_eq (flac : ByteArray) :
+    decodePcm16A flac = decodePcm16 flac := by
+  unfold decodePcm16A decodePcm16 decode Decode.decodeOption
+  cases h : Decode.decodeArrays flac with
+  | none => rfl
+  | some p =>
+    show (if p.2.1 = 16 then _ else _) = (if p.2.1 = 16 then _ else _)
+    by_cases hb : p.2.1 = 16
+    · rw [if_pos hb, if_pos hb, pcm16FastA_eq]
+    · rw [if_neg hb, if_neg hb]
+
 /-- **Byte-level guarantee for the fast encoder** — no hypotheses, and no
     trust in `Flac.Encode`: the wrapper certifies each call by running the
     verified decoder on the produced bytes (falling back to the verified
@@ -2440,6 +2474,7 @@ theorem pcm16Certified_ok {bytes out : ByteArray}
     (h : pcm16Certified bytes out = true) :
     decodePcm16 out = .ok bytes := by
   unfold pcm16Certified at h
+  rw [← decodePcm16A_eq]
   split at h
   case h_1 back hdec => rw [hdec, of_decide_eq_true h]
   case h_2 => cases h

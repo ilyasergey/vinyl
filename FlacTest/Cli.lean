@@ -293,7 +293,8 @@ def cliMain (args : List String) : IO UInt32 := do
       return 1
   if let ["--decode-pcm16", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
-    match Flac.decodePcm16 bytes with
+    -- `Flac.decodePcm16A_eq`: same bytes as `Flac.decodePcm16`, no list round-trip
+    match Flac.decodePcm16A bytes with
     | .error e => IO.println s!"DECODE ERROR: {e}"; return 1
     | .ok pcm =>
       IO.FS.writeBinFile outFile pcm
@@ -314,11 +315,15 @@ def cliMain (args : List String) : IO UInt32 := do
       return 1
   if let ["--decode-fast", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
-    match Flac.decode bytes with
-    | .error e => IO.println s!"DECODE ERROR: {e}"; return 1
-    | .ok a =>
-      IO.FS.writeBinFile outFile (Stream.pcmBytes a.bps a.channels)
-      IO.println s!"decoded {a.numSamples} samples x {a.channels.length} channels ({a.bps}-bit)"
+    -- the array-typed decoder core: `Flac.Decode.decodeOption` is this plus
+    -- a per-sample `Array → List` conversion, and `Stream.pcmBytesA_eq`
+    -- says serializing the arrays gives the same bytes as serializing the
+    -- lists, so the output is exactly `Flac.decode`'s
+    match Flac.Decode.decodeArrays bytes with
+    | none => IO.println "DECODE ERROR: not a decodable FLAC stream (within the v1 feature set)"; return 1
+    | some (chs, bps, _) =>
+      IO.FS.writeBinFile outFile (Stream.pcmBytesA bps chs)
+      IO.println s!"decoded {(chs.headD #[]).size} samples x {chs.length} channels ({bps}-bit)"
       return 0
   if let ["--decode", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile

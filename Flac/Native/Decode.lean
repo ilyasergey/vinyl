@@ -519,8 +519,14 @@ def recombineA (ch : Nat) : List (List (Array Int)) → List (Array Int)
   | [] => List.replicate ch #[]
   | fr :: frs => recombineGo ch fr frs
 
-/-- The production decoder body (Option-typed, mirroring the reference). -/
-def decodeOption (bytes : ByteArray) : Option Stream.Audio :=
+/-- The production decoder body, **array-typed**: reassembled channels stay
+    `Array Int` (plus bit depth and sample rate). This is where the decoder
+    actually stops; `decodeOption` only adds the `Array → List` conversion
+    the *theorem statements* are phrased over, and consumers that want bytes
+    (`Flac.decodePcm16`, the CLI) go through the arrays instead — the list
+    round-trip allocated a cons cell per decoded sample and then rebuilt the
+    very same arrays. -/
+def decodeArrays (bytes : ByteArray) : Option (List (Array Int) × Nat × Nat) :=
   let br : BitReader := ⟨bytes, 0⟩
   match br.readBits 32 with
   | none => none
@@ -532,9 +538,12 @@ def decodeOption (bytes : ByteArray) : Option Stream.Audio :=
         match readFrames si.bps (br.remaining + 1) br with
         | none => none
         | some frames =>
-          some ⟨(recombineA si.channels frames).map (·.toList), si.bps,
-            si.sampleRate⟩
+          some (recombineA si.channels frames, si.bps, si.sampleRate)
     else none
+
+/-- The production decoder body (Option-typed, mirroring the reference). -/
+def decodeOption (bytes : ByteArray) : Option Stream.Audio :=
+  (decodeArrays bytes).map fun p => ⟨p.1.map (·.toList), p.2.1, p.2.2⟩
 
 end Flac.Decode
 

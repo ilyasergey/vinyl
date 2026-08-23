@@ -64,11 +64,10 @@ decreasing_by
     per sample (the MD5 input format of RFC 9639 §8.2). Unverified — MD5
     is a conformance checksum, not part of the losslessness claim (so this
     runs on arrays, off the proof-oriented list model). -/
-def pcmBytes (b : Nat) (chs : List (List Int)) : ByteArray := Id.run do
+def pcmBytesA (b : Nat) (arrs : List (Array Int)) : ByteArray := Id.run do
   let w := (b + 7) / 8
   let mm := p2 (8 * w)
   let m : Int := (mm : Int)
-  let arrs := chs.map (List.toArray ·)
   let n := (arrs.headD #[]).size
   let mut out := ByteArray.emptyWithCapacity (arrs.length * n * w)
   if w = 2 then
@@ -84,6 +83,12 @@ def pcmBytes (b : Nat) (chs : List (List Int)) : ByteArray := Id.run do
       for j in [0:w] do
         out := out.push (UInt8.ofNat (u >>> (8 * j) % 256))
   return out
+
+/-- Interleaved PCM bytes from list-typed channels: the array serializer
+    after one conversion (`Flac.Spec.Stream.pcmBytesA_eq` transfers between
+    the two). -/
+def pcmBytes (b : Nat) (chs : List (List Int)) : ByteArray :=
+  pcmBytesA b (chs.map (List.toArray ·))
 
 /-- A digest as a big-endian natural, for `writeBits 128`. -/
 def md5Nat (d : ByteArray) : Nat :=

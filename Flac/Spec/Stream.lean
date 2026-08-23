@@ -361,4 +361,18 @@ theorem decodeReference_encode (cfg : EncoderCfg) (a : Audio)
     hframes]
   rw [recombine_chunkChannels cfg.blockSize a.channels (by omega) heq']
 
+/-- The array serializer on decoded channels is the list serializer on the
+    same samples: `pcmBytes` is `pcmBytesA` after a conversion, and the
+    conversion cancels. -/
+theorem pcmBytesA_eq (b : Nat) (arrs : List (Array Int)) :
+    pcmBytesA b arrs = pcmBytes b (arrs.map (·.toList)) := by
+  unfold pcmBytes
+  rw [List.map_map]
+  congr 1
+  induction arrs with
+  | nil => rfl
+  | cons a as ih =>
+    show a :: as = a.toList.toArray :: List.map _ as
+    rw [Array.toArray_toList, ← ih]
+
 end Flac.Stream

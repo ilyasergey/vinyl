@@ -101,6 +101,12 @@ def pcm16Go (arrs : List (Array Int)) : (n i : Nat) → ByteArray → ByteArray
   | 0, _, out => out
   | n + 1, i, out => pcm16Go arrs n (i + 1) (pcm16Row arrs i out)
 
+/-- Interleave + serialize in one indexed pass, straight off the decoder's
+    arrays (`Flac.pcm16FastA_eq` relates it to the list form). -/
+def pcm16FastA (arrs : List (Array Int)) : ByteArray :=
+  pcm16Go arrs (arrs.headD #[]).size 0
+    (ByteArray.emptyWithCapacity (2 * arrs.length * (arrs.headD #[]).size))
+
 /-- Interleave + serialize in one indexed pass — proven equal to the
     compositional `byteListOfPcm16 ∘ interleave` by `Flac.pcm16Fast_eq`. -/
 def pcm16Fast (chs : List (List Int)) : ByteArray :=
@@ -116,6 +122,17 @@ def decodePcm16 (flac : ByteArray) : Except String ByteArray :=
     if a.bps = 16 then .ok (pcm16Fast a.channels)
     else .error "not 16-bit audio"
 
+/-- `decodePcm16` without the decoder's list conversion: it serializes the
+    decoded arrays directly. Proven equal to `decodePcm16` by
+    `Flac.decodePcm16A_eq`, which is what lets the runtime certificate and
+    the CLI run it in place of the list path. -/
+def decodePcm16A (flac : ByteArray) : Except String ByteArray :=
+  match Decode.decodeArrays flac with
+  | none => .error "not a decodable FLAC stream (within the v1 feature set)"
+  | some (chs, bps, _) =>
+    if bps = 16 then .ok (pcm16FastA chs)
+    else .error "not 16-bit audio"
+
 /-! ## The certified fast encoder
 
 `Flac.Encode` is unverified by design (like the heuristics), so every call
@@ -127,7 +144,7 @@ hypothesis-free — no unverified code is trusted. -/
 /-- The runtime certificate: do the produced bytes decode (under the
     *verified* decoder) to exactly the input PCM? -/
 def pcm16Certified (bytes out : ByteArray) : Bool :=
-  match decodePcm16 out with
+  match decodePcm16A out with
   | .ok back => decide (back = bytes)
   | .error _ => false
 
