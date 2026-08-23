@@ -94,6 +94,11 @@ def pushRice (bw : BitWriter) (k : Nat) (x : Int) : BitWriter :=
   let u := if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1
   (bw.pushUnary (u >>> k)).push k (u &&& (p2 k - 1))
 
+/-- Rice code from an already-folded magnitude (the rare wide-quotient
+    path of `pushRiceRange`). -/
+def pushRiceFolded (bw : BitWriter) (k u : Nat) : BitWriter :=
+  (bw.pushUnary (u >>> k)).push k (u &&& (p2 k - 1))
+
 /-- Coded number (mirrors `Flac.Utf8Num.write`). -/
 def pushUtf8 (bw : BitWriter) (v : Nat) : BitWriter := Id.run do
   let conts (bw : BitWriter) (k : Nat) : BitWriter := Id.run do
@@ -231,7 +236,7 @@ private def partitionSearchSumsF (bs ord pomax : Nat) (sums : Array Nat) :
   return best
 
 /-- Dot product of the coefficients (most recent tap first) with
-    `xs[n-1], …`. Exact mirror of `lpcDotF`, in floats: the coefficients
+    `xs[n-1], …`, in floats: the coefficients
     stay a (short) list, so walking them costs no bounds check per
     multiply, and `acc` is a parameter, so it stays unboxed. -/
 private def lpcDotFf (xs : FloatArray) :
@@ -277,38 +282,31 @@ private def lpcPartitionSearchFf (cs : List Float) (shift : Nat) (xs : FloatArra
         sums := sums.push (lpcFoldRange xs cs inv lo stop h hlo ff0).toUInt64.toNat
   return partitionSearchSumsF bs ord pomax sums
 
-/-- First differences (`Fixed.diff1` over arrays) — the exact `Int` form,
-    used when emitting the chosen FIXED subframe. -/
-def diffArr (xs : Array Int) : Array Int := Id.run do
-  if xs.size = 0 then return #[]
-  let mut out := Array.emptyWithCapacity (xs.size - 1)
-  for i in [1 : xs.size] do
-    out := out.push (xs.getD i 0 - xs.getD (i - 1) 0)
+/-- First differences over floats — exact, and the form emission uses
+    (order-4 differences of 18-bit samples stay below `2^23`). -/
+def diffArrFf (xs : FloatArray) : FloatArray := Id.run do
+  if xs.size = 0 then return FloatArray.empty
+  let mut out := FloatArray.emptyWithCapacity (xs.size - 1)
+  for h : i in [1 : xs.size] do
+    have h1 : i < xs.size := h.2.1
+    have h2 : i - 1 < xs.size := by omega
+    out := out.push (xs[i] - xs[i - 1])
   return out
 
-/-- LPC residual (`Lpc.residual` over arrays): first `cs.length` samples
-    are warmup, the rest are `x[n] - (Σ cs[i]·x[n-1-i]) >>ₐ shift`.
-    The coefficients stay a (short) list — walking it costs no bounds
-    check per multiply. -/
-private def lpcDotF (xs : Array Int) :
-    (cs : List Int) → (n : Nat) → cs.length ≤ n → n ≤ xs.size → Int → Int
-  | [], _, _, _, acc => acc
-  | _ :: _, 0, hlen, _, _ => nomatch hlen
-  | c :: cs, n + 1, hlen, hsize, acc =>
-    have hi : n < xs.size := by omega
-    have hlen' : cs.length ≤ n := by
-      simpa only [List.length_cons, Nat.succ_le_succ_iff] using hlen
-    lpcDotF xs cs n hlen' (Nat.le_of_lt hi) (acc + c * xs[n])
-
-def lpcResidualArr (cs : List Int) (shift : Nat) (xs : Array Int) : Array Int := Id.run do
+/-- The winning LPC candidate's residual, materialized once for emission.
+    Same arithmetic as `lpcPartitionSearchFf` visits, in the same order —
+    every value is an exact integer, so the bytes emitted from it are the
+    bytes an `Int` residual would emit. -/
+def lpcResidualArrF (cs : List Float) (shift : Nat) (xs : FloatArray) :
+    FloatArray := Id.run do
   let ord := cs.length
-  if xs.size ≤ ord then return #[]
-  let mut out := Array.emptyWithCapacity (xs.size - ord)
+  if xs.size ≤ ord then return FloatArray.empty
+  let inv := invPow2 shift
+  let mut out := FloatArray.emptyWithCapacity (xs.size - ord)
   for h : i in [ord : xs.size] do
     have hlo : cs.length ≤ i := by simpa only [ord] using h.1
     have hhi : i < xs.size := h.2.1
-    let s := lpcDotF xs cs i hlo (Nat.le_of_lt hhi) 0
-    out := out.push (xs[i] - sar s shift)
+    out := out.push (xs[i] - sarF (lpcDotFf xs cs i hlo (Nat.le_of_lt hhi) ff0) inv)
   return out
 
 /-! ### The fused fixed-order pass
@@ -511,26 +509,27 @@ def SubPlan.typeCode : SubPlan → Nat
 
 /-- Attach the chosen LPC residual so emission can reuse it instead of
     running the winning predictor for a second time. -/
-private def preparedLpc (blk : Array Int) (c : LpcChoice) :
-    SubPlan × Option (Array Int) :=
-  (.lpc c.cs c.shift c.po c.ks, some (lpcResidualArr c.cs c.shift blk))
+private def preparedLpc (blkF : FloatArray) (c : LpcChoice) :
+    SubPlan × Option FloatArray :=
+  (.lpc c.cs c.shift c.po c.ks,
+    some (lpcResidualArrF (c.cs.map Heuristics.floatOfInt) c.shift blkF))
 
 /-- Internal chooser result with an emission-ready residual when LPC
     wins. The public `choosePlan` projection remains API-compatible. -/
 private def choosePlanPrepared (b : Nat) (blk : Array Int) :
-    SubPlan × Option (Array Int) :=
+    SubPlan × Option FloatArray :=
   if blk.all (fun x => x == blk.getD 0 0) then (.constant, none)
   else
     let blkF := blockF blk
     match fixedSearchF b blkF, lpcChoiceF b blkF with
     | none, none => (.verbatim, none)
     | none, some lc =>
-      if lc.cost < b * blk.size then preparedLpc blk lc else (.verbatim, none)
+      if lc.cost < b * blk.size then preparedLpc blkF lc else (.verbatim, none)
     | some ((ord, po, ks), cost), none =>
       if cost < b * blk.size then (.fixed ord po ks, none) else (.verbatim, none)
     | some ((ord, po, ks), cost), some lc =>
       if lc.cost ≤ cost then
-        if lc.cost < b * blk.size then preparedLpc blk lc else (.verbatim, none)
+        if lc.cost < b * blk.size then preparedLpc blkF lc else (.verbatim, none)
       else
         if cost < b * blk.size then (.fixed ord po ks, none) else (.verbatim, none)
 
@@ -550,12 +549,14 @@ def choosePlan (b : Nat) (blk : Array Int) : SubPlan :=
 
     `mask = 2^k - 1` is hoisted by the caller. `q ≥ 32` (a residual more
     than 32·2^k from zero) is rare enough to hand back to `pushRice`. -/
-def pushRiceRange (k mask : Nat) (res : Array Int) :
+def pushRiceRange (k mask : Nat) (res : FloatArray) :
     (i stop : Nat) → (buf : ByteArray) → (acc : UInt64) → (n : Nat) → BitWriter
   | i, stop, buf, acc, n =>
     if h : i < stop then
-      let x := res.getD i 0
-      let u := if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1
+      -- the folded (zigzag) magnitude read straight off the exact float
+      -- residual: `foldF` is `0 ≤ x ↦ 2x`, `x < 0 ↦ -2x - 1`, and every
+      -- value is an integer below `2^19`, so this is the `Int` form's `u`
+      let u := (foldF (if hi : i < res.size then res[i] else ff0)).toUInt64.toNat
       let q := u >>> k
       if q < 32 then
         -- unary quotient: `q` zero bits then a one bit — the low `q+1`
@@ -568,7 +569,7 @@ def pushRiceRange (k mask : Nat) (res : Array Int) :
         let n2 := n1 % 8 + k
         pushRiceRange k mask res (i + 1) stop (BitWriter.flushBytes buf1 acc2 n2) acc2 (n2 % 8)
       else
-        let w := (BitWriter.mk buf acc n).pushRice k x
+        let w := (BitWriter.mk buf acc n).pushRiceFolded k u
         pushRiceRange k mask res (i + 1) stop w.buf w.acc w.n
     else ⟨buf, acc, n⟩
   termination_by i stop => stop - i
@@ -576,7 +577,7 @@ def pushRiceRange (k mask : Nat) (res : Array Int) :
 /-- Partitioned coded residual (method RICE, the only one the default
     heuristics emit). -/
 def pushResidual (bw : BitWriter) (bs ord po : Nat) (ks : Array Nat)
-    (res : Array Int) : BitWriter := Id.run do
+    (res : FloatArray) : BitWriter := Id.run do
   let mut w := (bw.push 2 0).push 4 po
   let c := bs / p2 po
   let mut start := 0
@@ -596,6 +597,7 @@ def pushSubframe (bw : BitWriter) (b : Nat) (blk : Array Int) : BitWriter := Id.
     let m : Int := ((p2 wa : Nat) : Int)
     blk.map (· / m)
   let b' := b - wa
+  let scaledF := blockF scaled
   let (plan, lpcRes) := choosePlanPrepared b' scaled
   let mut w := (bw.push 1 0).push 6 plan.typeCode
   w := if wa = 0 then w.push 1 0 else (w.push 1 1).pushUnary (wa - 1)
@@ -606,10 +608,10 @@ def pushSubframe (bw : BitWriter) (b : Nat) (blk : Array Int) : BitWriter := Id.
       w := w.pushSInt b' x
     return w
   | .fixed ord po ks =>
-    let mut d := scaled
+    let mut d := scaledF
     for i in [0 : ord] do
       w := w.pushSInt b' (scaled.getD i 0)
-      d := diffArr d
+      d := diffArrFf d
     return pushResidual w scaled.size ord po ks d
   | .lpc cs shift po ks =>
     let ord := cs.length
@@ -620,7 +622,7 @@ def pushSubframe (bw : BitWriter) (b : Nat) (blk : Array Int) : BitWriter := Id.
       w := w.pushSInt 12 cf
     let res := match lpcRes with
       | some cached => cached
-      | none => lpcResidualArr cs shift scaled
+      | none => lpcResidualArrF (cs.map Heuristics.floatOfInt) shift scaledF
     return pushResidual w scaled.size ord po ks res
 
 def sumAbsArr (xs : Array Int) : Nat :=
