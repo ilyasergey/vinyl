@@ -152,4 +152,31 @@ def lpcResA (cs : List Int) (shift : Nat) (xs : Array Int) : Array Int :=
   lpcResGo cs shift xs cs.length (xs.size - cs.length)
     (Array.emptyWithCapacity (xs.size - cs.length))
 
+namespace W
+
+/-! ## Subframes -/
+
+/-- Subframe content (computes `Subframe.writeContent`). -/
+def pushContent (b : Nat) (cfg : Subframe.SubframeCfg) (xs : Array Int)
+    (w : W) : W :=
+  match cfg with
+  | .constant => w.pushSInt b (xs.getD 0 0)
+  | .verbatim => pushSIntSeg b xs 0 xs.size w
+  | .fixed ord rcfg =>
+    pushResidual xs.size ord rcfg (fixedResA ord xs)
+      (pushSIntSeg b xs 0 ord w)
+  | .lpc cs shift prec rcfg =>
+    pushResidual xs.size cs.length rcfg (lpcResA cs shift xs)
+      (pushSIntList prec cs
+        (((pushSIntSeg b xs 0 cs.length w).push 4 (prec - 1)).pushSInt 5
+          (shift : Int)))
+
+/-- One subframe (computes `Subframe.write`). -/
+def pushSubframe (b : Nat) (sc : Subframe.SubCfg) (xs : Array Int) (w : W) : W :=
+  pushContent (b - sc.wasted) sc.inner (xs.map (Flac.Bits.shiftDown sc.wasted))
+    (if sc.wasted = 0 then ((w.push 1 0).push 6 sc.inner.typeCode).push 1 0
+     else (((w.push 1 0).push 6 sc.inner.typeCode).push 1 1).pushUnary
+       (sc.wasted - 1))
+
+end W
 end Flac.Emit

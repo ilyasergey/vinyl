@@ -514,4 +514,89 @@ theorem lpcResA_toList (cs : List Int) (shift : Nat) (xs : Array Int) :
     rw [hdrop]
     simp [Flac.Emit.lpcResGo, Lpc.residualAux]
 
+/-! ## Subframe emissions -/
+
+private theorem getD_zero_headD (xs : Array Int) :
+    xs.getD 0 0 = xs.toList.headD 0 := by
+  by_cases h : 0 < xs.size
+  · rw [getD_lt xs h, List.headD_eq_getD, List.getD_eq_getElem?_getD,
+      List.getElem?_eq_getElem (by simpa using h)]
+    simp
+  · have hnil : xs.toList = [] := by
+      apply List.eq_nil_of_length_eq_zero
+      rw [Array.length_toList]
+      omega
+    rw [hnil]
+    simp [Array.getD, show ¬ 0 < xs.size from h]
+
+private theorem seg_take (xs : Array Int) (len : Nat) :
+    (xs.toList.drop 0).take len = xs.toList.take len := by
+  rw [List.drop_zero]
+
+theorem emits_pushContent (b : Nat) (cfg : Subframe.SubframeCfg)
+    (xs : Array Int) :
+    Emits (fun w => W.pushContent b cfg xs w)
+      (Subframe.writeContent b cfg xs.toList) := by
+  match cfg with
+  | .constant =>
+    apply emits_congr (emits_pushSInt b (xs.getD 0 0)) (fun w => rfl)
+    unfold Subframe.writeContent
+    rw [getD_zero_headD]
+  | .verbatim =>
+    apply emits_congr (emits_pushSIntSeg b xs xs.size 0) (fun w => rfl)
+    unfold Subframe.writeContent
+    rw [seg_take, take_all_of_ge (by rw [Array.length_toList]; omega)]
+  | .fixed ord rcfg =>
+    apply emits_congr
+      (emits_comp (emits_pushSIntSeg b xs ord 0)
+        (emits_pushResidual xs.size ord rcfg (fixedResA ord xs)))
+      (fun w => rfl)
+    unfold Subframe.writeContent
+    rw [seg_take, fixedResA_toList, Array.length_toList]
+  | .lpc cs shift prec rcfg =>
+    apply emits_congr
+      (emits_comp
+        (emits_comp
+          (emits_comp
+            (emits_comp (emits_pushSIntSeg b xs cs.length 0)
+              (emits_push 4 (prec - 1)))
+            (emits_pushSInt 5 (shift : Int)))
+          (emits_pushSIntList prec cs))
+        (emits_pushResidual xs.size cs.length rcfg (lpcResA cs shift xs)))
+      (fun w => rfl)
+    unfold Subframe.writeContent
+    rw [seg_take, lpcResA_toList, Array.length_toList]
+    simp [List.append_assoc]
+
+theorem emits_pushSubframe (b : Nat) (sc : Subframe.SubCfg) (xs : Array Int) :
+    Emits (fun w => W.pushSubframe b sc xs w)
+      (Subframe.write b sc xs.toList) := by
+  unfold Subframe.write
+  by_cases h : sc.wasted = 0
+  · apply emits_congr
+      (emits_comp
+        (emits_comp (emits_comp (emits_push 1 0) (emits_push 6 sc.inner.typeCode))
+          (emits_push 1 0))
+        (emits_pushContent (b - sc.wasted) sc.inner
+          (xs.map (Flac.Bits.shiftDown sc.wasted))))
+      (fun w => by
+        show _ = W.pushSubframe b sc xs w
+        unfold W.pushSubframe
+        rw [if_pos h])
+    rw [if_pos h, Array.toList_map]
+  · apply emits_congr
+      (emits_comp
+        (emits_comp
+          (emits_comp (emits_comp (emits_push 1 0) (emits_push 6 sc.inner.typeCode))
+            (emits_push 1 1))
+          (emits_pushUnary (sc.wasted - 1)))
+        (emits_pushContent (b - sc.wasted) sc.inner
+          (xs.map (Flac.Bits.shiftDown sc.wasted))))
+      (fun w => by
+        show _ = W.pushSubframe b sc xs w
+        unfold W.pushSubframe
+        rw [if_neg h])
+    rw [if_neg h, Array.toList_map]
+    simp [List.append_assoc]
+
 end Flac.Emit
