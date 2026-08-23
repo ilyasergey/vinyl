@@ -267,11 +267,13 @@ def cliMain (args : List String) : IO UInt32 := do
     return 0
   if let ["--decode", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
+    let some si := Stream.peekInfo bytes
+      | IO.println "DECODE ERROR (bad stream header)"; return 1
     match Stream.decodeReference bytes with
     | none => IO.println "DECODE ERROR"; return 1
     | some chans =>
-      IO.FS.writeBinFile outFile (Stream.pcmBytes 16 chans)
-      IO.println s!"decoded {(chans.headD []).length} samples x {chans.length} channels"
+      IO.FS.writeBinFile outFile (Stream.pcmBytes si.bps chans)
+      IO.println s!"decoded {(chans.headD []).length} samples x {chans.length} channels ({si.bps}-bit)"
       return 0
   if let ["--samples", dir] := args then
     emitSamples dir

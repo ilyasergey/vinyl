@@ -230,6 +230,19 @@ def writeStream (cfg : EncoderCfg) (a : Audio) : BitStream :=
 def encode (cfg : EncoderCfg) (a : Audio) : ByteArray :=
   bitsToBytes (writeStream cfg a)
 
+/-- Parse just the marker and STREAMINFO (for tools that need the
+    stream parameters, e.g. to know the output bit depth). -/
+def peekInfo (bytes : ByteArray) : Option Info :=
+  let s := bytesToBits bytes
+  match readBits 32 s with
+  | none => none
+  | some (marker, s) =>
+    if marker = 0x664C6143 then
+      match readMeta s.length s with
+      | none => none
+      | some (si, _) => some si
+    else none
+
 /-- **The verified reference decoder**: returns the decoded channels. -/
 def decodeReference (bytes : ByteArray) : Option (List (List Int)) :=
   let s := bytesToBits bytes

@@ -3,6 +3,7 @@ import Flac.Native.Crc
 import Flac.Native.Utf8Num
 import Flac.Native.Heuristics
 import Flac.Native.Lpc
+import Flac.Native.Reader
 import Flac.Native.Md5
 import Flac.Native.Rice
 import Flac.Native.Fixed
@@ -15,6 +16,7 @@ import Flac.Spec.Fixed
 import Flac.Spec.Frame
 import Flac.Spec.Lpc
 import Flac.Spec.Heuristics
+import Flac.Spec.Reader
 import Flac.Spec.Rice
 import Flac.Spec.Stereo
 import Flac.Spec.Stream
