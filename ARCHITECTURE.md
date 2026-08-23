@@ -136,6 +136,21 @@ pay for the round-trip (`pcmBytesA_eq`, `pcm16FastA_eq`,
 `decodePcm16A_eq`). Before that split, decoding allocated a cons cell per
 sample only for the serializer to rebuild the very same arrays.
 
+And it no longer stops at samples for callers that want bytes.
+`Decode.decodeBytes` has each frame worker serialize *its own frame*, and
+`decodeBytes_spec` says a `some` result is exactly `Stream.pcmBytesRange`
+of what `decodeArrays` returns. The property that licenses it is that **a
+frame is a serialization window**: the interleaved layout is sample-major,
+serializing `l₁ + l₂` samples is serializing `l₁` then `l₂`
+(`pcmModel_split`), and samples before/after a frame boundary come from
+that frame alone (`pcmModel_left`, `pcmModel_right`), so serializing the
+recombined whole-file channels is serializing each frame and concatenating
+(`recombineA_model`). Together those removed 46% of decode wall time —
+`recombineA`'s serial array concatenation and a whole second pass over the
+samples — and they *narrowed* the trusted surface, because the window
+concatenation `Stream.pcmBytesA` performs was previously asserted in prose
+and unprovable (it reasons through `Task`).
+
 ## Parallelism under the ratchet
 
 Both directions now use a `Task` per unit of work, and on the decode side
@@ -183,6 +198,14 @@ work, never correctness. `pcm16FastPar_eq` does the same for the parallel
 PCM serializer via a `PcmChunk`, whose windows are likewise a heuristic
 tiling.
 
+`ByteStep` is the same device pushed one step further: it carries
+`∃ chs, readFrameAt b0 d pos = some (chs, next) ∧ … ∧ bytes = …`, with the
+channel arrays *existentially quantified*. Proof fields are erased, so
+those arrays never exist at runtime and never cross the thread boundary —
+which is the point, because marking a `ByteArray` shared is O(1) where
+marking `Array Int` channels is O(samples), and that marking cost was
+what made the old per-window serialization fan-out worthless.
+
 Second, no proof here mentions `Task` at all, so none of them depends on
 the `@[extern]` task model matching the runtime. A well-typed `Step`
 cannot lie either: its `ok` field proves a proposition that is false for
@@ -198,15 +221,23 @@ complete stream into a byte buffer, and `Flac.Emit.emitFast_eq_encode` proves
 byte-for-byte equality with `Stream.encode`; the proof stack covers the bit
 writer, residuals, subframes, CRC-bearing frames, STREAMINFO, frame sequences,
 and the full stream. This path is deliberately not the public PCM16 fast path
-yet: it currently uses the list-based `safeChooser` and recomputes prepared
-predictor data, making it 1.9–4.3× slower than the production UInt64/array
-emitter in representative tests.
+yet, and the reason is its *plumbing*, not its emission: `W.pushFrames`
+folds serially over `Stream.chunkChannels cfg.blockSize a.channels`, and
+`Stream.Audio` carries `List (List Int)` channels, so driving it means
+materializing the whole file as cons cells. That is exactly what
+`--encode-slow` does, and it measures **113× slower** than the fast
+encoder on the same input for byte-identical output (7.89 s vs 0.07 s on
+4 MB) — roughly 6.6× from the missing frame parallelism and ~17× from
+lists-and-`Int` instead of arrays-and-`Float`.
 
 The fast *encoder* (`Flac/Native/Encode.lean`) uses the other sound
 pattern: it is unverified by design, like the heuristics, and each call
 is **certified at runtime** — `Flac.encodePcm16Fast` decodes the produced
 bytes with the *verified* decoder and compares them with the input,
-falling back to the fully verified encoder on any mismatch. The byte-level
+falling back to the fully verified encoder on any mismatch. That decode
+runs `Decode.decodeBytes`, the frame-parallel byte path, which
+`pcm16FastA_eq_range` licenses to stand in for `decodePcm16`'s
+serializer. The byte-level
 round-trip theorem (`Flac.decodePcm16_encodePcm16Fast`) therefore holds
 with no hypotheses and no new trusted code, while the encoder itself is
 free to use mutable arrays, a scalar bit accumulator, and a `Task` per
@@ -216,12 +247,32 @@ the default heuristics — which differential tests check on every corpus
 file).
 
 Retiring that runtime decode without losing performance now has a precise
-cut: prove an allocation-free array-plan validity/sanitization bridge, preserve
-the already prepared fixed/LPC residuals through emission, prove array frame
-extraction and PCM16/MD5 correspondence, and connect the task-parallel UInt64
-writer to the verified emitter semantics. Calling the existing list deciders
-or substituting the serial verified emitter is correct but misses the
-performance objective.
+cut, and it is worth being exact about what is and is not in the way.
+
+**Not in the way: the searches.** They need no verification at all. A
+chooser's *output* carries a decidable validity certificate by
+construction (`riceCfg`, `fixedCfg`, `lpcCfg` clamp order, precision,
+shift, coefficients and Rice parameters into legal range), and
+`EncoderCfg.safeChooser` checks it at runtime with a VERBATIM fallback.
+So the round-trip theorem already holds for *every* chooser — including
+one computing in `Float`, which is unprovable in Lean (its operations are
+`@[extern]` with no axiomatization). Search quality is a
+compression question, never a correctness one.
+
+**In the way: the plumbing.** `Flac/Native/Encode.lean` reimplements the
+bit writer, subframe layout, frame headers, CRC placement and stream
+assembly, and none of that is proven — while `Flac.Emit`, which *is*
+proven, can only be fed lists and only emits serially. So M6b is:
+(1) a byte→array input pipeline proven equal to
+`deinterleave ∘ pcm16OfByteList`; (2) array-side chunking proven equal to
+`Stream.chunkChannels`; (3) parallel frame emission proven equal to the
+serial `pushFrames` — and this last part is already well-supported,
+because `pushFrame_spec` says emission only *appends*
+(`(pushFrame … w).bits = w.bits ++ Frame.write …`), which is the same
+locality argument that licensed per-frame serialization on the decode
+side. The payoff is measured: the certificate is 0.82 of encode's 3.55
+CPU-seconds (23%), so retiring it would take the encode gap from ~1.6× to
+roughly 1.25×.
 
 One more by-construction safety device: heuristic outputs carry decidable
 validity certificates, and the encoder (`EncoderCfg.safeChooser`) checks
@@ -246,8 +297,8 @@ is not something a type can express:
 | `--encode` | `Flac.encodePcm16Fast` | `decodePcm16_encodePcm16Fast` — hypothesis-free |
 | `--encode-slow` | `Flac.encodePcm16Cfg` | `decodePcm16_encodePcm16Cfg` |
 | `--decode-pcm16` | `Flac.decodePcm16A` | `decodePcm16A_eq` → the byte-level capstone |
-| `--decode-fast` | `Decode.decodeArrays` + `Stream.pcmBytesA` | samples yes, byte layout **no** (below) |
-| `--decode` | `Stream.decodeReference` + `Stream.pcmBytes` | samples yes, byte layout **no** |
+| `--decode-fast` | `Decode.decodeBytes` (fallback `decodeArrays` + `Stream.pcmBytesRange`) | `decodeBytes_spec` → samples **and** byte layout |
+| `--decode` | `Stream.decodeReference` + `Stream.pcmBytes` | samples yes, byte layout **no** (below) |
 
 Both negative tests are checked to fire: repointing `--encode` at the
 uncertified `Flac.Encode.encodePcm16` fails the gate, and weakening
@@ -264,15 +315,25 @@ checked. The gate greps for all of these. The primitives underneath —
 `Nat`/`Int` arithmetic on GMP, `ByteArray`, `FloatArray`, `Task` — are
 core Lean's `@[extern]` implementations, trusted as by any Lean program.
 
-And the honest gap: `--decode-fast` and `--decode` write samples out
-through `Stream.pcmBytesA`/`pcmBytes`, which carry no correctness theorem
-— they are the MD5-input serializer, established against libFLAC by
-differential testing rather than proof. `pcmBytesA_eq` relates the two
-serializers to each other, not to a specification. So for those two modes
-the *decoded samples* are covered by `decodeOption_eq_reference` while the
-*byte layout* is tested only. The fully proved byte-level decode path is
-`--decode-pcm16` (`decodePcm16A_eq`), and the benchmark's decode column
-measures `--decode-fast`.
+And the honest gap, now one mode narrower than it was.
+`Flac/Spec/PcmBytes.lean` pins the serialization loops of
+`Flac/Native/Stream.lean` to a model (`pcmBytesRange_eq`) and proves the
+frame-window property above, so **`--decode-fast`** — the mode the
+benchmark's decode column measures — has its byte layout covered by
+`decodeBytes_spec`, not merely tested. `--decode` still writes through
+`Stream.pcmBytes`, whose *windowing* (one `Task` per 64Ki-sample window)
+is unprovable as written, so for that mode the decoded samples are covered
+by `decodeOption_eq_reference` while the byte layout is established
+against libFLAC by differential testing plus the golden vectors of
+`pcmBytesTests`. The other fully proved byte-level path is
+`--decode-pcm16` (`decodePcm16A_eq`).
+
+The two serializers are also now tied together: `pcm16FastA_eq_range`
+proves `Flac.pcm16Row`'s `(x % 65536)` byte split equals the `UInt64`-lane
+split of `pcmBytesRange` for *every* `Int`, because `Int.toInt64` is
+reduction mod `2^64` and `2^16` divides `2^64`. That is what lets the
+encoder's runtime certificate run the frame-parallel byte decoder in place
+of a decode followed by a serial serialization.
 
 ## Trusted vs. tested
 
