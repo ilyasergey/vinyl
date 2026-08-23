@@ -1986,6 +1986,114 @@ theorem readFrames_sim (b0 : Nat) :
         | none => rfl
         | some rest => rfl
 
+/-! ### The frame-parallel path collapses to the serial loop
+
+The parallel decoder is justified in three steps, none of which trusts
+how a step was produced: the position-form loop is the reader-form loop
+(`readFramesAt_eq`, the only place the buffer-preservation fact is
+needed); a precomputed step computes exactly what reading there computes
+(`stepFor_eq`, straight from `Step.ok`); and therefore the step-consuming
+loop is the serial loop (`readFramesSteps_eq`). -/
+
+/-- Reading a frame never changes the buffer, so the position-form frame
+    reader loses nothing. -/
+private theorem readFrameAt_eq {b0 : Nat} {d : ByteArray} {pos : Nat}
+    (hwf : pos ≤ 8 * d.size) :
+    readFrame b0 ⟨d, pos⟩
+      = (readFrameAt b0 d pos).map (fun p => (p.1, (⟨d, p.2⟩ : BitReader))) := by
+  unfold readFrameAt
+  match hf : readFrame b0 (⟨d, pos⟩ : BitReader) with
+  | none => rfl
+  | some (chs, br') =>
+    obtain ⟨hd, -, -, -⟩ := readFrame_pos8 (by exact hwf) hf
+    simp only [Option.map_some]
+    have : br' = ⟨d, br'.pos⟩ := by
+      have : br'.data = d := hd
+      cases br'
+      simp_all
+    rw [this]
+
+/-- The position-form serial loop is the reader-form serial loop. -/
+theorem readFramesAt_eq (b0 : Nat) (d : ByteArray) :
+    ∀ (fuel pos : Nat), pos ≤ 8 * d.size →
+      readFramesAt b0 d fuel pos = readFrames b0 fuel ⟨d, pos⟩ := by
+  intro fuel
+  induction fuel with
+  | zero =>
+    intro pos hwf
+    show (if 8 * d.size - pos = 0 then _ else _) = _
+    unfold readFrames
+    rfl
+  | succ fuel ih =>
+    intro pos hwf
+    show (if 8 * d.size - pos = 0 then _ else _) = _
+    unfold readFrames
+    have hrem : (⟨d, pos⟩ : BitReader).remaining = 8 * d.size - pos := rfl
+    rw [hrem]
+    by_cases h0 : 8 * d.size - pos = 0
+    · rw [if_pos h0, if_pos h0]
+    · rw [if_neg h0, if_neg h0, readFrameAt_eq hwf]
+      match hf : readFrameAt b0 d pos with
+      | none => rfl
+      | some (chs, next) =>
+        simp only [Option.map_some]
+        have hnext : next ≤ 8 * d.size := by
+          have hfr : readFrame b0 (⟨d, pos⟩ : BitReader)
+              = some (chs, ⟨d, next⟩) := by
+            rw [readFrameAt_eq hwf, hf]; rfl
+          obtain ⟨-, -, hb, -⟩ := readFrame_pos8 (by exact hwf) hfr
+          exact hb
+        rw [ih next hnext]
+
+/-- A precomputed step computes exactly what reading at that position
+    computes — by its own `ok` field, so no trust is placed in the thread
+    that produced it. -/
+theorem stepFor_eq (b0 : Nat) (d : ByteArray) (steps : Array (Step b0 d))
+    (pos : Nat) : stepFor b0 d steps pos = readFrameAt b0 d pos := by
+  unfold stepFor
+  match findStep steps pos with
+  | none => rfl
+  | some st =>
+    show (if _h : st.pos = pos then some (st.chs, st.next)
+          else readFrameAt b0 d pos) = readFrameAt b0 d pos
+    by_cases h : st.pos = pos
+    · rw [dif_pos h, ← h]
+      exact st.ok.symm
+    · rw [dif_neg h]
+
+/-- **The parallel decoder is the serial decoder.** -/
+theorem readFramesSteps_eq (b0 : Nat) (d : ByteArray) (steps : Array (Step b0 d)) :
+    ∀ (fuel pos : Nat),
+      readFramesSteps b0 d steps fuel pos = readFramesAt b0 d fuel pos := by
+  intro fuel
+  induction fuel with
+  | zero => intro pos; rfl
+  | succ fuel ih =>
+    intro pos
+    show (if 8 * d.size - pos = 0 then _ else _)
+      = (if 8 * d.size - pos = 0 then _ else _)
+    by_cases h0 : 8 * d.size - pos = 0
+    · rw [if_pos h0, if_pos h0]
+    · rw [if_neg h0, if_neg h0, stepFor_eq]
+      cases hf : readFrameAt b0 d pos with
+      | none => rfl
+      | some p =>
+        show (match readFramesSteps b0 d steps fuel p.2 with
+              | none => none | some rest => some (p.1 :: rest))
+            = (match readFramesAt b0 d fuel p.2 with
+              | none => none | some rest => some (p.1 :: rest))
+        rw [ih p.2]
+
+/-- Either branch of the shipped frame loop is the serial loop. -/
+theorem readFramesFast_eq (b0 : Nat) (d : ByteArray) (fuel pos : Nat)
+    (hwf : pos ≤ 8 * d.size) :
+    readFramesFast b0 d fuel pos = readFrames b0 fuel ⟨d, pos⟩ := by
+  unfold readFramesFast
+  split
+  · exact readFramesAt_eq b0 d fuel pos hwf
+  · rw [readFramesSteps_eq]
+    exact readFramesAt_eq b0 d fuel pos hwf
+
 /-! ### Channel reassembly: the left-fold array form computes `recombine` -/
 
 private theorem zipApp_toList (a : List (Array Int)) :
@@ -2082,8 +2190,21 @@ theorem decodeOption_eq_reference (bytes : ByteArray) :
       have hwf0 : (⟨bytes, 0⟩ : BitReader).pos ≤ BitReader.size ⟨bytes, 0⟩ := by
         show 0 ≤ _; omega
       rw [e1] at b2
+      have hbr2 : br2 = ⟨bytes, br2.pos⟩ := by
+        have hd : br2.data = bytes := by rw [d2, d1]
+        cases br2
+        simp_all
+      have hwf2 : br2.pos ≤ 8 * bytes.size := by
+        have := b2 (b1 hwf0)
+        show br2.pos ≤ BitReader.size ⟨bytes, 0⟩
+        omega
+      have hfast : readFramesFast si.bps br2.data (br2.remaining + 1) br2.pos
+          = readFrames si.bps (br2.remaining + 1) br2 := by
+        rw [show br2.data = bytes from by rw [d2, d1],
+          readFramesFast_eq si.bps bytes (br2.remaining + 1) br2.pos hwf2,
+          ← hbr2]
       rw [hf2, readFrames_sim si.bps (br2.remaining + 1) br2
-        (by omega) (by have := b2 (b1 hwf0); omega)]
+        (by omega) (by have := b2 (b1 hwf0); omega), hfast]
       match readFrames si.bps (br2.remaining + 1) br2 with
       | none => rfl
       | some frames => simp only [Option.map_some, recombineA_toList]

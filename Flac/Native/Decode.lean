@@ -519,6 +519,161 @@ def recombineA (ch : Nat) : List (List (Array Int)) → List (Array Int)
   | [] => List.replicate ch #[]
   | fr :: frs => recombineGo ch fr frs
 
+/-! ## Frame-parallel decoding
+
+FLAC frames are byte-aligned and self-contained, and `BitReader` reads a
+*shared immutable* `ByteArray` at an absolute bit position — so decoding
+the frame at position `p` on another thread runs literally the call the
+serial loop would run there. That is what makes parallel decoding sound
+here rather than merely plausible: each worker's result carries the frame
+reader's own equation (`Step.ok`), so consuming a step needs no trust in
+which thread produced it, and `readFramesSteps_eq` collapses the whole
+parallel path back to the serial loop.
+
+Frame *starts* are only guessed (a sync-code scan). A wrong guess costs
+work, never correctness: a step is used only when its recorded position
+matches, and its `ok` field then supplies the equation. Positions the
+scan missed are decoded on the spot. -/
+
+/-- The frame reader with the cursor as a plain position — the form the
+    parallel machinery is phrased over. -/
+def readFrameAt (b0 : Nat) (d : ByteArray) (pos : Nat) :
+    Option (List (Array Int) × Nat) :=
+  match readFrame b0 ⟨d, pos⟩ with
+  | none => none
+  | some (chs, br) => some (chs, br.pos)
+
+/-- The serial frame loop over positions (equal to `readFrames` by
+    `Flac.Spec.Decode.readFramesAt_eq`). -/
+def readFramesAt (b0 : Nat) (d : ByteArray) :
+    Nat → Nat → Option (List (List (Array Int)))
+  | 0, pos => if 8 * d.size - pos = 0 then some [] else none
+  | fuel + 1, pos =>
+    if 8 * d.size - pos = 0 then some []
+    else
+      match readFrameAt b0 d pos with
+      | none => none
+      | some (chs, next) =>
+        match readFramesAt b0 d fuel next with
+        | none => none
+        | some rest => some (chs :: rest)
+
+/-- One frame decoded at a known position, **carrying the frame reader's
+    own equation**. The proof field is erased at runtime, so a `Step` costs
+    exactly the triple it stores. -/
+structure Step (b0 : Nat) (d : ByteArray) where
+  pos : Nat
+  chs : List (Array Int)
+  next : Nat
+  ok : readFrameAt b0 d pos = some (chs, next)
+
+/-- Decode the frame at `pos`, packaging its equation. -/
+def stepAt (b0 : Nat) (d : ByteArray) (pos : Nat) : Option (Step b0 d) :=
+  match h : readFrameAt b0 d pos with
+  | none => none
+  | some (chs, next) => some ⟨pos, chs, next, h⟩
+
+/-- Byte offsets carrying a frame sync code (RFC 9639 §9.1.1: fourteen one
+    bits, a zero, then the blocking-strategy bit). A guess, validated by
+    `Step.ok` at every use. -/
+def syncCandidates (d : ByteArray) (start : Nat) : Array Nat := Id.run do
+  let mut out : Array Nat := Array.emptyWithCapacity (d.size / 128 + 8)
+  if d.size = 0 then return out
+  for i in [start : d.size - 1] do
+    if (if h : i < d.size then d[i] else 0) == 0xFF then
+      if (if h : i + 1 < d.size then d[i + 1] else 0) &&& 0xFC == 0xF8 then
+        out := out.push i
+  return out
+
+/-- Decode one chunk of candidate positions (the unit of parallel work). -/
+def stepChunk (b0 : Nat) (d : ByteArray) (cands : Array Nat) (lo hi : Nat) :
+    Array (Step b0 d) := Id.run do
+  let mut out : Array (Step b0 d) := Array.emptyWithCapacity (hi - lo)
+  for i in [lo : hi] do
+    match stepAt b0 d (8 * cands.getD i 0) with
+    | some st => out := out.push st
+    | none => pure ()
+  return out
+
+/-- Decode all candidates, one task per chunk. Candidates are ascending,
+    so the concatenated steps are ascending in `pos` too — which is what
+    `findStep` binary-searches. -/
+def stepsPar (b0 : Nat) (d : ByteArray) (cands : Array Nat) (chunk : Nat) :
+    Array (Step b0 d) := Id.run do
+  if chunk = 0 then return #[]
+  let tasks := (List.range ((cands.size + chunk - 1) / chunk)).map fun c =>
+    Task.spawn fun _ =>
+      stepChunk b0 d cands (c * chunk) (min ((c + 1) * chunk) cands.size)
+  let mut out : Array (Step b0 d) := Array.emptyWithCapacity cands.size
+  for t in tasks do
+    out := out ++ t.get
+  return out
+
+/-- Binary search for the step recorded at `pos`. Bounded by 64 iterations,
+    so it is total; a miss just means the frame gets decoded on the spot. -/
+def findStep {b0 : Nat} {d : ByteArray} (steps : Array (Step b0 d)) (pos : Nat) :
+    Option (Step b0 d) := Id.run do
+  let mut lo := 0
+  let mut hi := steps.size
+  for _ in [0 : 64] do
+    if lo ≥ hi then
+      break
+    let mid := (lo + hi) / 2
+    match steps[mid]? with
+    | none => break
+    | some st =>
+      if st.pos = pos then
+        return some st
+      else if st.pos < pos then
+        lo := mid + 1
+      else
+        hi := mid
+  return none
+
+/-- The frame at `pos`: a precomputed step when one is recorded there,
+    otherwise decoded now. Equal to `readFrameAt` either way
+    (`Flac.Spec.Decode.stepFor_eq`) — the precomputed branch is justified
+    by the step's own `ok` field. -/
+def stepFor (b0 : Nat) (d : ByteArray) (steps : Array (Step b0 d)) (pos : Nat) :
+    Option (List (Array Int) × Nat) :=
+  match findStep steps pos with
+  | some st => if _h : st.pos = pos then some (st.chs, st.next)
+               else readFrameAt b0 d pos
+  | none => readFrameAt b0 d pos
+
+/-- The frame loop reading precomputed steps where available. Proven equal
+    to `readFramesAt` by `Flac.Spec.Decode.readFramesSteps_eq`. -/
+def readFramesSteps (b0 : Nat) (d : ByteArray) (steps : Array (Step b0 d)) :
+    Nat → Nat → Option (List (List (Array Int)))
+  | 0, pos => if 8 * d.size - pos = 0 then some [] else none
+  | fuel + 1, pos =>
+    if 8 * d.size - pos = 0 then some []
+    else
+      match stepFor b0 d steps pos with
+      | none => none
+      | some (chs, next) =>
+        match readFramesSteps b0 d steps fuel next with
+        | none => none
+        | some rest => some (chs :: rest)
+
+/-- Candidates per parallel task: enough that task setup is negligible,
+    small enough to keep every core fed. -/
+def stepChunkSize : Nat := 24
+
+/-- Streams below this many bytes decode serially — the scan and task
+    setup would dominate. -/
+def parThreshold : Nat := 1 <<< 16
+
+/-- Frames from `pos`, in parallel when the stream is big enough to pay
+    for it. Equal to `readFramesAt` (`Flac.Spec.Decode.readFramesFast_eq`)
+    on either branch. -/
+def readFramesFast (b0 : Nat) (d : ByteArray) (fuel pos : Nat) :
+    Option (List (List (Array Int))) :=
+  if d.size < parThreshold then readFramesAt b0 d fuel pos
+  else
+    readFramesSteps b0 d
+      (stepsPar b0 d (syncCandidates d (pos / 8)) stepChunkSize) fuel pos
+
 /-- The production decoder body, **array-typed**: reassembled channels stay
     `Array Int` (plus bit depth and sample rate). This is where the decoder
     actually stops; `decodeOption` only adds the `Array → List` conversion
@@ -535,7 +690,7 @@ def decodeArrays (bytes : ByteArray) : Option (List (Array Int) × Nat × Nat) :
       match readMeta br.remaining br with
       | none => none
       | some (si, br) =>
-        match readFrames si.bps (br.remaining + 1) br with
+        match readFramesFast si.bps br.data (br.remaining + 1) br.pos with
         | none => none
         | some frames =>
           some (recombineA si.channels frames, si.bps, si.sampleRate)
