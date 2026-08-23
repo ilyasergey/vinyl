@@ -55,22 +55,25 @@ byte-identically with libFLAC (`conformance/smoke.sh`).
 
 ## Benchmarks
 
-Cactus plots on the synthetic mono 16-bit corpus of `bench/gen_corpus.py`,
-against libFLAC 1.5.0 — regenerate with `./bench/run.sh`. **Left** —
-compression: each encoder's per-file ratios sorted ascending; a curve that
-stays lower compresses better. **Right** — speed: cumulative encode time
-(log scale) after finishing its `n` fastest files; a curve that stays lower
-is faster:
+Plots over the 33-file synthetic mono 16-bit corpus of
+`bench/gen_corpus.py` (tones, sweeps, harmonics, square/saw/triangle,
+noise at several amplitudes, tonal+noise mixes, speech-like bursts,
+wasted-bits content), against libFLAC 1.5.0 — regenerate with
+`./bench/run.sh`. **Left** — compression cactus: each encoder's per-file
+ratios sorted ascending; a curve that stays lower compresses better.
+**Right** — throughput profile: per-file encode throughput (log scale),
+each encoder's files sorted slowest→fastest; a curve that sits higher is
+faster:
 
 ![Compression and speed vs libFLAC](bench/cactus.png)
 
-Honest reading at M3 (with Levinson–Durbin LPC): overall ratio **42.5%**
-of raw — now *better* than libFLAC `-0` (43.7%), with `-8` at 37.7%. Vinyl
-matches or beats `-8` on tonal content (sine, chord, sweep); the remaining
-gap is adaptive Rice partitioning and block-size search (M6 territory).
-Encode speed is ~0.6 MB/s vs libFLAC's ~14 MB/s: the encoder still runs on
-the proof-oriented bit model; performance work is deliberately deferred to
-M6, *after* the capstone makes optimization safe (PLAN.md §7).
+Honest reading at M3+M4a (LPC + wasted bits): overall ratio **45.0%** of
+raw — between libFLAC `-5` (44.4%) and `-8` (43.0%), and far ahead of `-0`
+(53.7%). The remaining gap is adaptive Rice partitioning and block-size
+search (M6 territory). Encode speed is ~0.5 MB/s vs libFLAC's ~14 MB/s:
+the encoder still runs on the proof-oriented bit model; performance work
+is deliberately deferred to M6, *after* the capstone makes optimization
+safe (PLAN.md §7).
 
 ## Building
 
