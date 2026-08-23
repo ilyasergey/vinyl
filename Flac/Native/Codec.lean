@@ -1,6 +1,7 @@
 import Flac.Native.Decode
 import Flac.Native.Heuristics
 import Flac.Native.Stream
+import Flac.Native.Encode
 
 /-!
 # The shipped encoder entry points
@@ -96,5 +97,37 @@ def decodePcm16 (flac : ByteArray) : Except String ByteArray :=
   | .ok a =>
     if a.bps = 16 then .ok (byteListOfPcm16 (interleave a.channels)).toByteArray
     else .error "not 16-bit audio"
+
+/-! ## The certified fast encoder
+
+`Flac.Encode` is unverified by design (like the heuristics), so every call
+is certified at runtime instead: decode the produced bytes with the
+*verified* decoder and compare with the input; on any mismatch fall back
+to the verified encoder. `Flac.decodePcm16_encodePcm16Fast` is therefore
+hypothesis-free — no unverified code is trusted. -/
+
+/-- The runtime certificate: do the produced bytes decode (under the
+    *verified* decoder) to exactly the input PCM? -/
+def pcm16Certified (bytes out : ByteArray) : Bool :=
+  match decodePcm16 out with
+  | .ok back => decide (back = bytes)
+  | .error _ => false
+
+/-- Keep the fast output only with a valid certificate; otherwise encode
+    with the verified encoder. -/
+def encodePcm16FastGo (blockSize ch sampleRate : Nat) (bytes out : ByteArray) :
+    Option ByteArray :=
+  if pcm16Certified bytes out then some out
+  else encodePcm16Cfg ⟨blockSize, false, Heuristics.defaultAsgChooser 16⟩
+    ch sampleRate bytes
+
+/-- **The fast byte-level encoder**, certified per call. `some` results
+    carry the round-trip guarantee (`Flac.decodePcm16_encodePcm16Fast`). -/
+def encodePcm16Fast (blockSize ch sampleRate : Nat) (bytes : ByteArray) :
+    Option ByteArray :=
+  if 0 < ch ∧ bytes.size % (2 * ch) = 0 then
+    encodePcm16FastGo blockSize ch sampleRate bytes
+      (Encode.encodePcm16 blockSize ch sampleRate bytes)
+  else none
 
 end Flac

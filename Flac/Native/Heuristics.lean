@@ -29,29 +29,33 @@ def riceParam (sum n : Nat) : Nat :=
 where
   go : Nat → Nat → Nat
     | 0, k => k
-    | fuel + 1, k => if sum ≤ n * 2 ^ k then k else go fuel (k + 1)
+    | fuel + 1, k => if sum ≤ n * Flac.Bits.p2 k then k else go fuel (k + 1)
 
-/-- Exact bit cost of Rice-coding folded residuals with parameter `k`
-    (quotient unary + stop bit + `k` remainder bits each). -/
-def riceCost (k : Nat) (us : List Nat) : Nat :=
-  us.foldl (fun a u => a + u / 2 ^ k) 0 + us.length * (k + 1)
+/-- Estimated bit cost of Rice-coding a partition with parameter `k`,
+    from its folded sum alone (the libFLAC-style estimate:
+    `Σ (uᵢ >>> k) ≈ (Σ uᵢ) >>> k`, plus stop bit and remainder bits).
+    O(1) per partition given the sum, which is what makes the partition
+    search a prefix-sum walk instead of a per-element pass. -/
+def riceCostEst (k sum n : Nat) : Nat :=
+  (sum >>> k) + n * (k + 1)
 
-/-- Best parameter and exact cost for one partition. -/
-def bestParam (us : List Nat) : Nat × Nat :=
-  let k := riceParam us.sum us.length
-  (k, riceCost k us)
+/-- Best parameter and estimated cost for one partition, from its sum. -/
+def bestParamSum (sum n : Nat) : Nat × Nat :=
+  let k := riceParam sum n
+  (k, riceCostEst k sum n)
 
 /-- Search partition orders 0–6 over the folded residual: per-partition
-    best parameters, exact total bit cost. Returns `(po, ks, cost)`. -/
+    best parameters, estimated total bit cost from partition sums.
+    Returns `(po, ks, cost)`. -/
 def partitionSearch (bs ord : Nat) (us : List Nat) : Nat × List Nat × Nat := Id.run do
-  let (k0, c0) := bestParam us
+  let (k0, c0) := bestParamSum us.sum us.length
   let mut best : Nat × List Nat × Nat := (0, [k0], 6 + 4 + c0)
   for po in [1, 2, 3, 4, 5, 6] do
-    if bs % 2 ^ po = 0 ∧ ord < bs / 2 ^ po then
-      let c := bs / 2 ^ po
-      let sizes := (c - ord) :: List.replicate (2 ^ po - 1) c
+    if bs % Flac.Bits.p2 po = 0 ∧ ord < bs / Flac.Bits.p2 po then
+      let c := bs / Flac.Bits.p2 po
+      let sizes := (c - ord) :: List.replicate (Flac.Bits.p2 po - 1) c
       let parts := Rice.chunkBySizes sizes us
-      let picks := parts.map bestParam
+      let picks := parts.map fun p => bestParamSum p.sum p.length
       let cost := 6 + picks.foldl (fun a p => a + 4 + p.2) 0
       if cost < best.2.2 then
         best := (po, picks.map Prod.fst, cost)
@@ -110,17 +114,36 @@ def lpcCfg (blk : List Int) (cs : List Int) (shift prec po : Nat)
 
 /-! ## Levinson–Durbin (Float, unverified — pure search) -/
 
+/-- `0.0` by bit pattern: `Float` literals and `Float.ofNat`/`Float.ofInt`
+    compile to `Float.ofScientific` calls that re-parse a big-integer
+    constant per call — everything below sticks to the extern conversions
+    (`UInt64.toFloat`, `Int64.toFloat`, `Float.ofBits`). -/
+private def f0 : Float := Float.ofBits 0
+
+/-- `1.0` by bit pattern. -/
+private def f1 : Float := Float.ofBits 0x3FF0000000000000
+
+/-- `2.0` by bit pattern. -/
+private def f2 : Float := Float.ofBits 0x4000000000000000
+
+/-- Extern-only `Nat → Float` (exact for `n < 2^53`, the only range the
+    searches meet). -/
+def floatOfNat (n : Nat) : Float := n.toUInt64.toFloat
+
+/-- Extern-only `Int → Float` (exact for `|x| < 2^53`). -/
+def floatOfInt (x : Int) : Float := x.toInt64.toFloat
+
 /-- Welch window. -/
 def welch (fl : Array Float) : Array Float :=
-  let half := Float.ofNat (fl.size - 1) / 2
+  let half := floatOfNat (fl.size - 1) / f2
   fl.mapIdx fun i x =>
-    let t := (Float.ofNat i - half) / half
-    x * (1.0 - t * t)
+    let t := (floatOfNat i - half) / half
+    x * (f1 - t * t)
 
 def autocorr (w : Array Float) (maxLag : Nat) : Array Float := Id.run do
-  let mut r := Array.replicate (maxLag + 1) 0.0
+  let mut r := Array.replicate (maxLag + 1) f0
   for lag in [0:maxLag + 1] do
-    let mut acc := 0.0
+    let mut acc := f0
     for i in [lag:w.size] do
       acc := acc + w[i]! * w[i - lag]!
     r := r.set! lag acc
@@ -129,10 +152,10 @@ def autocorr (w : Array Float) (maxLag : Nat) : Array Float := Id.run do
 /-- Levinson–Durbin recursion: order-`ord` forward predictor coefficients
     (most recent sample first) from autocorrelation `r`. -/
 def levinson (r : Array Float) (ord : Nat) : Array Float := Id.run do
-  let mut lpc := Array.replicate ord 0.0
+  let mut lpc := Array.replicate ord f0
   let mut err := r[0]!
   for i in [0:ord] do
-    if err ≤ 0.0 then
+    if err ≤ f0 then
       return lpc
     let mut acc := r[i + 1]!
     for j in [0:i] do
@@ -142,23 +165,23 @@ def levinson (r : Array Float) (ord : Nat) : Array Float := Id.run do
     for j in [0:i] do
       lpc := lpc.set! j (old[j]! - k * old[i - 1 - j]!)
     lpc := lpc.set! i k
-    err := err * (1.0 - k * k)
+    err := err * (f1 - k * k)
   return lpc
 
 def floatToInt (f : Float) : Int :=
-  if f ≥ 0 then Int.ofNat f.toUInt64.toNat
+  if f ≥ f0 then Int.ofNat f.toUInt64.toNat
   else -(Int.ofNat (-f).toUInt64.toNat)
 
 /-- Quantize Float coefficients to `prec`-bit integers with a shift
     (error-feedback rounding, libFLAC style). -/
 def quantizeCoefs (cf : List Float) (prec : Nat) : List Int × Nat := Id.run do
-  let cmax := cf.foldl (fun a c => max a c.abs) 0.0
-  if cmax ≤ 0.0 then
+  let cmax := cf.foldl (fun a c => max a c.abs) f0
+  if cmax ≤ f0 then
     return (cf.map fun _ => 0, 0)
-  let maxval := Float.ofNat (2 ^ (prec - 1) - 1)
+  let maxval := floatOfNat (2 ^ (prec - 1) - 1)
   let s0 := Float.log2 (maxval / cmax)
-  let shift := if s0 ≤ 0.0 then 0 else min 15 s0.floor.toUInt64.toNat
-  let scale := Float.ofNat (2 ^ shift)
+  let shift := if s0 ≤ f0 then 0 else min 15 s0.floor.toUInt64.toNat
+  let scale := floatOfNat (2 ^ shift)
   let mut e := 0.0
   let mut out : List Int := []
   for c in cf do
@@ -175,9 +198,9 @@ def lpcSearch (b : Nat) (blk : List Int) :
     Option ((List Int × Nat × Nat × List Nat) × Nat) := Id.run do
   if blk.length < 16 then
     return none
-  let fl := (blk.map Float.ofInt).toArray
+  let fl := (blk.map floatOfInt).toArray
   let r := autocorr (welch fl) 8
-  if !(r[0]! > 0.0) then
+  if !(r[0]! > f0) then
     return none
   let mut best : Option ((List Int × Nat × Nat × List Nat) × Nat) := none
   for ord in [1, 2, 4, 6, 8] do

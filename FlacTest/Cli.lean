@@ -260,6 +260,9 @@ def usage : String :=
   "vinyl - a formally verified FLAC codec (see README.md)\n\n" ++
   "  vinyl --encode <in.pcm> <out.flac> <blockSize> <channels>\n" ++
   "      encode raw interleaved signed 16-bit little-endian PCM\n" ++
+  "      (fast encoder; every call certified by the verified decoder)\n" ++
+  "  vinyl --encode-slow <in.pcm> <out.flac> <blockSize> <channels>\n" ++
+  "      encode with the fully verified encoder (the fast path's fallback)\n" ++
   "  vinyl --decode <in.flac> <out.pcm>\n" ++
   "      decode with the verified reference decoder (raw 16-bit LE out)\n" ++
   "  vinyl --decode-fast <in.flac> <out.pcm>\n" ++
@@ -275,9 +278,21 @@ def cliMain (args : List String) : IO UInt32 := do
     return 0
   if let ["--encode", inFile, outFile, bs, ch] := args then
     let bytes ← IO.FS.readBinFile inFile
-    -- the checked byte-level encoder: whenever it returns bytes,
-    -- `Flac.decodePcm16_encodePcm16Cfg` guarantees decoding returns the
-    -- input bytes exactly — no hypotheses
+    -- the fast byte-level encoder, certified per call: whenever it returns
+    -- bytes, `Flac.decodePcm16_encodePcm16Fast` guarantees decoding
+    -- returns the input bytes exactly — no hypotheses
+    match Flac.encodePcm16Fast bs.toNat! ch.toNat! 44100 bytes with
+    | some flacBytes =>
+      IO.FS.writeBinFile outFile flacBytes
+      IO.println s!"encoded {bytes.size / (2 * ch.toNat!)} samples x {ch} channels (certified: round-trip guaranteed by Flac.decodePcm16_encodePcm16Fast)"
+      return 0
+    | none =>
+      IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, or channels/blockSize out of range)"
+      return 1
+  if let ["--encode-slow", inFile, outFile, bs, ch] := args then
+    let bytes ← IO.FS.readBinFile inFile
+    -- the fully verified encoder (the fast path's fallback), kept for
+    -- differential testing
     match Flac.encodePcm16Cfg ⟨bs.toNat!, false, Heuristics.defaultAsgChooser 16⟩
         ch.toNat! 44100 bytes with
     | some flacBytes =>
@@ -285,7 +300,7 @@ def cliMain (args : List String) : IO UInt32 := do
       IO.println s!"encoded {bytes.size / (2 * ch.toNat!)} samples x {ch} channels (checked: round-trip guaranteed by Flac.decodePcm16_encodePcm16Cfg)"
       return 0
     | none =>
-      IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, or channels/blockSize out of range)"
+      IO.println "ENCODE ERROR: input not FLAC-representable"
       return 1
   if let ["--decode-fast", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
