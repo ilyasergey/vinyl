@@ -1,6 +1,7 @@
 import Flac.Native.Bits
 import Flac.Native.Rice
 import Flac.Native.Subframe
+import Flac.Native.Lpc
 
 /-!
 # The verified fast emitter — bit writer layer
@@ -72,5 +73,83 @@ def pushRice (w : W) (k : Nat) (x : Int) : W :=
   let u := Rice.zigzag x
   (w.pushUnary (u >>> k)).push k (u &&& (p2 k - 1))
 
+/-! ## Sequences, partitions, residuals (mirroring the model writers) -/
+
+/-- Fixed-width run over the segment `xs[start .. start+len)` (stopping
+    at the array end, exactly like the model's `take`). -/
+def pushSIntSeg (b : Nat) (xs : Array Int) : (start len : Nat) → W → W
+  | _, 0, w => w
+  | start, len + 1, w =>
+    if start < xs.size then
+      pushSIntSeg b xs (start + 1) len (w.pushSInt b (xs.getD start 0))
+    else w
+
+/-- Rice run over the segment `xs[start .. start+len)` (stopping at the
+    array end). -/
+def pushRiceSeg (k : Nat) (xs : Array Int) : (start len : Nat) → W → W
+  | _, 0, w => w
+  | start, len + 1, w =>
+    if start < xs.size then
+      pushRiceSeg k xs (start + 1) len (w.pushRice k (xs.getD start 0))
+    else w
+
+/-- Fixed-width run over a (short) list — LPC coefficients. -/
+def pushSIntList (b : Nat) : List Int → W → W
+  | [], w => w
+  | x :: xs, w => pushSIntList b xs (w.pushSInt b x)
+
+/-- The partitions of a coded residual, one `(choice, size)` pair at a
+    time, walking `res` by index (computes
+    `writeParts ∘ zip choices ∘ chunkBySizes`). -/
+def pushParts (m : Rice.Method) (res : Array Int) :
+    (choices : List Rice.Partition) → (sizes : List Nat) → (start : Nat) → W → W
+  | [], _, _, w => w
+  | _ :: _, [], _, w => w
+  | ch :: choices, sz :: sizes, start, w =>
+    let w' := match ch with
+      | .rice k => pushRiceSeg k res start sz (w.push m.paramBits k)
+      | .escape bits =>
+        pushSIntSeg bits res start sz
+          ((w.push m.paramBits m.escapeCode).push 5 bits)
+    pushParts m res choices sizes (start + sz) w'
+
+/-- A coded residual (computes `Rice.writeResidual`). -/
+def pushResidual (bs ord : Nat) (cfg : Rice.ResidualCfg) (res : Array Int)
+    (w : W) : W :=
+  pushParts cfg.method res cfg.choices (Rice.partSizes bs cfg.po ord) 0
+    ((w.push 2 cfg.method.code).push 4 cfg.po)
+
 end W
+
+/-! ## Predictor residuals over arrays (structural, for the proofs) -/
+
+/-- First differences: `rem` of them starting at index `i`. -/
+def diffGo (xs : Array Int) : (i rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | i, rem + 1, out =>
+    diffGo xs (i + 1) rem (out.push (xs.getD (i + 1) 0 - xs.getD i 0))
+
+/-- `Fixed.diff1` over arrays. -/
+def diffA (xs : Array Int) : Array Int :=
+  diffGo xs 0 (xs.size - 1) (Array.emptyWithCapacity (xs.size - 1))
+
+/-- `Fixed.residual` (the `ord`-th difference) over arrays. -/
+def fixedResA : (ord : Nat) → Array Int → Array Int
+  | 0, xs => xs
+  | ord + 1, xs => diffA (fixedResA ord xs)
+
+/-- LPC residuals: `rem` of them starting at index `i`, predicting from
+    the array prefix (`Lpc.dotA` walks it most-recent-first). -/
+def lpcResGo (cs : List Int) (shift : Nat) (xs : Array Int) :
+    (i rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | i, rem + 1, out =>
+    lpcResGo cs shift xs (i + 1) rem
+      (out.push (xs.getD i 0 - Flac.Bits.sar (Lpc.dotA cs xs (i - 1)) shift))
+
+/-- `Lpc.residual` over arrays. -/
+def lpcResA (cs : List Int) (shift : Nat) (xs : Array Int) : Array Int :=
+  lpcResGo cs shift xs cs.length (xs.size - cs.length)
+    (Array.emptyWithCapacity (xs.size - cs.length))
+
 end Flac.Emit

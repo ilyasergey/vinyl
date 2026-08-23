@@ -235,4 +235,166 @@ theorem emits_pushRice (k : Nat) (x : Int) :
   rw [h2.1, h1.1, List.append_assoc, Nat.shiftRight_eq_div_pow, p2_eq,
     Nat.and_two_pow_sub_one_eq_mod, ← writeBits_mod]
 
+
+/-! ## Sequence and partition emissions -/
+
+private theorem getD_lt (xs : Array Int) {i : Nat} (h : i < xs.size) :
+    xs.getD i 0 = xs[i] := by
+  simp [Array.getD, h]
+
+private theorem drop_toList_cons (xs : Array Int) {i : Nat} (h : i < xs.size) :
+    xs.toList.drop i = xs[i] :: xs.toList.drop (i + 1) := by
+  rw [List.drop_eq_getElem_cons (by simpa using h)]
+  simp
+
+private theorem drop_toList_nil (xs : Array Int) {i : Nat} (h : ¬ i < xs.size) :
+    xs.toList.drop i = [] := by
+  apply List.drop_eq_nil_of_le
+  simpa using by omega
+
+theorem emits_pushSIntSeg (b : Nat) (xs : Array Int) :
+    ∀ (len start : Nat),
+      Emits (fun w => W.pushSIntSeg b xs start len w)
+        (Rice.writeSIntSeq b ((xs.toList.drop start).take len)) := by
+  intro len
+  induction len with
+  | zero =>
+    intro start w hw
+    refine ⟨?_, hw⟩
+    simp [W.pushSIntSeg, W.bits, Rice.writeSIntSeq]
+  | succ len ih =>
+    intro start
+    by_cases h : start < xs.size
+    · apply emits_congr
+        (emits_comp (emits_pushSInt b (xs.getD start 0)) (ih (start + 1)))
+        (fun w => by
+          show _ = W.pushSIntSeg b xs start (len + 1) w
+          simp only [W.pushSIntSeg, h, if_true])
+      rw [drop_toList_cons xs h, List.take_succ_cons, getD_lt xs h]
+      rfl
+    · intro w hw
+      have heq : W.pushSIntSeg b xs start (len + 1) w = w := by
+        unfold W.pushSIntSeg
+        rw [if_neg h]
+      rw [drop_toList_nil xs h]
+      refine ⟨?_, by rw [show ((fun w => W.pushSIntSeg b xs start (len + 1) w) w)
+        = w from heq]; exact hw⟩
+      rw [show ((fun w => W.pushSIntSeg b xs start (len + 1) w) w) = w from heq]
+      simp [Rice.writeSIntSeq]
+
+theorem emits_pushRiceSeg (k : Nat) (xs : Array Int) :
+    ∀ (len start : Nat),
+      Emits (fun w => W.pushRiceSeg k xs start len w)
+        (Rice.writeRiceSeq k ((xs.toList.drop start).take len)) := by
+  intro len
+  induction len with
+  | zero =>
+    intro start w hw
+    refine ⟨?_, hw⟩
+    simp [W.pushRiceSeg, W.bits, Rice.writeRiceSeq]
+  | succ len ih =>
+    intro start
+    by_cases h : start < xs.size
+    · apply emits_congr
+        (emits_comp (emits_pushRice k (xs.getD start 0)) (ih (start + 1)))
+        (fun w => by
+          show _ = W.pushRiceSeg k xs start (len + 1) w
+          simp only [W.pushRiceSeg, h, if_true])
+      rw [drop_toList_cons xs h, List.take_succ_cons, getD_lt xs h]
+      rfl
+    · intro w hw
+      have heq : W.pushRiceSeg k xs start (len + 1) w = w := by
+        unfold W.pushRiceSeg
+        rw [if_neg h]
+      rw [drop_toList_nil xs h]
+      refine ⟨?_, by rw [show ((fun w => W.pushRiceSeg k xs start (len + 1) w) w)
+        = w from heq]; exact hw⟩
+      rw [show ((fun w => W.pushRiceSeg k xs start (len + 1) w) w) = w from heq]
+      simp [Rice.writeRiceSeq]
+
+theorem emits_pushSIntList (b : Nat) :
+    ∀ (l : List Int),
+      Emits (fun w => W.pushSIntList b l w) (Rice.writeSIntSeq b l) := by
+  intro l
+  induction l with
+  | nil =>
+    intro w hw
+    refine ⟨?_, hw⟩
+    simp [W.pushSIntList, Rice.writeSIntSeq]
+  | cons x t ih =>
+    apply emits_congr (emits_comp (emits_pushSInt b x) ih) (fun w => rfl)
+    rfl
+
+theorem emits_pushParts (m : Rice.Method) (res : Array Int) :
+    ∀ (choices : List Rice.Partition) (sizes : List Nat) (start : Nat),
+      Emits (fun w => W.pushParts m res choices sizes start w)
+        (Rice.writeParts m
+          (choices.zip (Rice.chunkBySizes sizes (res.toList.drop start)))) := by
+  intro choices
+  induction choices with
+  | nil =>
+    intro sizes start w hw
+    refine ⟨?_, hw⟩
+    simp [W.pushParts, Rice.writeParts]
+  | cons ch choices ih =>
+    intro sizes start
+    match sizes with
+    | [] =>
+      intro w hw
+      refine ⟨?_, hw⟩
+      show w.bits = w.bits ++ Rice.writeParts m ((ch :: choices).zip
+        (Rice.chunkBySizes [] (res.toList.drop start)))
+      simp [W.pushParts, Rice.chunkBySizes, Rice.writeParts]
+    | sz :: sizes =>
+      have hrest : ∀ w', W.pushParts m res (ch :: choices) (sz :: sizes) start w'
+          = W.pushParts m res choices sizes (start + sz)
+              (match ch with
+               | .rice k => W.pushRiceSeg k res start sz (w'.push m.paramBits k)
+               | .escape bits =>
+                 W.pushSIntSeg bits res start sz
+                   ((w'.push m.paramBits m.escapeCode).push 5 bits)) :=
+        fun w' => rfl
+      have hchunk : Rice.chunkBySizes (sz :: sizes) (res.toList.drop start)
+          = (res.toList.drop start).take sz
+            :: Rice.chunkBySizes sizes (res.toList.drop (start + sz)) := by
+        show (res.toList.drop start).take sz
+            :: Rice.chunkBySizes sizes ((res.toList.drop start).drop sz) = _
+        rw [List.drop_drop]
+      match ch with
+      | .rice k =>
+        apply emits_congr
+          (emits_comp
+            (emits_comp (emits_push m.paramBits k) (emits_pushRiceSeg k res sz start))
+            (ih sizes (start + sz)))
+          (fun w => (hrest w).symm)
+        rw [hchunk, List.zip_cons_cons]
+        unfold Rice.writeParts
+        rw [List.flatMap_cons]
+        simp [Rice.writePart, List.append_assoc, Rice.writeParts]
+      | .escape bits =>
+        apply emits_congr
+          (emits_comp
+            (emits_comp
+              (emits_comp (emits_push m.paramBits m.escapeCode) (emits_push 5 bits))
+              (emits_pushSIntSeg bits res sz start))
+            (ih sizes (start + sz)))
+          (fun w => (hrest w).symm)
+        rw [hchunk, List.zip_cons_cons]
+        unfold Rice.writeParts
+        rw [List.flatMap_cons]
+        simp [Rice.writePart, List.append_assoc, Rice.writeParts]
+
+theorem emits_pushResidual (bs ord : Nat) (cfg : Rice.ResidualCfg)
+    (res : Array Int) :
+    Emits (fun w => W.pushResidual bs ord cfg res w)
+      (Rice.writeResidual bs ord cfg res.toList) := by
+  apply emits_congr
+    (emits_comp
+      (emits_comp (emits_push 2 cfg.method.code) (emits_push 4 cfg.po))
+      (emits_pushParts cfg.method res cfg.choices
+        (Rice.partSizes bs cfg.po ord) 0))
+    (fun w => rfl)
+  unfold Rice.writeResidual
+  rw [List.drop_zero, List.append_assoc]
+
 end Flac.Emit
