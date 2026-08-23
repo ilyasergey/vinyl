@@ -364,3 +364,105 @@ over them), shared between fast and reference paths. Then
 `decode (emitFast cfg a) = .ok a` follows by rewriting — no per-call
 decode, no fallback. Also open: frame-parallel *verified* emission needs
 `(Frame.write …).length % 8 = 0` + `bitsToBytes`-append lemmas.
+
+## 2026-08-23 — Session 6: corrected benchmark and second M6 pass
+
+**Attempted:** continue M6 toward a ≤1.1× median throughput gap to
+libFLAC, complete the M6b writer proof, and profile the corrected remaining
+gaps without weakening totality or any capstone.
+
+**Benchmark correction (commit `05b3033`, narrative `3e36c77`):** the old
+shell harness launched `python3` once per timestamp. The second timestamp
+startup (roughly 19–22 ms) was inside every measured interval, which
+disproportionately slowed libFLAC's 7–10 ms commands on the mostly 1 MB
+corpus. `bench/run.py` now owns timing in one persistent process, warms every
+case, shuffles a fixed-seed schedule, records the median (five repetitions by
+default), and keeps `flac -t`/PCM byte comparisons outside timing. The first
+corrected one-sample smoke pass measured:
+
+- Vinyl encode 11.995 MB/s versus `flac -5` 106.281 MB/s: 8.86× gap.
+- Vinyl decode 30.649 MB/s versus libFLAC decode 121.325 MB/s: 3.96× gap.
+- Compression remained 39.6% overall (Vinyl) versus 39.8% (`flac -8`).
+
+These are provisional correction-run numbers, not the final default-five-run
+dashboard. The previous published 4.4×/2.4× gaps were measurement-biased
+and have been removed from both READMEs. Lean CLI startup itself was only
+about 1.6 ms slower than `flac`, so executable startup is not the main gap.
+
+**Landed, green, and committed:**
+
+- `29ef364` — scalar unary `scanOne` plus the allocation-free fused Rice
+  sequence reader, with `scanOne_spec` and `readRiceSeqScan_eq`. The
+  representative Rice-heavy decode fell from about 43.45 ms to 33.62 ms
+  (~1.29×); all existing decoder equivalence/capstone statements remain.
+- `75609f3` — streaming MD5: direct proof-indexed block reads, 64 unrolled
+  rounds, and at most 128 bytes of tail padding instead of copying the whole
+  input. 1 MB and 50 MB probes improved by about 5.2× (11.45→2.16 ms and
+  570.28→109.94 ms). MD5 remains tested rather than trusted for losslessness.
+- `eaa2fc5` — tail-recursive proof-indexed LPC restore dot product. The
+  order-8 microbenchmark improved 1420→1074 ms (24.4%); representative
+  end-to-end LPC decodes improved 7–16% depending on content.
+- `f55b305` — LPC candidates fold residuals directly into partition sums,
+  allocate no block-sized losing residuals, and carry the winning residual
+  into emission. All 37 corpus outputs (16,227,607 encoded bytes) remained
+  byte-identical. Interleaved corpus median encode throughput improved
+  11.883→13.764 MB/s (1.153×); aggregate CPU time fell 12.42→9.32 s.
+- `68321f1` — full verified byte emitter. `pushFrame_spec` is lifted through
+  `emits_pushStreamInfo`, `pushFrames_spec`, `pushStream_spec`, and `encode_eq`
+  to the public capstone `Flac.Emit.emitFast_eq_encode`. No public encoder
+  switch was made: the serial/list-safe path was 1.91–4.32× slower than the
+  current UInt64/array emitter.
+- `93162d9` — allocation-free `crc8Range`/`crc16Range`, with general
+  `ByteArray.foldl_start_stop` and `crc*Range_eq_extract` proofs for all
+  endpoints. The isolated frame-range probe gained a modest 1–3% and removed
+  the temporary slice. Call sites are intentionally left for the next unit.
+
+**Measured and discarded (working tree restored):**
+
+- Selecting separate `k = 0`/positive Rice loops per partition regressed an
+  interleaved representative median from 33.62 to 34.05 ms. A proof-carrying
+  byte cursor and alternate bitwise unzigzag/masked extraction also regressed.
+- Tail-accumulating decoded frames was fully proved (`readFramesGoA_eq`,
+  `readFramesA_eq`) but neutral: mixed 41.089→41.034 ms, tonal
+  37.723→37.773 ms, stereo 66.827→67.244 ms. It was reverted.
+- Grouping eight frames per encoder task was neutral (raw speed ratios
+  0.990–1.007×); task setup is not a dominant cost. Replacing the short LPC
+  coefficient list with an array loop regressed raw encode by 5–9%.
+- Fused autocorrelation/shared Levinson snapshots, a typed recursive CRC
+  loop, and several extraction micro-rewrites were neutral or slower and were
+  reverted rather than retained as complexity.
+
+**Current profile and honest status:** the ≤1.1× target is not reached.
+After correcting the timer, the target is substantially harder than the old
+dashboard suggested. Decode is dominated by the fused Rice loop (~31% in the
+latest sample), LPC restore (~21%), array pushes/allocations, bit extraction,
+and CRC/memory copies. Raw encode workers are dominated by repeated LPC
+candidate scoring, then fixed residual scans/differences, allocation, and bit
+emission; the production CLI additionally spends roughly one verified decode
+on its runtime certificate.
+
+**Exact takeover path:**
+
+1. Wire `crc8Range`/`crc16Range` into decoder, verified emitter, and raw
+   encoder call sites, rewriting proofs with `crc8Range_eq_extract` and
+   `crc16Range_eq_extract`.
+2. Prototype a guarded `USize` Rice cursor (fallback to the proved Nat path
+   when buffer/quotient arithmetic could wrap), then prove it equal to
+   `readRiceSeqScan` only if an interleaved benchmark shows a clear win.
+3. Test the intended libFLAC-style speed/ratio tradeoff of scoring only the
+   Levinson-selected LPC order instead of selected + `{1,2,4,6,8}`; record
+   corpus compression delta before changing both shared heuristics.
+4. To remove encode's runtime decode, build the array validity/sanitization
+   bridge (`validResidualA` → subframe → channel assignment), preserve
+   prepared residuals and task-parallel emission, and prove array chunking plus
+   PCM16/MD5 correspondence. Do not substitute the existing list-safe emitter;
+   its measured regression defeats the objective.
+5. After each retained unit run `scripts/check.sh`; once code settles, run
+   `BENCH_RUNS=5 ./bench/run.sh`, replace the provisional artifacts/narrative,
+   and evaluate the ≤1.1× target against the same-run medians.
+
+**Handoff state:** all speculative decoder/encoder changes were reverted;
+only green committed units and the explicitly provisional corrected benchmark
+artifacts remain. `scripts/check.sh` is ALL GREEN: the 73-job build succeeds,
+proof hygiene finds no `sorry`/`axiom`, capstones are pinned, decoder totality
+and indexing lints pass, and all 73 executable checks pass.

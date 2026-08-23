@@ -129,6 +129,15 @@ byte-level PCM16 serializer is a fused indexed pass (`pcm16Fast_eq`) —
 each fast path proven equal to its specification, so every simulation
 lemma and capstone keeps its statement.
 
+The writer-side ratchet now exists as well. `Flac.Emit.emitFast` writes a
+complete stream into a byte buffer, and `Flac.Emit.emitFast_eq_encode` proves
+byte-for-byte equality with `Stream.encode`; the proof stack covers the bit
+writer, residuals, subframes, CRC-bearing frames, STREAMINFO, frame sequences,
+and the full stream. This path is deliberately not the public PCM16 fast path
+yet: it currently uses the list-based `safeChooser` and recomputes prepared
+predictor data, making it 1.9–4.3× slower than the production UInt64/array
+emitter in representative tests.
+
 The fast *encoder* (`Flac/Native/Encode.lean`) uses the other sound
 pattern: it is unverified by design, like the heuristics, and each call
 is **certified at runtime** — `Flac.encodePcm16Fast` decodes the produced
@@ -141,6 +150,14 @@ frame (frames are byte-aligned and independent; outputs are concatenated
 in order and remain byte-identical to the serial verified encoder under
 the default heuristics — which differential tests check on every corpus
 file).
+
+Retiring that runtime decode without losing performance now has a precise
+cut: prove an allocation-free array-plan validity/sanitization bridge, preserve
+the already prepared fixed/LPC residuals through emission, prove array frame
+extraction and PCM16/MD5 correspondence, and connect the task-parallel UInt64
+writer to the verified emitter semantics. Calling the existing list deciders
+or substituting the serial verified emitter is correct but misses the
+performance objective.
 
 One more by-construction safety device: heuristic outputs carry decidable
 validity certificates, and the encoder (`EncoderCfg.safeChooser`) checks

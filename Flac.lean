@@ -15,6 +15,7 @@ import Flac.Native.Frame
 import Flac.Native.Stereo
 import Flac.Native.Stream
 import Flac.Spec.Bits
+import Flac.Spec.Crc
 import Flac.Spec.Decode
 import Flac.Spec.Fixed
 import Flac.Spec.Frame
