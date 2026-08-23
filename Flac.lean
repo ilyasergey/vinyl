@@ -3,8 +3,12 @@ import Flac.Native.Crc
 import Flac.Native.Utf8Num
 import Flac.Native.Md5
 import Flac.Native.Rice
+import Flac.Native.Fixed
+import Flac.Native.Subframe
 import Flac.Spec.Bits
+import Flac.Spec.Fixed
 import Flac.Spec.Rice
+import Flac.Spec.Subframe
 import Flac.Spec.Utf8Num
 
 /-! # Soundproof — a formally verified FLAC codec in pure Lean 4 -/
