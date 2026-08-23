@@ -61,17 +61,40 @@ The decoded prefix lives in one growing array; the prediction indexes it
 from the end instead of consing a reversed history per sample. Proven
 equal to the list forms in `Flac.Spec.Lpc` (`restoreA_toList`). -/
 
-/-- `dot cs hist` where the history is `out[i], out[i-1], …, out[0]` —
-    the decoded prefix walked from the end, most recent first (stopping at
-    index 0 exactly like `dot`'s zip truncation). -/
-def dotA : List Int → Array Int → Nat → Int
+/-- Tail-recursive dot product against the final `n` elements of `out`,
+    newest first. The bound is proof-only, so each tap uses direct array
+    indexing without a dynamic `getD` check. -/
+def dotAGo (out : Array Int) :
+    (cs : List Int) → (n : Nat) → n ≤ out.size → Int → Int
+  | [], _, _, acc => acc
+  | _ :: _, 0, _, acc => acc
+  | c :: cs, n + 1, hn, acc =>
+    have hi : n < out.size := Nat.lt_of_succ_le hn
+    dotAGo out cs n (Nat.le_of_lt hi) (acc + c * out[n])
+
+/-- The original total `getD` behavior for the cold case where the supplied
+    starting index is outside the array. -/
+private def dotAGetD : List Int → Array Int → Nat → Int
   | [], _, _ => 0
   | c :: _, out, 0 => c * out.getD 0 0
-  | c :: cs, out, i + 1 => c * out.getD (i + 1) 0 + dotA cs out i
+  | c :: cs, out, i + 1 => c * out.getD (i + 1) 0 + dotAGetD cs out i
+
+/-- `dot cs hist` where the history is `out[i], out[i-1], …, out[0]` —
+    the decoded prefix walked from the end, most recent first (stopping at
+    index 0 exactly like `dot`'s zip truncation). The decoder's in-bounds
+    path is a tail loop with one proof-erased direct lookup per tap. -/
+@[inline] def dotA (cs : List Int) (out : Array Int) (i : Nat) : Int :=
+  match cs with
+  | [] => 0
+  | _ :: _ =>
+    if h : i < out.size then
+      dotAGo out cs (i + 1) (Nat.succ_le_iff.mpr h) 0
+    else
+      dotAGetD cs out i
 
 /-- `predict` against the tail of the decoded prefix. -/
-def predictA (cs : List Int) (shift : Nat) (out : Array Int) : Int :=
-  sar (dotA cs out (out.size - 1)) shift
+@[inline] def predictA (cs : List Int) (shift : Nat) (out : Array Int) : Int :=
+  sar (dotAGo out cs out.size (Nat.le_refl _) 0) shift
 
 /-- `restore` with the residual (and result) as arrays: the array is both
     the accumulating output and the prediction history. Callers guarantee

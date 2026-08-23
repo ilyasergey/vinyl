@@ -65,55 +65,53 @@ theorem restore_residual (cs : List Int) (shift : Nat) (xs : List Int) :
 private theorem dot_nil (cs : List Int) : dot cs [] = 0 := by
   cases cs <;> rfl
 
+/-- The tail-recursive array loop is the list dot product against the
+    corresponding reversed prefix, with its accumulator added in front. -/
+private theorem dotAGo_eq (out : Array Int) :
+    ∀ (cs : List Int) (n : Nat) (hn : n ≤ out.size) (acc : Int),
+      dotAGo out cs n hn acc =
+        acc + dot cs ((out.toList.take n).reverse) := by
+  intro cs
+  induction cs with
+  | nil =>
+    intro n hn acc
+    simp [dotAGo, dot]
+  | cons c cs ih =>
+    intro n hn acc
+    match n with
+    | 0 => simp [dotAGo, dot]
+    | n + 1 =>
+      have hi : n < out.size := Nat.lt_of_succ_le hn
+      have hsplit : (out.toList.take (n + 1)).reverse
+          = out[n] :: (out.toList.take n).reverse := by
+        rw [List.take_succ, List.reverse_append]
+        simp [Array.getElem?_toList, Array.getElem?_eq_getElem hi]
+      simp only [dotAGo]
+      rw [ih n (Nat.le_of_lt hi) (acc + c * out[n]), hsplit]
+      simp only [dot]
+      omega
+
 /-- Walking the array from index `i` downward is the dot product against
     the reversed prefix of length `i + 1`. -/
 theorem dotA_take (out : Array Int) :
     ∀ (cs : List Int) (i : Nat), i < out.size →
       dotA cs out i = dot cs ((out.toList.take (i + 1)).reverse) := by
-  intro cs
-  induction cs with
-  | nil => intro i _; rfl
-  | cons c cs ih =>
-    intro i hi
-    have hget : out.getD i 0 = out[i] := by
-      simp [Array.getD, hi]
-    have hsplit : (out.toList.take (i + 1)).reverse
-        = out[i] :: (out.toList.take i).reverse := by
-      rw [List.take_succ, List.reverse_append]
-      simp [Array.getElem?_toList, Array.getElem?_eq_getElem hi]
-    match i with
-    | 0 =>
-      show c * out.getD 0 0 = _
-      rw [hsplit, hget]
-      show _ = c * out[0] + dot cs ((out.toList.take 0).reverse)
-      simp [dot_nil]
-    | i + 1 =>
-      show c * out.getD (i + 1) 0 + dotA cs out i = _
-      rw [hsplit, hget, ih i (by omega)]
-      rfl
+  intro cs i hi
+  cases cs with
+  | nil => rfl
+  | cons c cs =>
+    simp only [dotA, dif_pos hi]
+    rw [dotAGo_eq]
+    simp
 
 theorem predictA_eq (cs : List Int) (shift : Nat) (out : Array Int) :
     predictA cs shift out = predict cs shift out.toList.reverse := by
   unfold predictA predict
   congr 1
-  rcases hsz : out.size with _ | n
-  · have hnil : out.toList = [] := by
-      have := Array.length_toList (xs := out)
-      rw [hsz] at this
-      exact List.eq_nil_of_length_eq_zero this
-    rw [hnil]
-    cases cs with
-    | nil => rfl
-    | cons c cs =>
-      show c * out.getD 0 0 = dot (c :: cs) []
-      have hg : out.getD 0 0 = 0 := by
-        simp [Array.getD, hsz]
-      rw [hg, dot_nil]
-      simp
-  · show dotA cs out n = _
-    rw [dotA_take out cs n (by omega),
-      show out.toList.take (n + 1) = out.toList from
-        List.take_of_length_le (by simp [hsz])]
+  rw [dotAGo_eq]
+  rw [show out.toList.take out.size = out.toList from
+    List.take_of_length_le (by simp)]
+  simp
 
 private theorem foldl_restore (cs : List Int) (shift : Nat) :
     ∀ (l : List Int) (out : Array Int),
