@@ -250,7 +250,11 @@ Docs-only session; no Lean changes (`lake build` / `flactest` untouched).
   `interactive_comments` passes them as arguments (user-hit failure).
 - `.gitignore`: root-anchored `/*.flac`, `/*.pcm` for walkthrough
   scratch files.
+- CLI: malformed/unknown arguments now print the usage text to stderr
+  and exit 2 instead of falling through to samples mode (the old
+  catch-all treated `--encode` + wrong arity as a samples directory);
+  bare-directory samples invocation removed (`--samples` only,
+  `smoke.sh` updated), `--decode-fast` added to the usage text.
+  `lake exe flactest` (71 checks) and `smoke.sh` green.
 
-**Next:** unchanged — M6 performance under the ratchet; possible CLI
-nicety: usage error on malformed `vinyl` arguments instead of falling
-through to samples mode.
+**Next:** unchanged — M6 performance under the ratchet.

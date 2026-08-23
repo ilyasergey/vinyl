@@ -250,8 +250,10 @@ def usage : String :=
   "      encode raw interleaved signed 16-bit little-endian PCM\n" ++
   "  vinyl --decode <in.flac> <out.pcm>\n" ++
   "      decode with the verified reference decoder (raw 16-bit LE out)\n" ++
+  "  vinyl --decode-fast <in.flac> <out.pcm>\n" ++
+  "      decode with the shipped buffered decoder (raw 16-bit LE out)\n" ++
   "  vinyl --samples <dir>\n" ++
-  "      write sample .flac/.pcm pairs into <dir>\n" ++
+  "      write sample .flac/.pcm pairs into <dir> (must exist)\n" ++
   "  vinyl (no arguments)\n" ++
   "      run the unit-test suite"
 
@@ -293,10 +295,12 @@ def cliMain (args : List String) : IO UInt32 := do
     emitSamples dir
     IO.println s!"samples written to {dir}"
     return 0
-  if let dir :: _ := args then
-    emitSamples dir
-    IO.println s!"samples written to {dir}"
-    return 0
+  -- anything else (unknown flag, wrong argument count) is a usage error;
+  -- never guess at a mode
+  unless args.isEmpty do
+    IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
+    IO.eprintln usage
+    return 2
   let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; e2eTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"

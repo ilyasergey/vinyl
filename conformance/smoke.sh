@@ -18,7 +18,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 lake build flactest >/dev/null
-lake exe flactest "$WORK" >/dev/null
+lake exe flactest --samples "$WORK" >/dev/null
 
 fail=0
 
