@@ -133,18 +133,29 @@ def floatOfNat (n : Nat) : Float := n.toUInt64.toFloat
 /-- Extern-only `Int → Float` (exact for `|x| < 2^53`). -/
 def floatOfInt (x : Int) : Float := x.toInt64.toFloat
 
-/-- Welch window. -/
-def welch (fl : Array Float) : Array Float :=
-  let half := floatOfNat (fl.size - 1) / f2
-  fl.mapIdx fun i x =>
-    let t := (floatOfNat i - half) / half
-    x * (f1 - t * t)
+/-! ### Windowing and autocorrelation
 
-def autocorr (w : Array Float) (maxLag : Nat) : Array Float := Id.run do
+Block-sized float data is held in a `FloatArray`: a generic `Array Float`
+boxes every element, which cost one heap allocation per sample per
+subframe. The per-lag results stay boxed — there are only `maxLag + 1`
+of them. -/
+
+/-- Welch-windowed samples, unboxed. -/
+def welchF (xs : Array Int) : FloatArray := Id.run do
+  let n := xs.size
+  let half := floatOfNat (n - 1) / f2
+  let mut out := FloatArray.emptyWithCapacity n
+  for i in [0 : n] do
+    let t := (floatOfNat i - half) / half
+    out := out.push (floatOfInt (xs.getD i 0) * (f1 - t * t))
+  return out
+
+/-- Autocorrelation of the windowed samples. -/
+def autocorrF (w : FloatArray) (maxLag : Nat) : Array Float := Id.run do
   let mut r := Array.replicate (maxLag + 1) f0
-  for lag in [0:maxLag + 1] do
+  for lag in [0 : maxLag + 1] do
     let mut acc := f0
-    for i in [lag:w.size] do
+    for i in [lag : w.size] do
       acc := acc + w[i]! * w[i - lag]!
     r := r.set! lag acc
   return r
@@ -248,8 +259,7 @@ def lpcSearch (b : Nat) (blk : List Int) :
     Option ((List Int × Nat × Nat × List Nat) × Nat) := Id.run do
   if blk.length < 16 then
     return none
-  let fl := (blk.map floatOfInt).toArray
-  let r := autocorr (welch fl) 8
+  let r := autocorrF (welchF blk.toArray) 8
   if !(r[0]! > f0) then
     return none
   let ord := pickLpcOrder b blk.length (levinsonErrs r 8)

@@ -248,7 +248,7 @@ private structure LpcChoice where
 private def lpcChoiceF (b : Nat) (blk : Array Int) : Option LpcChoice := Id.run do
   if blk.size < 16 then
     return none
-  let r := Heuristics.autocorr (Heuristics.welch (blk.map Heuristics.floatOfInt)) 8
+  let r := Heuristics.autocorrF (Heuristics.welchF blk) 8
   if !(r.getD 0 (Float.ofBits 0) > Float.ofBits 0) then
     return none
   let ord := Heuristics.pickLpcOrder b blk.size (Heuristics.levinsonErrs r 8)
