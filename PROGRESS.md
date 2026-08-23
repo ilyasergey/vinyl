@@ -466,3 +466,121 @@ only green committed units and the explicitly provisional corrected benchmark
 artifacts remain. `scripts/check.sh` is ALL GREEN: the 73-job build succeeds,
 proof hygiene finds no `sorry`/`axiom`, capstones are pinned, decoder totality
 and indexing lints pass, and all 73 executable checks pass.
+
+## 2026-08-23 — Session 7: M6 third pass — parallel decoding closes the decode gap
+
+**Attempted:** continue M6 from Session 6's handoff toward a ~1.5×
+throughput gap against libFLAC, keeping every capstone and all proofs
+sorry-free, benchmarking and republishing `bench/` after each stage.
+
+**Result:** decode reached **1.58×** of libFLAC (30.6 → 78.0 MB/s median,
+2.55× faster this session); encode reached **3.94×** of `flac -8`
+(13.9 → 18.8 MB/s, 1.35× faster). Compression is byte-for-byte unchanged
+(39.58% overall, still ahead of `flac -8`'s 39.8%). `scripts/check.sh` is
+ALL GREEN throughout; no capstone statement changed.
+
+**Landed, green, committed and pushed:**
+
+- `fc02a46` — wired `crc8Range`/`crc16Range` into the decoder header and
+  footer checks, the verified emitter, and the fast encoder, removing a
+  slice allocation per frame. Proof deltas `crc8Slice_eq`/`crc16Slice_eq`
+  plus a range-form `pushFrame_spec`. Throughput-neutral, so this is now
+  purely an allocation cleanup (Session 6 had left the call sites unwired).
+- `37a4fd7` — **array-typed decoder core.** `decodeOption` used to
+  `.map (·.toList)` over every decoded sample, and `pcmBytes` immediately
+  rebuilt the very same arrays. `Flac.Decode.decodeArrays` is now the
+  core, `decodeOption` is that plus the conversion the *theorem
+  statements* are phrased over, and byte consumers use the arrays
+  directly (`pcmBytesA_eq`, `pcm16FastA_eq`, `decodePcm16A_eq`).
+  Decode 30.6 → 40.3 MB/s.
+- `59595a2` — **frame-parallel decoding, proven equal to the serial
+  loop.** The key observation is that `BitReader` reads a shared
+  immutable `ByteArray` at an absolute bit position, so decoding the
+  frame at position `p` on a worker runs *literally the call the serial
+  loop runs there*. A worker returns a `Step` carrying the frame reader's
+  own equation (`Step.ok`), so consuming one trusts neither the thread
+  nor the sync-code scan that guessed the position: a step is used only
+  when its recorded position matches, and positions the scan missed are
+  decoded on the spot. Proof chain `readFramesAt_eq` → `stepFor_eq` →
+  `readFramesSteps_eq` → `readFramesFast_eq`. Decode 40.3 → 67.4 MB/s.
+- `40a161f` — **parallel PCM serialization.** With frames decoding in
+  parallel, interleaved-PCM serialization was the serial bottleneck
+  (150 ms of a 480 ms 40 MB decode). The layout is sample-major, so
+  `pcmBytesA` now runs one task per 64Ki-sample window. It carries no
+  theorem (the verified byte path is `decodePcm16`/`pcm16FastA`), and
+  output is byte-identical on the 40 MB probe and all 37 corpus files
+  against libFLAC. Decode 67.4 → 73.9 MB/s.
+- `66dfbfb` — parallel-decode task granularity 24 → 8 candidates
+  (measured 8/12/24/48). Decode 73.9 → 78.0 MB/s.
+- `9921c43`, `2ebc9f9`, `3e7a410` — benchmark dashboard refreshed after
+  each stage (five runs, plots, `bench/README.md` narrative).
+
+**Measured and discarded (working tree restored):**
+
+- **LPC candidate pruning by Levinson estimate** — the biggest single
+  encode item is exactly costing the five or six candidate orders
+  (`lpcDotF` 19% + `lpcPartitionSearchF` 17% of raw encode). Keeping only
+  the best `k` by `lpcEstCost` measured, on the full corpus:
+  `k=6` 39.580%/3.05 s, `k=4` 39.674%/2.92 s, `k=3` 39.870%/2.83 s,
+  `k=2` 40.016%/2.33 s. Only `k=2` is meaningfully faster and it forfeits
+  the win over `flac -8` (39.8%), so the tradeoff was recorded, not taken.
+  This is the one lever that would move encode materially without new
+  proof work — it is a product decision, not an engineering one.
+- **Fused fixed-predictor search** (libFLAC's difference-ladder: one pass
+  carrying all five difference orders into their partition sums, no
+  block-sized difference arrays). Byte-identical output but *slower*
+  (2.28 s vs 2.12 s): juggling five-element `Array` state per sample costs
+  more than the allocations it saves.
+- **Unrolled LPC dot products** for orders 1/2/4/6/8 (straight-line
+  arithmetic, erased index proofs, no cons walk). Byte-identical and
+  exactly neutral (2.12 s) — the cost is the `Int` multiply/add calls, not
+  the list walk.
+- **Shift-based bit addressing** (`>>>3`/`&&&7` for `/8`/`%8`). A compiled
+  microbenchmark showed `Nat` division by 8 and shifting are the same
+  speed (239 ms per 100M iterations either way), so the change was never
+  made.
+- **`pcmBytesA` mono/stereo specialization** (channel arrays hoisted out
+  of the sample loop): neutral (30.74 vs 31.20 ms mono, stereo unchanged),
+  reverted rather than retained as complexity.
+
+**Profiling notes (macOS `sample`, 40 MB probes):**
+
+- Decode after this session: `readRiceSeqScan` ~23%, `Lpc.dotAGo` ~19%,
+  `accBytes` ~11%, `crc16` 8%, serialization 8%, array pushes and
+  allocator ~10%. The list round-trip items (`lengthTR`,
+  `array_to_list`, `toArrayAux`) are gone.
+- Raw encode: `lpcDotF` 19%, `lpcPartitionSearchF` 17%,
+  `partitionSearchF` 9.5%, allocator ~20%, `autocorr` 6%, bit writer 7%.
+  `wastedDetectF` never appears — the early-exit on an odd sample makes
+  libFLAC's OR+ctz trick unnecessary here.
+- Parallelism: encode 10.1 s user / 3.0 s real (3.4×); decode was 1.01/1.09
+  (serial) before this session and 1.58/0.45 after. The sync-code scan
+  finds 6488 candidates for 4883 real frames (1.33×); false candidates are
+  rejected by the header CRC-8, so the residual overhead is Lean's
+  cross-thread refcounting and allocator traffic, not wasted decoding.
+
+**Honest assessment of the remaining gap.** Decode is at the target.
+Encode is not, and the reason is representational rather than
+algorithmic: the hot loops are `Int` multiply–accumulate over `Array Int`
+against libFLAC's `int32` SIMD, and `Array Int64` would be *worse* in
+Lean (boxed per element), so the current representation is already the
+best available in pure Lean. Three levers remain, in order of value:
+
+1. **Remove the runtime certificate** (~24% of encode, now that decode is
+   fast): the designed M6b path — array-side validity/sanitization bridge
+   so the statically verified emitter can ship, instead of decoding every
+   encode to certify it. Note the verified emitter already exists and is
+   proven (`Flac.Emit.emitFast_eq_encode`); what blocks shipping it is
+   that the *heuristics* it calls still run on lists, so array-izing the
+   searches with equality proofs is the actual work.
+2. **The compression/speed tradeoff above** — a decision for the project
+   owner, worth ~1.3× encode.
+3. A windowed bit reader (cached word + count, libFLAC-style) for the
+   ~34% of decode in the Rice reader; would need a simulation proof
+   against `readRiceSeqScan`, and decode is already at target.
+
+**Blocked:** nothing.
+
+**Next:** M6b item 1 above (certificate removal) is the only remaining
+change that improves encode without trading compression or adding trusted
+code.

@@ -63,12 +63,11 @@ decode (the shipped buffered decoder):
 
 ![Throughput vs libFLAC](performance.png)
 
-Current five-run medians (2026-08-23, after frame-parallel decoding):
-Vinyl encode 18.6 MB/s and Vinyl decode 67.4 MB/s, versus 106.7 MB/s for
-`flac -5` encode, 73.6 MB/s for `flac -8` encode, and 123.3 MB/s for
-libFLAC decode. That is a 5.7× encode gap against `flac -5` — **4.0×
-against `flac -8`, the level whose compression Vinyl matches** — and a
-**1.8× decode gap**.
+Current five-run medians (2026-08-23): Vinyl encode 18.8 MB/s and Vinyl
+decode 78.0 MB/s, versus 106.4 MB/s for `flac -5` encode, 73.9 MB/s for
+`flac -8` encode, and 123.3 MB/s for libFLAC decode. That is a
+**1.58× decode gap** and a 5.7× encode gap against `flac -5` — **3.9×
+against `flac -8`, the level whose compression Vinyl matches**.
 
 Progress this session, all with the capstones unchanged and no proof debt:
 
@@ -78,6 +77,8 @@ Progress this session, all with the capstones unchanged and no proof debt:
 | allocation-free CRC ranges | 13.9 MB/s | 30.6 MB/s | 4.0× |
 | array-typed decoder core | 15.3 MB/s | 40.3 MB/s | 3.1× |
 | frame-parallel decoding | 18.6 MB/s | 67.4 MB/s | 1.8× |
+| parallel PCM serialization | 18.5 MB/s | 73.9 MB/s | 1.68× |
+| task granularity 8 | 18.8 MB/s | 78.0 MB/s | **1.58×** |
 
 Two structural changes did the work. First, the decoder used to convert
 every decoded sample from its `Array Int` into a `List Int` (the type the
@@ -97,9 +98,22 @@ position — a wrong guess costs work, never correctness. `readFramesFast_eq`
 collapses the whole parallel path back to the serial loop, leaving
 `decodeOption_eq_reference` and every capstone untouched.
 
+Serialization then became the decoder's serial bottleneck (150 ms of a
+480 ms 40 MB decode), so interleaved PCM is now written one task per
+64Ki-sample window — the interleaved layout is sample-major, so windows
+serialize independently and concatenate.
+
 Encode improves with decode because the fast encoder is certified per
-call by decoding its own output with the verified decoder (roughly 40% of
-encode time); the encoder has emitted frames in parallel for a while.
+call by decoding its own output with the verified decoder — now about a
+quarter of encode time; the encoder has emitted frames in parallel for a
+while. What remains of the encode gap is not algorithmic: profiling puts
+roughly a third of raw encode in exactly costing the five or six
+candidate LPC orders, and that cost is Lean `Int` multiply–accumulate
+against libFLAC's `int32` SIMD. Scoring fewer candidates closes part of
+the gap but gives up compression — measured on this corpus, keeping the
+best two candidates by Levinson estimate runs ~1.3× faster at 40.0%
+instead of 39.6%, which would forfeit the win over `flac -8`. The
+tradeoff is recorded rather than taken.
 
 The important correction is methodological: libFLAC did not suddenly get
 faster, and Vinyl also measures faster without the timestamp surcharge.
