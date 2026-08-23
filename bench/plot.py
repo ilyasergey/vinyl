@@ -85,10 +85,10 @@ fig.savefig(os.path.join(out_dir, "compression.png"))
 print("wrote compression.png")
 
 # ── performance: encode + decode throughput profiles ────────────────────
-def throughput_panel(ax, styles, kind, gap_pair):
+def throughput_panel(ax, styles, kind, gap_pair, gap_note=""):
     """Log-scale profile with readable scalar ticks, medians in the legend,
     and an arrow marking the median gap between the two encoders in
-    gap_pair (vinyl vs its libFLAC counterpart)."""
+    gap_pair (vinyl vs the libFLAC baseline it should be judged against)."""
     n = 0
     for enc in styles:
         if enc not in speed:
@@ -118,14 +118,17 @@ def throughput_panel(ax, styles, kind, gap_pair):
         ax.annotate("", xy=(x, hi_med), xytext=(x, lo_med),
                     arrowprops=dict(arrowstyle="<->", color="#111827", lw=1.1))
         ax.text(x + n * 0.03, math.sqrt(lo_med * hi_med),
-                f"×{hi_med / lo_med:.1f} median gap",
+                f"×{hi_med / lo_med:.1f} median gap\nvs {hi}{gap_note}",
                 va="center", fontsize=9, color="#111827")
     ax.set_title(f"{kind.capitalize()} speed")
     ax.grid(alpha=0.25, which="both")
     ax.legend(fontsize=8)
 
 fig2, (ax2, ax4) = plt.subplots(2, 1, figsize=(8.5, 9), dpi=150)
-throughput_panel(ax2, STYLE, "encode", ("vinyl", "flac -5"))
+# Encode is judged against `flac -8`: that is the preset whose compression
+# Vinyl matches, so it is the like-for-like speed baseline.
+throughput_panel(ax2, STYLE, "encode", ("vinyl", "flac -8"),
+                 gap_note="\n(matched ratio)")
 throughput_panel(ax4, DEC_STYLE, "decode", ("vinyl decode", "flac decode"))
 fig2.suptitle("Throughput — Vinyl (verified) vs libFLAC")
 fig2.tight_layout()
