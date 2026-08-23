@@ -1,5 +1,6 @@
 import Flac.Native.Decode
 import Flac.Spec.Reader
+import Flac.Spec.Heuristics
 
 /-!
 # Production↔reference decoder equivalence
@@ -913,3 +914,853 @@ theorem readFields_pos8 {b0 : Nat} {br br' : BitReader} {f : Frame.Fields}
                           refine ⟨by rw [d11, d10, d9, d8, d7, d6, d5, d4, d3, d2, d1],
                             ⟨4 + j9 + j10 + j11, by omega⟩, fun hw =>
                             b11 (b10 (b9 (b8 (b7 (b6 (b5 (b4 (b3 (b2 (b1 hw))))))))))⟩
+
+/-! ## Frame-header simulations -/
+
+theorem resolveBlockSize_sim (code : Nat) (br : BitReader) :
+    Frame.resolveBlockSize code (toStream br)
+      = (resolveBlockSize code br).map (fun p => (p.1, toStream p.2)) := by
+  unfold Frame.resolveBlockSize resolveBlockSize
+  by_cases h1 : code = 1
+  · rw [if_pos h1, if_pos h1]; rfl
+  rw [if_neg h1, if_neg h1]
+  by_cases h2 : 2 ≤ code ∧ code ≤ 5
+  · rw [if_pos h2, if_pos h2]; rfl
+  rw [if_neg h2, if_neg h2]
+  by_cases h3 : code = 6
+  · rw [if_pos h3, if_pos h3, readBits_sim 8 br]
+    cases br.readBits 8 with
+    | none => rfl
+    | some p => rfl
+  rw [if_neg h3, if_neg h3]
+  by_cases h4 : code = 7
+  · rw [if_pos h4, if_pos h4, readBits_sim 16 br]
+    cases br.readBits 16 with
+    | none => rfl
+    | some p => rfl
+  rw [if_neg h4, if_neg h4]
+  by_cases h5 : 8 ≤ code ∧ code ≤ 15
+  · rw [if_pos h5, if_pos h5]; rfl
+  · rw [if_neg h5, if_neg h5]; rfl
+
+theorem skipSampleRate_sim (code : Nat) (br : BitReader) :
+    Frame.skipSampleRate code (toStream br)
+      = (skipSampleRate code br).map toStream := by
+  unfold Frame.skipSampleRate skipSampleRate
+  by_cases h1 : code = 12
+  · rw [if_pos h1, if_pos h1, readBits_sim 8 br]
+    cases br.readBits 8 with
+    | none => rfl
+    | some p => rfl
+  rw [if_neg h1, if_neg h1]
+  by_cases h2 : code = 13 ∨ code = 14
+  · rw [if_pos h2, if_pos h2, readBits_sim 16 br]
+    cases br.readBits 16 with
+    | none => rfl
+    | some p => rfl
+  rw [if_neg h2, if_neg h2]
+  by_cases h3 : code = 15
+  · rw [if_pos h3, if_pos h3]; rfl
+  · rw [if_neg h3, if_neg h3]; rfl
+
+theorem readFields_sim (b0 : Nat) (br : BitReader) :
+    Frame.readFields b0 (toStream br)
+      = (readFields b0 br).map (fun p => (p.1, toStream p.2)) := by
+  unfold Frame.readFields readFields
+  rw [readBits_sim 14 br]
+  cases br.readBits 14 with
+  | none => rfl
+  | some p =>
+    simp only [Option.map_some]
+    by_cases hs : p.1 = 0x3FFE
+    case neg => rw [if_neg hs, if_neg hs]; rfl
+    rw [if_pos hs, if_pos hs, readBits_sim 1 p.2]
+    cases p.2.readBits 1 with
+    | none => rfl
+    | some q =>
+      simp only [Option.map_some]
+      by_cases hr : q.1 = 0
+      case neg => rw [if_neg hr, if_neg hr]; rfl
+      rw [if_pos hr, if_pos hr, readBits_sim 1 q.2]
+      cases q.2.readBits 1 with
+      | none => rfl
+      | some w =>
+        simp only [Option.map_some]
+        rw [readBits_sim 4 w.2]
+        cases w.2.readBits 4 with
+        | none => rfl
+        | some x =>
+          simp only [Option.map_some]
+          rw [readBits_sim 4 x.2]
+          cases x.2.readBits 4 with
+          | none => rfl
+          | some y =>
+            simp only [Option.map_some]
+            rw [readBits_sim 4 y.2]
+            cases y.2.readBits 4 with
+            | none => rfl
+            | some z =>
+              simp only [Option.map_some]
+              rw [readBits_sim 3 z.2]
+              cases z.2.readBits 3 with
+              | none => rfl
+              | some u =>
+                simp only [Option.map_some]
+                cases Frame.bpsOfCode u.1 b0 with
+                | none => rfl
+                | some b =>
+                  rw [readBits_sim 1 u.2]
+                  cases u.2.readBits 1 with
+                  | none => rfl
+                  | some v =>
+                    simp only [Option.map_some]
+                    by_cases hv : v.1 = 0
+                    case neg => rw [if_neg hv, if_neg hv]; rfl
+                    rw [if_pos hv, if_pos hv, readUtf8_sim v.2]
+                    cases readUtf8 v.2 with
+                    | none => rfl
+                    | some n =>
+                      simp only [Option.map_some]
+                      rw [resolveBlockSize_sim x.1 n.2]
+                      cases resolveBlockSize x.1 n.2 with
+                      | none => rfl
+                      | some bs =>
+                        simp only [Option.map_some]
+                        rw [skipSampleRate_sim y.1 bs.2]
+                        cases skipSampleRate y.1 bs.2 with
+                        | none => rfl
+                        | some fin => rfl
+
+/-! ## The CRC byte-slice equality -/
+
+theorem padLen_add (n : Nat) : (n + padLen n) % 8 = 0 := by
+  unfold padLen
+  omega
+
+/-- At byte-aligned cursor positions, the production byte slice equals the
+    packed model take. -/
+theorem sliceBytes_eq (br0 br1 : BitReader) (_hd : br1.data = br0.data)
+    (hle : br0.pos ≤ br1.pos) (h0 : br0.pos % 8 = 0)
+    (hdiff : (br1.pos - br0.pos) % 8 = 0) :
+    bitsToBytes ((toStream br0).take (br1.pos - br0.pos)) = sliceBytes br0 br1 := by
+  obtain ⟨a, ha⟩ : ∃ a, br0.pos = 8 * a := ⟨br0.pos / 8, by omega⟩
+  obtain ⟨m, hm⟩ : ∃ m, br1.pos - br0.pos = 8 * m := ⟨(br1.pos - br0.pos) / 8, by omega⟩
+  have hbits : (toStream br0).take (br1.pos - br0.pos)
+      = byteListToBits ((br0.data.data.toList.drop a).take m) := by
+    show ((byteListToBits br0.data.data.toList).drop br0.pos).take _ = _
+    rw [ha] at hm
+    rw [ha, hm, drop_byteListToBits, take_byteListToBits]
+  rw [hbits]
+  unfold bitsToBytes sliceBytes
+  rw [bitsToByteList_byteListToBits]
+  have hpos1 : br1.pos / 8 = a + m := by omega
+  rw [ha, hpos1, show (8 * a) / 8 = a from by omega]
+  apply ByteArray.ext
+  show ((br0.data.data.toList.drop a).take m).toByteArray.data
+    = (br0.data.extract a (a + m)).data
+  rw [ByteArray.data_extract]
+  have h1 : ((br0.data.data.toList.drop a).take m).toByteArray.data.toList
+      = (br0.data.data.extract a (a + m)).toList := by
+    rw [List.toList_data_toByteArray, Array.toList_extract,
+      List.extract_eq_take_drop]
+    congr 1
+    omega
+  exact Array.toList_inj.mp h1
+
+/-! ## Frame simulations (byte-aligned readers) -/
+
+theorem length_sub_toStream {br br' : BitReader} (hd : br'.data = br.data)
+    (hle : br.pos ≤ br'.pos) (hb : br'.pos ≤ br.size) :
+    (toStream br).length - (toStream br').length = br'.pos - br.pos := by
+  simp only [length_toStream, size_congr hd]
+  omega
+
+theorem readHeader_sim (b0 : Nat) (br : BitReader)
+    (h8 : br.pos % 8 = 0) (hwf : br.pos ≤ br.size) :
+    Frame.readHeader b0 (toStream br)
+      = (readHeader b0 br).map (fun p => (p.1, toStream p.2)) := by
+  unfold Frame.readHeader readHeader Flac.Bits.withConsumed
+  rw [readFields_sim b0 br]
+  cases hf : readFields b0 br with
+  | none => rfl
+  | some p =>
+    simp only [Option.map_some]
+    obtain ⟨d1, ⟨j, hj⟩, b1⟩ := readFields_pos8 hf
+    have hlen : (toStream br).length - (toStream p.2).length = p.2.pos - br.pos :=
+      length_sub_toStream d1 (by omega) (b1 hwf)
+    rw [hlen, sliceBytes_eq br p.2 d1 (by omega) h8 (by omega),
+      readBits_sim 8 p.2]
+    cases p.2.readBits 8 with
+    | none => rfl
+    | some q =>
+      simp only [Option.map_some]
+      by_cases hc : q.1 = (Crc.crc8 (sliceBytes br p.2)).toNat
+      · rw [if_pos hc, if_pos hc]
+        rfl
+      · rw [if_neg hc, if_neg hc]
+        rfl
+
+theorem readHeader_pos8 {b0 : Nat} {br br' : BitReader} {f : Frame.Fields}
+    (h : readHeader b0 br = some (f, br')) :
+    br'.data = br.data ∧ (∃ k, br'.pos = br.pos + 8 * k)
+      ∧ (br.pos ≤ br.size → br'.pos ≤ br.size) := by
+  unfold readHeader at h
+  match h1 : readFields b0 br with
+  | none => rw [h1] at h; simp at h
+  | some (fl, br1) =>
+    simp only [h1] at h
+    obtain ⟨d1, ⟨j, hj⟩, b1⟩ := readFields_pos8 h1
+    match h2 : br1.readBits 8 with
+    | none => rw [h2] at h; simp at h
+    | some (c8, br2) =>
+      simp only [h2] at h
+      obtain ⟨d2, p2, b2⟩ := readBits_spec h2
+      split at h
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨-, hbr⟩ := h
+        subst hbr
+        rw [size_congr d1] at b2
+        exact ⟨by rw [d2, d1], ⟨j + 1, by omega⟩,
+          fun hw => b2 (b1 hw)⟩
+      · simp at h
+
+theorem readSubframes_sim (bs b : Nat) :
+    ∀ (n : Nat) (br : BitReader),
+      Frame.readSubframes bs b n (toStream br)
+        = (readSubframes bs b n br).map (fun p => (p.1, toStream p.2)) := by
+  intro n
+  induction n with
+  | zero => intro br; rfl
+  | succ n ih =>
+    intro br
+    unfold Frame.readSubframes readSubframes
+    rw [readSubframe_sim bs b br]
+    cases readSubframe bs b br with
+    | none => rfl
+    | some p =>
+      simp only [Option.map_some]
+      rw [ih p.2]
+      cases readSubframes bs b n p.2 with
+      | none => rfl
+      | some q => rfl
+
+theorem readChannels_sim (bs b chCode : Nat) (br : BitReader) :
+    Frame.readChannels bs b chCode (toStream br)
+      = (readChannels bs b chCode br).map (fun p => (p.1, toStream p.2)) := by
+  unfold Frame.readChannels readChannels
+  by_cases h1 : chCode ≤ 7
+  · rw [if_pos h1, if_pos h1]
+    exact readSubframes_sim bs b (chCode + 1) br
+  rw [if_neg h1, if_neg h1]
+  by_cases h2 : chCode = 8
+  · rw [if_pos h2, if_pos h2, readSubframe_sim bs b br]
+    cases readSubframe bs b br with
+    | none => rfl
+    | some p =>
+      simp only [Option.map_some]
+      rw [readSubframe_sim bs (b + 1) p.2]
+      cases readSubframe bs (b + 1) p.2 with
+      | none => rfl
+      | some q => rfl
+  rw [if_neg h2, if_neg h2]
+  by_cases h3 : chCode = 9
+  · rw [if_pos h3, if_pos h3, readSubframe_sim bs (b + 1) br]
+    cases readSubframe bs (b + 1) br with
+    | none => rfl
+    | some p =>
+      simp only [Option.map_some]
+      rw [readSubframe_sim bs b p.2]
+      cases readSubframe bs b p.2 with
+      | none => rfl
+      | some q => rfl
+  rw [if_neg h3, if_neg h3]
+  by_cases h4 : chCode = 10
+  · rw [if_pos h4, if_pos h4, readSubframe_sim bs b br]
+    cases readSubframe bs b br with
+    | none => rfl
+    | some p =>
+      simp only [Option.map_some]
+      rw [readSubframe_sim bs (b + 1) p.2]
+      cases readSubframe bs (b + 1) p.2 with
+      | none => rfl
+      | some q => rfl
+  · rw [if_neg h4, if_neg h4]
+    rfl
+
+theorem readHeaderChannels_sim (b0 : Nat) (br : BitReader)
+    (h8 : br.pos % 8 = 0) (hwf : br.pos ≤ br.size) :
+    Frame.readHeaderChannels b0 (toStream br)
+      = (readHeaderChannels b0 br).map (fun p => (p.1, toStream p.2)) := by
+  unfold Frame.readHeaderChannels readHeaderChannels
+  rw [readHeader_sim b0 br h8 hwf]
+  cases readHeader b0 br with
+  | none => rfl
+  | some p => exact readChannels_sim p.1.blockSize p.1.bps p.1.chCode p.2
+
+theorem posOK_readHeaderChannels (b0 : Nat) : PosOK (readHeaderChannels b0) := by
+  intro br a br' hwf h
+  unfold readHeaderChannels at h
+  match h1 : readHeader b0 br with
+  | none => rw [h1] at h; simp at h
+  | some (f, br1) =>
+    simp only [h1] at h
+    obtain ⟨d1, ⟨j, hj⟩, b1⟩ := readHeader_pos8 h1
+    exact posOK_step ⟨d1, by omega, b1 hwf⟩
+      (posOK_readChannels f.blockSize f.bps f.chCode br1 a br'
+        (by rw [size_congr d1]; exact b1 hwf) h)
+
+theorem readBody_sim (b0 : Nat) (br : BitReader)
+    (h8 : br.pos % 8 = 0) (hwf : br.pos ≤ br.size) :
+    Frame.readBody b0 (toStream br)
+      = (readBody b0 br).map (fun p => (p.1, toStream p.2)) := by
+  unfold Frame.readBody readBody Flac.Bits.withConsumed
+  rw [readHeaderChannels_sim b0 br h8 hwf]
+  cases hc : readHeaderChannels b0 br with
+  | none => rfl
+  | some p =>
+    simp only [Option.map_some]
+    obtain ⟨d1, p1, b1⟩ := posOK_readHeaderChannels b0 br p.1 p.2 hwf hc
+    rw [List.length_take, length_sub_toStream d1 p1 b1]
+    rw [show min (p.2.pos - br.pos) (toStream br).length = p.2.pos - br.pos from by
+      simp only [length_toStream]
+      omega]
+    rw [readBits_sim (padLen (p.2.pos - br.pos)) p.2]
+    cases p.2.readBits (padLen (p.2.pos - br.pos)) with
+    | none => rfl
+    | some q =>
+      simp only [Option.map_some]
+      by_cases hz : q.1 = 0
+      · rw [if_pos hz, if_pos hz]
+        rfl
+      · rw [if_neg hz, if_neg hz]
+        rfl
+
+theorem readBody_pos8 {b0 : Nat} {br br' : BitReader} {chs : List (List Int)}
+    (hwf : br.pos ≤ br.size) (h : readBody b0 br = some (chs, br')) :
+    br'.data = br.data ∧ (∃ k, br'.pos = br.pos + 8 * k)
+      ∧ br'.pos ≤ br.size := by
+  unfold readBody at h
+  match h1 : readHeaderChannels b0 br with
+  | none => rw [h1] at h; simp at h
+  | some (cs, br1) =>
+    simp only [h1] at h
+    obtain ⟨d1, p1, b1⟩ := posOK_readHeaderChannels b0 br cs br1 hwf h1
+    match h2 : br1.readBits (padLen (br1.pos - br.pos)) with
+    | none => rw [h2] at h; simp at h
+    | some (z, br2) =>
+      simp only [h2] at h
+      obtain ⟨d2, p2, b2⟩ := readBits_spec h2
+      split at h
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨-, hbr⟩ := h
+        subst hbr
+        have hpad := padLen_add (br1.pos - br.pos)
+        rw [size_congr d1] at b2
+        refine ⟨by rw [d2, d1], ⟨(br1.pos + padLen (br1.pos - br.pos) - br.pos) / 8, by omega⟩,
+          b2 b1⟩
+      · simp at h
+
+theorem readFrame_sim (b0 : Nat) (br : BitReader)
+    (h8 : br.pos % 8 = 0) (hwf : br.pos ≤ br.size) :
+    Frame.read b0 (toStream br)
+      = (readFrame b0 br).map (fun p => (p.1, toStream p.2)) := by
+  unfold Frame.read readFrame Flac.Bits.withConsumed
+  rw [readBody_sim b0 br h8 hwf]
+  cases hb : readBody b0 br with
+  | none => rfl
+  | some p =>
+    simp only [Option.map_some]
+    obtain ⟨d1, ⟨k, hk⟩, b1⟩ := readBody_pos8 hwf hb
+    have hlen : (toStream br).length - (toStream p.2).length = p.2.pos - br.pos :=
+      length_sub_toStream d1 (by omega) b1
+    rw [hlen, sliceBytes_eq br p.2 d1 (by omega) h8 (by omega),
+      readBits_sim 16 p.2]
+    cases p.2.readBits 16 with
+    | none => rfl
+    | some q =>
+      simp only [Option.map_some]
+      by_cases hc : q.1 = (Crc.crc16 (sliceBytes br p.2)).toNat
+      · rw [if_pos hc, if_pos hc]
+        rfl
+      · rw [if_neg hc, if_neg hc]
+        rfl
+
+theorem readFrame_pos8 {b0 : Nat} {br br' : BitReader} {chs : List (List Int)}
+    (hwf : br.pos ≤ br.size) (h : readFrame b0 br = some (chs, br')) :
+    br'.data = br.data ∧ (∃ k, br'.pos = br.pos + 8 * k)
+      ∧ br'.pos ≤ br.size ∧ br.pos < br'.pos := by
+  unfold readFrame at h
+  match h1 : readBody b0 br with
+  | none => rw [h1] at h; simp at h
+  | some (cs, br1) =>
+    simp only [h1] at h
+    obtain ⟨d1, ⟨k, hk⟩, b1⟩ := readBody_pos8 hwf h1
+    match h2 : br1.readBits 16 with
+    | none => rw [h2] at h; simp at h
+    | some (c16, br2) =>
+      simp only [h2] at h
+      obtain ⟨d2, p2, b2⟩ := readBits_spec h2
+      split at h
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨-, hbr⟩ := h
+        subst hbr
+        rw [size_congr d1] at b2
+        exact ⟨by rw [d2, d1], ⟨k + 2, by omega⟩, b2 b1, by omega⟩
+      · simp at h
+
+/-! ## Stream simulations -/
+
+theorem readStreamInfo_sim (br : BitReader) :
+    Stream.readStreamInfo (toStream br)
+      = (readStreamInfo br).map (fun p => (p.1, toStream p.2)) := by
+  unfold Stream.readStreamInfo readStreamInfo
+  rw [readBits_sim 16 br]
+  cases br.readBits 16 with
+  | none => rfl
+  | some p1 =>
+    simp only [Option.map_some]
+    rw [readBits_sim 16 p1.2]
+    cases p1.2.readBits 16 with
+    | none => rfl
+    | some p2 =>
+      simp only [Option.map_some]
+      rw [readBits_sim 24 p2.2]
+      cases p2.2.readBits 24 with
+      | none => rfl
+      | some p3 =>
+        simp only [Option.map_some]
+        rw [readBits_sim 24 p3.2]
+        cases p3.2.readBits 24 with
+        | none => rfl
+        | some p4 =>
+          simp only [Option.map_some]
+          rw [readBits_sim 20 p4.2]
+          cases p4.2.readBits 20 with
+          | none => rfl
+          | some p5 =>
+            simp only [Option.map_some]
+            rw [readBits_sim 3 p5.2]
+            cases p5.2.readBits 3 with
+            | none => rfl
+            | some p6 =>
+              simp only [Option.map_some]
+              rw [readBits_sim 5 p6.2]
+              cases p6.2.readBits 5 with
+              | none => rfl
+              | some p7 =>
+                simp only [Option.map_some]
+                rw [readBits_sim 36 p7.2]
+                cases p7.2.readBits 36 with
+                | none => rfl
+                | some p8 =>
+                  simp only [Option.map_some]
+                  rw [readBits_sim 128 p8.2]
+                  cases p8.2.readBits 128 with
+                  | none => rfl
+                  | some p9 => rfl
+
+theorem skip_sim (n : Nat) (br : BitReader) :
+    Stream.skipBits n (toStream br) = (br.skip n).map toStream := by
+  unfold Stream.skipBits BitReader.skip
+  by_cases h0 : n = 0
+  · subst h0
+    rw [if_pos rfl, if_pos (by simp)]
+    simp [toStream]
+  rw [if_neg h0]
+  by_cases hb : br.pos + n ≤ br.size
+  · rw [if_pos hb, if_pos (by simp only [length_toStream]; omega)]
+    show some (((bytesToBits br.data).drop br.pos).drop n) = _
+    rw [List.drop_drop]
+    rfl
+  · rw [if_neg hb, if_neg (by
+      simp only [length_toStream]
+      simp only [size] at hb ⊢
+      omega)]
+    rfl
+
+theorem skipBlocks_sim :
+    ∀ (fuel : Nat) (br : BitReader),
+      Stream.skipBlocks fuel (toStream br)
+        = (skipBlocks fuel br).map toStream := by
+  intro fuel
+  induction fuel with
+  | zero => intro br; rfl
+  | succ fuel ih =>
+    intro br
+    unfold Stream.skipBlocks skipBlocks
+    rw [readBits_sim 1 br]
+    cases br.readBits 1 with
+    | none => rfl
+    | some p1 =>
+      simp only [Option.map_some]
+      rw [readBits_sim 7 p1.2]
+      cases p1.2.readBits 7 with
+      | none => rfl
+      | some p2 =>
+        simp only [Option.map_some]
+        rw [readBits_sim 24 p2.2]
+        cases p2.2.readBits 24 with
+        | none => rfl
+        | some p3 =>
+          simp only [Option.map_some]
+          rw [skip_sim (8 * p3.1) p3.2]
+          cases p3.2.skip (8 * p3.1) with
+          | none => rfl
+          | some br4 =>
+            simp only [Option.map_some]
+            by_cases hl : p1.1 = 1
+            · rw [if_pos hl, if_pos hl]
+              rfl
+            · rw [if_neg hl, if_neg hl]
+              exact ih br4
+
+theorem readMeta_sim (fuel : Nat) (br : BitReader) :
+    Stream.readMeta fuel (toStream br)
+      = (readMeta fuel br).map (fun p => (p.1, toStream p.2)) := by
+  unfold Stream.readMeta readMeta
+  rw [readBits_sim 1 br]
+  cases br.readBits 1 with
+  | none => rfl
+  | some p1 =>
+    simp only [Option.map_some]
+    rw [readBits_sim 7 p1.2]
+    cases p1.2.readBits 7 with
+    | none => rfl
+    | some p2 =>
+      simp only [Option.map_some]
+      rw [readBits_sim 24 p2.2]
+      cases p2.2.readBits 24 with
+      | none => rfl
+      | some p3 =>
+        simp only [Option.map_some]
+        by_cases ht : p2.1 = 0
+        case neg => rw [if_neg ht, if_neg ht]; rfl
+        rw [if_pos ht, if_pos ht]
+        by_cases hl : p3.1 = 34
+        case neg => rw [if_neg hl, if_neg hl]; rfl
+        rw [if_pos hl, if_pos hl, readStreamInfo_sim p3.2]
+        cases readStreamInfo p3.2 with
+        | none => rfl
+        | some p4 =>
+          simp only [Option.map_some]
+          by_cases hlast : p1.1 = 1
+          · rw [if_pos hlast, if_pos hlast]
+            rfl
+          · rw [if_neg hlast, if_neg hlast, skipBlocks_sim fuel p4.2]
+            cases skipBlocks fuel p4.2 with
+            | none => rfl
+            | some br5 => rfl
+
+/-! ## Byte-aligned consumption for metadata -/
+
+theorem skip_pos8 {n : Nat} {br br' : BitReader} (h : br.skip (8 * n) = some br') :
+    br'.data = br.data ∧ (∃ j, br'.pos = br.pos + 8 * j)
+      ∧ (br.pos ≤ br.size → br'.pos ≤ br.size) := by
+  obtain ⟨hd, hp, hb⟩ := skip_spec h
+  exact ⟨hd, ⟨n, hp⟩, hb⟩
+
+theorem skipBlocks_pos8 :
+    ∀ {fuel : Nat} {br br' : BitReader}, skipBlocks fuel br = some br' →
+      br'.data = br.data ∧ (∃ j, br'.pos = br.pos + 8 * j)
+        ∧ (br.pos ≤ br.size → br'.pos ≤ br.size) := by
+  intro fuel
+  induction fuel with
+  | zero => intro br br' h; simp [skipBlocks] at h
+  | succ fuel ih =>
+    intro br br' h
+    unfold skipBlocks at h
+    match h1 : br.readBits 1 with
+    | none => rw [h1] at h; simp at h
+    | some (last, br1) =>
+      simp only [h1] at h
+      obtain ⟨d1, p1, b1⟩ := readBits_spec h1
+      match h2 : br1.readBits 7 with
+      | none => rw [h2] at h; simp at h
+      | some (ty, br2) =>
+        simp only [h2] at h
+        obtain ⟨d2, p2, b2⟩ := readBits_spec h2
+        match h3 : br2.readBits 24 with
+        | none => rw [h3] at h; simp at h
+        | some (len, br3) =>
+          simp only [h3] at h
+          obtain ⟨d3, p3, b3⟩ := readBits_spec h3
+          match h4 : br3.skip (8 * len) with
+          | none => rw [h4] at h; simp at h
+          | some br4 =>
+            simp only [h4] at h
+            obtain ⟨d4, ⟨j4, p4⟩, b4⟩ := skip_pos8 h4
+            have e1 : br1.size = br.size := size_congr d1
+            have e2 : br2.size = br.size := by rw [size_congr d2, e1]
+            have e3 : br3.size = br.size := by rw [size_congr d3, e2]
+            rw [e1] at b2
+            rw [e2] at b3
+            rw [e3] at b4
+            split at h
+            · simp only [Option.some.injEq] at h
+              subst h
+              exact ⟨by rw [d4, d3, d2, d1], ⟨4 + j4, by omega⟩,
+                fun hw => b4 (b3 (b2 (b1 hw)))⟩
+            · obtain ⟨d5, ⟨j5, p5⟩, b5⟩ := ih h
+              rw [size_congr d4, e3] at b5
+              exact ⟨by rw [d5, d4, d3, d2, d1], ⟨4 + j4 + j5, by omega⟩,
+                fun hw => b5 (b4 (b3 (b2 (b1 hw))))⟩
+
+theorem readMeta_pos8 {fuel : Nat} {br br' : BitReader} {si : Stream.Info}
+    (h : readMeta fuel br = some (si, br')) :
+    br'.data = br.data ∧ (∃ j, br'.pos = br.pos + 8 * j)
+      ∧ (br.pos ≤ br.size → br'.pos ≤ br.size) := by
+  unfold readMeta at h
+  match h1 : br.readBits 1 with
+  | none => rw [h1] at h; simp at h
+  | some (last, br1) =>
+    simp only [h1] at h
+    obtain ⟨d1, p1, b1⟩ := readBits_spec h1
+    match h2 : br1.readBits 7 with
+    | none => rw [h2] at h; simp at h
+    | some (ty, br2) =>
+      simp only [h2] at h
+      obtain ⟨d2, p2, b2⟩ := readBits_spec h2
+      match h3 : br2.readBits 24 with
+      | none => rw [h3] at h; simp at h
+      | some (len, br3) =>
+        simp only [h3] at h
+        obtain ⟨d3, p3, b3⟩ := readBits_spec h3
+        split at h
+        case isFalse => simp at h
+        split at h
+        case isFalse => simp at h
+        match h4 : readStreamInfo br3 with
+        | none => rw [h4] at h; simp at h
+        | some (si0, br4) =>
+          simp only [h4] at h
+          -- STREAMINFO is 272 bits: chase the nine readBits
+          have hsi : br4.data = br3.data ∧ br4.pos = br3.pos + 272
+              ∧ (br3.pos ≤ br3.size → br4.pos ≤ br3.size) := by
+            unfold readStreamInfo at h4
+            match g1 : br3.readBits 16 with
+            | none => rw [g1] at h4; simp at h4
+            | some (v1, c1) =>
+              simp only [g1] at h4
+              obtain ⟨e1, q1, a1⟩ := readBits_spec g1
+              match g2 : c1.readBits 16 with
+              | none => rw [g2] at h4; simp at h4
+              | some (v2, c2) =>
+                simp only [g2] at h4
+                obtain ⟨e2, q2, a2⟩ := readBits_spec g2
+                match g3 : c2.readBits 24 with
+                | none => rw [g3] at h4; simp at h4
+                | some (v3, c3) =>
+                  simp only [g3] at h4
+                  obtain ⟨e3, q3, a3⟩ := readBits_spec g3
+                  match g4 : c3.readBits 24 with
+                  | none => rw [g4] at h4; simp at h4
+                  | some (v4, c4) =>
+                    simp only [g4] at h4
+                    obtain ⟨e4, q4, a4⟩ := readBits_spec g4
+                    match g5 : c4.readBits 20 with
+                    | none => rw [g5] at h4; simp at h4
+                    | some (v5, c5) =>
+                      simp only [g5] at h4
+                      obtain ⟨e5, q5, a5⟩ := readBits_spec g5
+                      match g6 : c5.readBits 3 with
+                      | none => rw [g6] at h4; simp at h4
+                      | some (v6, c6) =>
+                        simp only [g6] at h4
+                        obtain ⟨e6, q6, a6⟩ := readBits_spec g6
+                        match g7 : c6.readBits 5 with
+                        | none => rw [g7] at h4; simp at h4
+                        | some (v7, c7) =>
+                          simp only [g7] at h4
+                          obtain ⟨e7, q7, a7⟩ := readBits_spec g7
+                          match g8 : c7.readBits 36 with
+                          | none => rw [g8] at h4; simp at h4
+                          | some (v8, c8) =>
+                            simp only [g8] at h4
+                            obtain ⟨e8, q8, a8⟩ := readBits_spec g8
+                            match g9 : c8.readBits 128 with
+                            | none => rw [g9] at h4; simp at h4
+                            | some (v9, c9) =>
+                              simp only [g9, Option.some.injEq,
+                                Prod.mk.injEq] at h4
+                              obtain ⟨-, hbr⟩ := h4
+                              subst hbr
+                              obtain ⟨e9, q9, a9⟩ := readBits_spec g9
+                              have f1 : c1.size = br3.size := size_congr e1
+                              have f2 : c2.size = br3.size := by
+                                rw [size_congr e2, f1]
+                              have f3 : c3.size = br3.size := by
+                                rw [size_congr e3, f2]
+                              have f4 : c4.size = br3.size := by
+                                rw [size_congr e4, f3]
+                              have f5 : c5.size = br3.size := by
+                                rw [size_congr e5, f4]
+                              have f6 : c6.size = br3.size := by
+                                rw [size_congr e6, f5]
+                              have f7 : c7.size = br3.size := by
+                                rw [size_congr e7, f6]
+                              have f8 : c8.size = br3.size := by
+                                rw [size_congr e8, f7]
+                              rw [f1] at a2
+                              rw [f2] at a3
+                              rw [f3] at a4
+                              rw [f4] at a5
+                              rw [f5] at a6
+                              rw [f6] at a7
+                              rw [f7] at a8
+                              rw [f8] at a9
+                              exact ⟨by rw [e9, e8, e7, e6, e5, e4, e3, e2, e1],
+                                by omega,
+                                fun hw => a9 (a8 (a7 (a6 (a5 (a4 (a3 (a2 (a1 hw))))))))⟩
+          have e1 : br1.size = br.size := size_congr d1
+          have e2 : br2.size = br.size := by rw [size_congr d2, e1]
+          have e3 : br3.size = br.size := by rw [size_congr d3, e2]
+          rw [e1] at b2
+          rw [e2] at b3
+          obtain ⟨d4, p4, b4⟩ := hsi
+          rw [e3] at b4
+          split at h
+          · simp only [Option.some.injEq, Prod.mk.injEq] at h
+            obtain ⟨-, hbr⟩ := h
+            subst hbr
+            exact ⟨by rw [d4, d3, d2, d1], ⟨38, by omega⟩,
+              fun hw => b4 (b3 (b2 (b1 hw)))⟩
+          · match h5 : skipBlocks fuel br4 with
+            | none => rw [h5] at h; simp at h
+            | some br5 =>
+              simp only [h5, Option.some.injEq, Prod.mk.injEq] at h
+              obtain ⟨-, hbr⟩ := h
+              subst hbr
+              obtain ⟨d5, ⟨j5, p5⟩, b5⟩ := skipBlocks_pos8 h5
+              rw [size_congr d4, e3] at b5
+              exact ⟨by rw [d5, d4, d3, d2, d1], ⟨38 + j5, by omega⟩,
+                fun hw => b5 (b4 (b3 (b2 (b1 hw))))⟩
+
+/-! ## Frame sequence and top level -/
+
+theorem readFrames_sim (b0 : Nat) :
+    ∀ (fuel : Nat) (br : BitReader), br.pos % 8 = 0 → br.pos ≤ br.size →
+      Stream.readFrames b0 fuel (toStream br) = readFrames b0 fuel br := by
+  intro fuel
+  induction fuel with
+  | zero =>
+    intro br _ _
+    unfold Stream.readFrames readFrames
+    by_cases hrem : br.remaining = 0
+    · have hnil : toStream br = [] :=
+        List.eq_nil_of_length_eq_zero (by rw [length_toStream]; exact hrem)
+      rw [if_pos hnil, if_pos hrem]
+    · have hnil : ¬ toStream br = [] := by
+        intro h
+        apply hrem
+        have := congrArg List.length h
+        rw [length_toStream] at this
+        exact this
+      rw [if_neg hnil, if_neg hrem]
+  | succ fuel ih =>
+    intro br h8 hwf
+    unfold Stream.readFrames readFrames
+    by_cases hrem : br.remaining = 0
+    · have hnil : toStream br = [] :=
+        List.eq_nil_of_length_eq_zero (by rw [length_toStream]; exact hrem)
+      rw [if_pos hnil, if_pos hrem]
+    · have hnil : ¬ toStream br = [] := by
+        intro h
+        apply hrem
+        have := congrArg List.length h
+        rw [length_toStream] at this
+        exact this
+      rw [if_neg hnil, if_neg hrem, readFrame_sim b0 br h8 hwf]
+      match hf : readFrame b0 br with
+      | none => rfl
+      | some (chs, br') =>
+        simp only [Option.map_some]
+        obtain ⟨d1, ⟨k, hk⟩, hb, _⟩ := readFrame_pos8 hwf hf
+        have hsz : br'.size = br.size := size_congr d1
+        rw [ih br' (by omega) (by omega)]
+        rfl
+
+/-- **Decoder equivalence**: the buffered production decoder computes
+    exactly the reference decoder's result on every input. -/
+theorem decodeOption_eq_reference (bytes : ByteArray) :
+    decodeOption bytes = Stream.decodeReference bytes := by
+  have h0 : bytesToBits bytes = toStream (⟨bytes, 0⟩ : BitReader) := by
+    simp [toStream]
+  simp only [decodeOption, Stream.decodeReference, h0]
+  rw [readBits_sim 32 ⟨bytes, 0⟩]
+  match h1 : BitReader.readBits 32 ⟨bytes, 0⟩ with
+  | none => rfl
+  | some (marker, br1) =>
+    simp only [Option.map_some]
+    by_cases hm : marker = 0x664C6143
+    case neg => rw [if_neg hm, if_neg hm]
+    rw [if_pos hm, if_pos hm]
+    have hf1 : (toStream br1).length = br1.remaining := by
+      rw [length_toStream]; rfl
+    rw [hf1, readMeta_sim br1.remaining br1]
+    match h2 : readMeta br1.remaining br1 with
+    | none => rfl
+    | some (si, br2) =>
+      simp only [Option.map_some]
+      have hf2 : (toStream br2).length = br2.remaining := by
+        rw [length_toStream]; rfl
+      obtain ⟨d1, p1, b1⟩ := readBits_spec h1
+      have p1' : br1.pos = 32 := p1
+      obtain ⟨d2, ⟨j, p2⟩, b2⟩ := readMeta_pos8 h2
+      have e1 : br1.size = BitReader.size ⟨bytes, 0⟩ := size_congr d1
+      have e2 : br2.size = BitReader.size ⟨bytes, 0⟩ := by
+        rw [size_congr d2, e1]
+      have hwf0 : (⟨bytes, 0⟩ : BitReader).pos ≤ BitReader.size ⟨bytes, 0⟩ := by
+        show 0 ≤ _; omega
+      rw [e1] at b2
+      rw [hf2, readFrames_sim si.bps (br2.remaining + 1) br2
+        (by omega) (by have := b2 (b1 hwf0); omega)]
+      match readFrames si.bps (br2.remaining + 1) br2 with
+      | none => rfl
+      | some frames => rfl
+
+end Flac.Decode
+
+namespace Flac
+
+/-- **Accept-set transfer**: the shipped decoder succeeds with a given
+    result exactly when the verified reference decoder does. -/
+theorem decode_ok_iff_reference (bytes : ByteArray) (chs : List (List Int)) :
+    decode bytes = .ok chs ↔ Stream.decodeReference bytes = some chs := by
+  unfold decode
+  rw [Decode.decodeOption_eq_reference]
+  match Stream.decodeReference bytes with
+  | none => simp
+  | some chs' => simp
+
+/-- **The shipped capstone**: encoding well-formed audio with any encoder
+    configuration whose heuristic choices are valid, then decoding with the
+    shipped production decoder, returns the original channels. -/
+theorem decode_encode (cfg : Stream.EncoderCfg) (a : Stream.Audio)
+    (hwf : a.WellFormed)
+    (hbs1 : 16 ≤ cfg.blockSize) (hbs2 : cfg.blockSize ≤ 65535)
+    (hsr : a.sampleRate < 2 ^ 20) (htot : a.numSamples < 2 ^ 36)
+    (hchooser : ∀ fr : List (List Int),
+      fr.length = a.channels.length →
+      (∀ c ∈ fr, c.length = (fr.headD []).length) →
+      1 ≤ (fr.headD []).length → (fr.headD []).length ≤ cfg.blockSize →
+      (∀ c ∈ fr, ∀ x ∈ c, Bits.FitsSInt a.bps x) →
+      (cfg.chooser fr).Valid a.bps (fr.headD []).length fr) :
+    decode (Stream.encode cfg a) = .ok a.channels :=
+  (decode_ok_iff_reference _ _).mpr
+    (Stream.decodeReference_encode cfg a hwf hbs1 hbs2 hsr htot hchooser)
+
+/-- **Shipped capstone, default heuristics**: no chooser hypothesis —
+    wasted-bit detection, fixed/LPC order search, Rice parameter search,
+    and stereo-mode decision are all covered by certificate construction. -/
+theorem decode_encode_default (blockSize : Nat) (varBlk : Bool)
+    (a : Stream.Audio) (hwf : a.WellFormed)
+    (hbs1 : 16 ≤ blockSize) (hbs2 : blockSize ≤ 65535)
+    (hsr : a.sampleRate < 2 ^ 20) (htot : a.numSamples < 2 ^ 36) :
+    decode (Stream.encode
+      ⟨blockSize, varBlk, Heuristics.defaultAsgChooser a.bps⟩ a)
+      = .ok a.channels :=
+  (decode_ok_iff_reference _ _).mpr
+    (Stream.decodeReference_encode_default blockSize varBlk a hwf
+      hbs1 hbs2 hsr htot)
+
+end Flac
