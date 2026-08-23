@@ -80,6 +80,43 @@ def utf8NumTests : TestM Unit := do
   for n in boundaries do
     checkEq s!"utf8num roundtrip {n}" (Utf8Num.read (Utf8Num.write n)) (some (n, []))
 
+/-! ## Rice coding and partitioned residuals -/
+
+def riceTests : TestM Unit := do
+  -- zigzag folding table (RFC 9639 §9.2.7.2)
+  checkEq "zigzag table" ([0, -1, 1, -2, 2, -3].map Rice.zigzag) [0, 1, 2, 3, 4, 5]
+  -- RFC worked example: parameter 3, folded value 38 ↦ 0b00001110
+  checkEq "rice example 38/k=3" (Rice.writeRiceNat 3 38)
+    [false, false, false, false, true, true, true, false]
+  checkEq "riceNat roundtrip" (Rice.readRiceNat 5 (Rice.writeRiceNat 5 1234))
+    (some (1234, []))
+  checkEq "rice signed roundtrip" (Rice.readRice 2 (Rice.writeRice 2 (-37)))
+    (some ((-37 : Int), []))
+  -- signed fixed-width ints (escaped partitions / verbatim)
+  for (n, x) in [(3, -1), (3, -4), (3, 3), (8, -128), (8, 127), (16, -32768)] do
+    checkEq s!"sint roundtrip {n} {x}"
+      (Bits.readSInt n (Bits.writeSInt n (x : Int))) (some ((x : Int), []))
+  checkEq "sint -1 in 3 bits is 0b111" (Bits.writeSInt 3 (-1)) [true, true, true]
+  -- a full coded residual: bs = 8, ord = 0, po = 1 (two partitions of 4),
+  -- first Rice-coded with k = 2, second escaped at 4 bits
+  let res : List Int := [0, -1, 3, -7, 2, -2, 7, -8]
+  let cfg : Rice.ResidualCfg :=
+    { method := .rice4, po := 1, choices := [.rice 2, .escape 4] }
+  checkEq "residual roundtrip (rice+escape)"
+    (Rice.readResidual 8 0 (Rice.writeResidual 8 0 cfg res)) (some (res, []))
+  -- escaped partition with 0 bits: all-zero residuals cost nothing
+  let zres : List Int := [0, 0, 0, 0]
+  let zcfg : Rice.ResidualCfg := { method := .rice5, po := 0, choices := [.escape 0] }
+  let zbits := Rice.writeResidual 4 0 zcfg zres
+  checkEq "residual roundtrip (escape 0 bits)"
+    (Rice.readResidual 4 0 zbits) (some (zres, []))
+  checkEq "escape-0 partition is header-only" zbits.length (2 + 4 + 5 + 5)
+  -- predictor order eats into the first partition: bs = 8, ord = 2, po = 1
+  let pres : List Int := [5, -5, 1, 0, -1, 2]
+  let pcfg : Rice.ResidualCfg := { method := .rice4, po := 1, choices := [.rice 1, .rice 3] }
+  checkEq "residual roundtrip (ord=2)"
+    (Rice.readResidual 8 2 (Rice.writeResidual 8 2 pcfg pres)) (some (pres, []))
+
 /-! ## Bit-level spot checks -/
 
 def bitsTests : TestM Unit := do
@@ -94,7 +131,7 @@ def bitsTests : TestM Unit := do
   checkEq "align keeps aligned" (Bits.alignToByte (Bits.byteToBits 1)).length 8
 
 def main : IO UInt32 := do
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; bitsTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0

@@ -54,6 +54,30 @@ def padLen (len : Nat) : Nat := (8 - len % 8) % 8
 def alignToByte (s : BitStream) : BitStream :=
   s ++ List.replicate (padLen s.length) false
 
+/-! ## Signed integers (two's complement, MSB-first) -/
+
+/-- `x` is representable as an `n`-bit two's-complement integer.
+    Stated via `2*x` to avoid `n-1` underflow at `n = 0` (an escaped
+    partition may store residuals with 0 bits, RFC 9639 §9.2.7.1);
+    for `n ≥ 1` this is the usual `-2^(n-1) ≤ x < 2^(n-1)`. -/
+def FitsSInt (n : Nat) (x : Int) : Prop :=
+  -((2 ^ n : Nat) : Int) ≤ 2 * x ∧ 2 * x < ((2 ^ n : Nat) : Int)
+
+instance (n : Nat) (x : Int) : Decidable (FitsSInt n x) :=
+  inferInstanceAs (Decidable (_ ∧ _))
+
+/-- Write `x` as an `n`-bit two's-complement integer. Callers guarantee
+    `FitsSInt n x` (garbage-in tolerated; the round-trip theorem carries
+    the hypothesis). -/
+def writeSInt (n : Nat) (x : Int) : BitStream :=
+  writeBits n ((x + ((2 ^ n : Nat) : Int)).toNat % 2 ^ n)
+
+def readSInt (n : Nat) (s : BitStream) : Option (Int × BitStream) :=
+  match readBits n s with
+  | none => none
+  | some (v, s') =>
+    some (if 2 * v < 2 ^ n then (v : Int) else (v : Int) - ((2 ^ n : Nat) : Int), s')
+
 /-! ## Bytes ↔ bits -/
 
 /-- One byte as 8 bits, MSB first. -/

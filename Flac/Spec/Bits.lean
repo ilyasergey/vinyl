@@ -89,6 +89,24 @@ theorem readUnary_writeUnary (q : Nat) (rest : BitStream) :
 @[simp] theorem length_writeUnary (q : Nat) : (writeUnary q).length = q + 1 := by
   simp [writeUnary]
 
+/-! ## Signed integers -/
+
+/-- Two's-complement round-trip for `n`-bit signed integers. -/
+theorem readSInt_writeSInt (n : Nat) (x : Int) (h : FitsSInt n x)
+    (rest : BitStream) :
+    readSInt n (writeSInt n x ++ rest) = some (x, rest) := by
+  obtain ⟨h1, h2⟩ := h
+  have hP : 0 < 2 ^ n := Nat.two_pow_pos n
+  unfold writeSInt readSInt
+  rw [readBits_writeBits _ _ _ (Nat.mod_lt _ hP)]
+  simp only [Option.some.injEq, Prod.mk.injEq, and_true]
+  by_cases hx : 0 ≤ x
+  · have hlt : (x + ((2 ^ n : Nat) : Int)).toNat = x.toNat + 2 ^ n := by omega
+    rw [hlt, Nat.add_mod_right, Nat.mod_eq_of_lt (by omega), if_pos (by omega)]
+    omega
+  · rw [Nat.mod_eq_of_lt (by omega), if_neg (by omega)]
+    omega
+
 /-! ## Byte packing -/
 
 /-- Unpacking one packed byte recovers its 8 bits (exhaustive check). -/
