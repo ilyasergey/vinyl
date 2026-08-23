@@ -39,19 +39,23 @@ vinyl/
 │   │   ├── Md5.lean        # pure-Lean MD5 for the STREAMINFO PCM checksum
 │   │   ├── Rice.lean       # zigzag, Rice/RICE2, escaped + partitioned residuals
 │   │   ├── Fixed.lean      # fixed predictors = iterated finite differences
-│   │   ├── Subframe.lean   # CONSTANT/VERBATIM/FIXED subframes
-│   │   ├── Frame.lean      # frame header/body, CRC-verified decode
-│   │   ├── Stream.lean     # STREAMINFO, metadata, encode/decodeReference
-│   │   └── Heuristics.lean # subframe/parameter search (unverified by design)
+│   │   ├── Lpc.lean        # quantized LPC, history-passing style
+│   │   ├── Stereo.lean     # left/side, right/side, mid/side transforms
+│   │   ├── Subframe.lean   # all four subframe types + wasted bits
+│   │   ├── Frame.lean      # multichannel frames, CRC-verified decode
+│   │   ├── Stream.lean     # STREAMINFO, Audio, encode/decodeReference
+│   │   └── Heuristics.lean # LPC/fixed/stereo search (unverified by design)
 │   └── Spec/               # ALL theorems; no sorry, no axioms, ever
 │       ├── Bits.lean       # L0 round-trips, packing, withConsumed_spec
 │       ├── Utf8Num.lean    # coded-number round-trip (n < 2^36)
 │       ├── Rice.lean       # L1–L2 incl. readResidual_writeResidual
 │       ├── Fixed.lean      # L3-fixed: restore_residual
-│       ├── Subframe.lean   # subframe round-trip
-│       ├── Frame.lean      # frame round-trip (CRCs definitional)
-│       ├── Stream.lean     # M2 keystone: decodeReference_encode
-│       └── Heuristics.lean # defaultChooser_valid + hypothesis-light keystone
+│       ├── Lpc.lean        # L3-LPC: restore_residual (hypothesis-free)
+│       ├── Stereo.lean     # L4: per-mode round-trips + width facts
+│       ├── Subframe.lean   # subframe round-trip incl. wasted bits
+│       ├── Frame.lean      # multichannel frame round-trip
+│       ├── Stream.lean     # the reference capstone: decodeReference_encode
+│       └── Heuristics.lean # all chooser certificates + default capstone
 ├── FlacTest.lean, FlacTest/
 │   └── Main.lean        # unit tests + --encode/--decode CLI for rigs/bench
 ├── conformance/
@@ -80,11 +84,12 @@ Three kinds of code, three different obligations:
    - **L0** bit I/O round-trips (done),
    - **L1** primitive codes: zigzag, Rice/RICE2, escapes, coded numbers (done),
    - **L2** residual partitions with divisibility certificates (done),
-   - **L3** fixed predictors (done); quantized LPC (M3, next),
-   - **L4** stereo decorrelation and wasted bits (M4),
-   - **L5** subframe/frame composition (done for the mono profile),
-   - **L6** the stream capstone — `decodeReference_encode` holds on the
-     mono profile; the full-option-space capstone lands at M4/M5.
+   - **L3** fixed and quantized-LPC predictors (done),
+   - **L4** stereo decorrelation and wasted bits (done),
+   - **L5** subframe/frame composition with width bookkeeping (done),
+   - **L6** the stream capstone — `decodeReference_encode` holds over the
+     full v1 option space; the *shipped* capstone (production decoder +
+     accept-set transfer) lands at M5.
 
 Each layer's round-trip lemma is stated so the layer above uses it opaquely.
 

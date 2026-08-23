@@ -15,6 +15,7 @@ out_png = sys.argv[2] if len(sys.argv) > 2 else "bench/cactus.png"
 
 ratio = defaultdict(list)      # encoder -> [encoded/raw]
 speed = defaultdict(list)      # encoder -> [raw MB/s per file]
+catbytes = defaultdict(lambda: defaultdict(lambda: [0, 0]))  # cat -> enc -> [enc, raw]
 with open(results_csv) as f:
     for row in csv.DictReader(f):
         enc = row["encoder"]
@@ -23,6 +24,9 @@ with open(results_csv) as f:
             continue
         ratio[enc].append(int(row["bytes"]) / raw)
         speed[enc].append(raw / 1e6 / float(row["seconds"]))
+        cb = catbytes[row["file"].split("-")[0]][enc]
+        cb[0] += int(row["bytes"])
+        cb[1] += raw
 
 STYLE = {
     "vinyl":   dict(color="#7c3aed", marker="o", lw=2.2, zorder=5),
@@ -31,7 +35,15 @@ STYLE = {
     "flac -8": dict(color="#334155", marker="v", lw=1.6),
 }
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.4), dpi=150)
+CATS = ["tonal", "wave", "noise", "mixed", "degen", "stereo"]
+
+def category(name):
+    return name.split("-")[0]
+
+fig = plt.figure(figsize=(11, 8.2), dpi=150)
+ax1 = fig.add_subplot(2, 2, 1)
+ax2 = fig.add_subplot(2, 2, 2)
+ax3 = fig.add_subplot(2, 1, 2)
 
 for enc in STYLE:
     if enc not in ratio:
@@ -60,7 +72,36 @@ ax2.set_title("Encode throughput profile")
 ax2.grid(alpha=0.25, which="both")
 ax2.legend()
 
-fig.suptitle("Vinyl (verified, M3+M4a heuristics) vs libFLAC — synthetic mono 16-bit corpus")
+# per-category aggregate ratio, grouped bars
+cats = [c for c in CATS if c in catbytes]
+width = 0.2
+for k, enc in enumerate(STYLE):
+    xs = [i + (k - 1.5) * width for i in range(len(cats))]
+    ys = [100 * catbytes[c][enc][0] / catbytes[c][enc][1] if catbytes[c].get(enc) else 0
+          for c in cats]
+    ax3.bar(xs, ys, width=width, label=enc, color=STYLE[enc]["color"])
+ax3.set_xticks(range(len(cats)))
+ax3.set_xticklabels(cats)
+ax3.set_ylabel("aggregate ratio, % of raw (lower = better)")
+ax3.set_title("Compression by content category")
+ax3.grid(alpha=0.25, axis="y")
+ax3.legend(ncol=4)
+
+fig.suptitle("Vinyl (verified) vs libFLAC — synthetic 16-bit corpus")
 fig.tight_layout()
 fig.savefig(out_png)
 print(f"wrote {out_png}")
+
+# markdown summary for the README
+with open(out_png.replace("cactus.png", "summary.md"), "w") as f:
+    f.write("| category | vinyl | flac -0 | flac -5 | flac -8 |\n")
+    f.write("|---|---|---|---|---|\n")
+    for c in cats + ["TOTAL"]:
+        if c == "TOTAL":
+            row = {e: (sum(catbytes[cc][e][0] for cc in cats),
+                       sum(catbytes[cc][e][1] for cc in cats)) for e in STYLE}
+        else:
+            row = {e: tuple(catbytes[c][e]) for e in STYLE}
+        cells = " | ".join(f"{100 * row[e][0] / row[e][1]:.1f}%" for e in STYLE)
+        f.write(f"| {c} | {cells} |\n")
+print("wrote summary.md")

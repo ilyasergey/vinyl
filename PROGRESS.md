@@ -94,3 +94,70 @@ vectors).
 `restoreLpc_residualLpc` — note PLAN.md §5.2's arithmetic-shift bridging
 lemmas); Levinson–Durbin + windowing in Heuristics; then M4 (stereo,
 wasted bits, multichannel frames, variable blocksize numbering).
+
+---
+
+## 2026-08-23 — Session 2: M3 (LPC) + M4 complete (reference capstone)
+
+**Landed:**
+
+- **M3 complete.** `Flac/Native/Lpc.lean` in history-passing style makes
+  `Lpc.restore_residual` a hypothesis-free one-line induction (the decoder's
+  history provably equals the encoder's, so predictions coincide for *any*
+  coefficients/shift). LPC subframes end-to-end (4-bit precision−1 with
+  0b1111 rejected, 5-bit signed non-negative shift, big-endian signed
+  coefficients). Heuristics: Welch window, autocorrelation,
+  Levinson–Durbin (orders 1–8), libFLAC-style error-feedback quantization
+  at 12 bits, exact-Rice-cost comparison vs fixed and verbatim. `lpcCfg`
+  clamps everything so `defaultChooser_valid` never inspects the Float
+  search.
+- **M4 complete — the reference capstone.**
+  `Flac.Stream.decodeReference_encode`: decode∘encode = id for every
+  well-formed `Audio` (1–8 equal-length channels, bps 1–32), block sizes
+  16–65535, fixed- and variable-blocksize numbering, and every valid
+  channel-assignment heuristic. Pieces: wasted bits (`SubCfg` wrapper,
+  content coded at `b − w`, certified `wastedDetect`); stereo
+  decorrelation (`Flac/Native/Stereo.lean`, L4 round-trips; mid/side via
+  the parity lemma `two_mul_sar_one`); multichannel frames
+  (`ChannelAsg`, `subframePlan`, decoder dispatch on the channel code,
+  side subframes at `b+1` bits); joint channel chunking + recombination
+  at the stream layer; `defaultAsgChooser` (sum-of-magnitudes stereo
+  decision) certified, giving the hypothesis-light corollary
+  `decodeReference_encode_default`.
+- **Conformance:** smoke rig extended to stereo — all our streams
+  (incl. mid/side and wasted-bits) verify and decode byte-identically
+  under libFLAC 1.5.0; libFLAC `-l 0` mono and stereo streams decode
+  byte-identically under `decodeReference`. The wasted-bits gap found by
+  differential testing in session 1 is closed.
+- **Bench:** corpus expanded to ~39 files with category prefixes
+  (tonal/wave/noise/mixed/degen/stereo); per-category aggregate-ratio
+  bars + summary table; throughput profile panel.
+- Housekeeping: project renamed to Vinyl on GitHub
+  (`ilyasergey/vinyl`); Lean sources no longer reference PLAN.md or
+  milestone names (docs only); README now quotes the actual proven
+  capstone with source links; 71 unit checks.
+
+**Proof-engineering notes (new):**
+
+- `omega` does not see through `Int.ofNat` (use `↑`-casts) and only
+  matches `%`/`/` notation, not `.emod`/`.ediv` applications.
+- `fun_induction` on well-founded defs both unfolds the goal per-case and
+  auto-folds recursive occurrences — do not `rw [f]`/`rw [← f.eq_def]`
+  around it. Lambdas over the decreasing argument get `attach`-wrapped in
+  termination goals; hide them behind tiny named defs (`dropAll`,
+  `tailAll`) to keep `decreasing_by` sane.
+- `simp only [lemma-with-_-args]` fails where `rw` succeeds: explicit
+  arguments (e.g. fuel) must be given for use as a simp rule.
+- `split` on a match-in-goal may generalize the scrutinee with an `heq`
+  rather than case on an inner match; prefer `rcases h : innerFn` and
+  `simp only [h]`.
+- Anonymous-constructor `exact ⟨…⟩` works under definitional match
+  reduction only after the scrutinee is a literal constructor.
+
+**Blocked:** nothing.
+
+**Next (M5):** production decoder (Int64 arithmetic, ByteArray-buffered
+bit reader) + overflow lemma family (PLAN.md §5.1) +
+`decode_ok_iff_reference` accept-set transfer ⇒ shipped capstone
+`Flac.decode_encode`; then Rigs 3–5 (fuzzing) and the M6 performance
+work (adaptive Rice partitions, block-size search, faster bit I/O).

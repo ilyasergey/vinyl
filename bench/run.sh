@@ -21,10 +21,12 @@ echo "file,encoder,seconds,bytes,raw_bytes" > "$RESULTS"
 
 for pcm in "$CORPUS"/*.pcm; do
   name=$(basename "$pcm" .pcm)
+  ch=1
+  case "$name" in *.2ch) ch=2; name=$(basename "$name" .2ch);; esac
   raw=$(stat -f%z "$pcm" 2>/dev/null || stat -c%s "$pcm")
 
   t0=$(now)
-  .lake/build/bin/flactest --encode "$pcm" "$OUT/$name.vinyl.flac" 4096 >/dev/null
+  .lake/build/bin/flactest --encode "$pcm" "$OUT/$name.vinyl.flac" 4096 $ch >/dev/null
   t1=$(now)
   flac -t -s "$OUT/$name.vinyl.flac"   # merge-gate: outputs must verify
   sz=$(stat -f%z "$OUT/$name.vinyl.flac" 2>/dev/null || stat -c%s "$OUT/$name.vinyl.flac")
@@ -32,7 +34,7 @@ for pcm in "$CORPUS"/*.pcm; do
 
   for lvl in 0 5 8; do
     t0=$(now)
-    flac -$lvl --force-raw-format --sign=signed --endian=little --channels=1 \
+    flac -$lvl --force-raw-format --sign=signed --endian=little --channels=$ch \
       --bps=16 --sample-rate=44100 -s -f -o "$OUT/$name.flac$lvl.flac" "$pcm" 2>/dev/null
     t1=$(now)
     sz=$(stat -f%z "$OUT/$name.flac$lvl.flac" 2>/dev/null || stat -c%s "$OUT/$name.flac$lvl.flac")

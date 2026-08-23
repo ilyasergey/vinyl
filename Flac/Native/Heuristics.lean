@@ -36,18 +36,55 @@ where
 def riceCost (k : Nat) (us : List Nat) : Nat :=
   us.foldl (fun a u => a + u / 2 ^ k) 0 + us.length * (k + 1)
 
-/-- Candidate: (order, rice parameter, bit cost). -/
-private def pickMin (c : Nat × Nat × Nat) (cs : List (Nat × Nat × Nat)) :
-    Nat × Nat × Nat :=
-  cs.foldl (fun a c' => if c'.2.2 < a.2.2 then c' else a) c
+/-- Best parameter and exact cost for one partition. -/
+def bestParam (us : List Nat) : Nat × Nat :=
+  let k := riceParam us.sum us.length
+  (k, riceCost k us)
+
+/-- Search partition orders 0–6 over the folded residual: per-partition
+    best parameters, exact total bit cost. Returns `(po, ks, cost)`. -/
+def partitionSearch (bs ord : Nat) (us : List Nat) : Nat × List Nat × Nat := Id.run do
+  let (k0, c0) := bestParam us
+  let mut best : Nat × List Nat × Nat := (0, [k0], 6 + 4 + c0)
+  for po in [1, 2, 3, 4, 5, 6] do
+    if bs % 2 ^ po = 0 ∧ ord < bs / 2 ^ po then
+      let c := bs / 2 ^ po
+      let sizes := (c - ord) :: List.replicate (2 ^ po - 1) c
+      let parts := Rice.chunkBySizes sizes us
+      let picks := parts.map bestParam
+      let cost := 6 + picks.foldl (fun a p => a + 4 + p.2) 0
+      if cost < best.2.2 then
+        best := (po, picks.map Prod.fst, cost)
+  return best
+
+/-- Pick the candidate with the least cost (cost is the second
+    component). -/
+private def pickMin {α : Type} (c : α × Nat) (cs : List (α × Nat)) : α × Nat :=
+  cs.foldl (fun a c' => if c'.2 < a.2 then c' else a) c
+
+/-- Per-partition Rice choices, padded/clamped so the list has exactly
+    `2^po` entries with legal parameters — valid by construction. -/
+def padChoices (po : Nat) (ks : List Nat) : List Rice.Partition :=
+  (ks.map (fun k => Rice.Partition.rice (min k 14))).take (2 ^ po) ++
+  List.replicate (2 ^ po - min ks.length (2 ^ po)) (.rice 10)
+
+/-- A partitioned-Rice residual configuration that is valid by
+    construction: the partition order is used only when the divisibility
+    and first-partition conditions hold, else it degrades to a single
+    partition. -/
+def riceCfg (bs ord po : Nat) (ks : List Nat) : Rice.ResidualCfg :=
+  if bs % 2 ^ po = 0 ∧ ord < bs / 2 ^ po ∧ po < 16 then
+    { method := .rice4, po := po, choices := padChoices po ks }
+  else
+    { method := .rice4, po := 0, choices := [.rice (min (ks.headD 10) 14)] }
 
 /-- A FIXED configuration that is valid *by construction* for any nonempty
-    block: order and Rice parameter are clamped into legal range here, so
+    block: order and Rice parameters are clamped into legal range here, so
     the validity proof never needs to reason about the search that chose
     them. -/
-def fixedCfg (blk : List Int) (ord k : Nat) : SubframeCfg :=
+def fixedCfg (blk : List Int) (ord po : Nat) (ks : List Nat) : SubframeCfg :=
   .fixed (min (min ord 4) (blk.length - 1))
-    { method := .rice4, po := 0, choices := [.rice (min k 14)] }
+    (riceCfg blk.length (min (min ord 4) (blk.length - 1)) po ks)
 
 /-- Clamp into `p`-bit two's-complement range (explicit `if`s so the
     fits-proof is a pair of splits). -/
@@ -60,13 +97,16 @@ def clampSInt (p : Nat) (c : Int) : Int :=
     precision, shift, coefficients, and Rice parameter all clamped into
     legal range; degenerates to VERBATIM if no coefficients survive).
     Written without `let` so proofs can `split` on it directly. -/
-def lpcCfg (blk : List Int) (cs : List Int) (shift prec k : Nat) : SubframeCfg :=
+def lpcCfg (blk : List Int) (cs : List Int) (shift prec po : Nat)
+    (ks : List Nat) : SubframeCfg :=
   if ((cs.map (clampSInt (min (max prec 1) 15))).take (min 32 (blk.length - 1))).isEmpty
   then .verbatim
   else
     .lpc ((cs.map (clampSInt (min (max prec 1) 15))).take (min 32 (blk.length - 1)))
       (min shift 15) (min (max prec 1) 15)
-      { method := .rice4, po := 0, choices := [.rice (min k 14)] }
+      (riceCfg blk.length
+        ((cs.map (clampSInt (min (max prec 1) 15))).take (min 32 (blk.length - 1))).length
+        po ks)
 
 /-! ## Levinson–Durbin (Float, unverified — pure search) -/
 
@@ -129,34 +169,35 @@ def quantizeCoefs (cf : List Float) (prec : Nat) : List Int × Nat := Id.run do
   return (out.reverse, shift)
 
 /-- LPC search: Welch window, autocorrelation, Levinson–Durbin at a few
-    orders, quantize to 12 bits, exact Rice bit cost. Returns
-    `(cs, shift, prec, k, cost)`. -/
-def lpcSearch (b : Nat) (blk : List Int) : Option (List Int × Nat × Nat × Nat × Nat) := Id.run do
+    orders, quantize to 12 bits, adaptive partitions, exact bit cost.
+    Returns `((cs, shift, po, ks), cost)`. -/
+def lpcSearch (b : Nat) (blk : List Int) :
+    Option ((List Int × Nat × Nat × List Nat) × Nat) := Id.run do
   if blk.length < 16 then
     return none
   let fl := (blk.map Float.ofInt).toArray
   let r := autocorr (welch fl) 8
   if !(r[0]! > 0.0) then
     return none
-  let mut best : Option (List Int × Nat × Nat × Nat × Nat) := none
+  let mut best : Option ((List Int × Nat × Nat × List Nat) × Nat) := none
   for ord in [1, 2, 4, 6, 8] do
     if ord < blk.length then
       let (cs, shift) := quantizeCoefs (levinson r ord).toList 12
       let us := (Lpc.residual cs shift blk).map Rice.zigzag
-      let k := riceParam us.sum us.length
-      let cost := ord * b + 9 + ord * 12 + riceCost k us
+      let (po, ks, rcost) := partitionSearch blk.length ord us
+      let cost := ord * b + 9 + ord * 12 + rcost
       match best with
-      | some (_, _, _, _, c) => if cost < c then best := some (cs, shift, 12, k, cost)
-      | none => best := some (cs, shift, 12, k, cost)
+      | some (_, c) => if cost < c then best := some ((cs, shift, po, ks), cost)
+      | none => best := some ((cs, shift, po, ks), cost)
   return best
 
-/-- Search fixed orders 0–4, returning `(ord, k, cost)` of the best. -/
-def fixedSearch (b : Nat) (blk : List Int) : Option (Nat × Nat × Nat) :=
+/-- Search fixed orders 0–4, returning `((ord, po, ks), cost)` best. -/
+def fixedSearch (b : Nat) (blk : List Int) : Option ((Nat × Nat × List Nat) × Nat) :=
   match (List.range 5).filterMap (fun ord =>
     if ord + 1 ≤ blk.length then
       let us := (Fixed.residual ord blk).map Rice.zigzag
-      let k := riceParam us.sum us.length
-      some (ord, k, ord * b + riceCost k us)
+      let (po, ks, cost) := partitionSearch blk.length ord us
+      some ((ord, po, ks), ord * b + cost)
     else none) with
   | [] => none
   | c :: cs => some (pickMin c cs)
@@ -168,15 +209,15 @@ def defaultChooser (b : Nat) (blk : List Int) : SubframeCfg :=
   else
     match fixedSearch b blk, lpcSearch b blk with
     | none, none => .verbatim
-    | none, some (lcs, lsh, lp, lk, lcost) =>
-      if lcost < b * blk.length then lpcCfg blk lcs lsh lp lk else .verbatim
-    | some (ord, k, cost), none =>
-      if cost < b * blk.length then fixedCfg blk ord k else .verbatim
-    | some (ord, k, cost), some (lcs, lsh, lp, lk, lcost) =>
+    | none, some ((lcs, lsh, lpo, lks), lcost) =>
+      if lcost < b * blk.length then lpcCfg blk lcs lsh 12 lpo lks else .verbatim
+    | some ((ord, po, ks), cost), none =>
+      if cost < b * blk.length then fixedCfg blk ord po ks else .verbatim
+    | some ((ord, po, ks), cost), some ((lcs, lsh, lpo, lks), lcost) =>
       if lcost ≤ cost then
-        if lcost < b * blk.length then lpcCfg blk lcs lsh lp lk else .verbatim
+        if lcost < b * blk.length then lpcCfg blk lcs lsh 12 lpo lks else .verbatim
       else
-        if cost < b * blk.length then fixedCfg blk ord k else .verbatim
+        if cost < b * blk.length then fixedCfg blk ord po ks else .verbatim
 
 /-- Detect wasted bits: the largest `w < b` such that every sample is
     divisible by `2^w`. Sound by construction (`find?` returns only

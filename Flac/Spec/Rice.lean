@@ -107,14 +107,14 @@ theorem readParts_writeParts (m : Method) :
 
 /-! ## Chunking -/
 
-theorem chunkBySizes_length (sizes : List Nat) (xs : List Int) :
+theorem chunkBySizes_length {α : Type} (sizes : List Nat) (xs : List α) :
     (chunkBySizes sizes xs).length = sizes.length := by
   induction sizes generalizing xs with
   | nil => rfl
   | cons sz sizes ih => simp [chunkBySizes, ih]
 
-theorem chunkBySizes_map_length :
-    ∀ (sizes : List Nat) (xs : List Int), sizes.sum = xs.length →
+theorem chunkBySizes_map_length {α : Type} :
+    ∀ (sizes : List Nat) (xs : List α), sizes.sum = xs.length →
       (chunkBySizes sizes xs).map List.length = sizes := by
   intro sizes
   induction sizes with
@@ -128,8 +128,8 @@ theorem chunkBySizes_map_length :
     congr 1
     omega
 
-theorem chunkBySizes_flatten :
-    ∀ (sizes : List Nat) (xs : List Int), sizes.sum = xs.length →
+theorem chunkBySizes_flatten {α : Type} :
+    ∀ (sizes : List Nat) (xs : List α), sizes.sum = xs.length →
       (chunkBySizes sizes xs).flatten = xs := by
   intro sizes
   induction sizes with

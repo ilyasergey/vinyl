@@ -11,3 +11,7 @@ name = "FlacTest"
 [[lean_exe]]
 name = "flactest"
 root = "FlacTest.Main"
+
+[[lean_exe]]
+name = "vinyl"
+root = "Vinyl"

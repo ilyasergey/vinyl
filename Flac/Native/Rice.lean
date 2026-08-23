@@ -158,7 +158,7 @@ def partSizes (bs po ord : Nat) : List Nat :=
   (bs / 2 ^ po - ord) :: List.replicate (2 ^ po - 1) (bs / 2 ^ po)
 
 /-- Split `xs` into consecutive chunks of the given sizes. -/
-def chunkBySizes : (sizes : List Nat) → (xs : List Int) → List (List Int)
+def chunkBySizes {α : Type} : (sizes : List Nat) → (xs : List α) → List (List α)
   | [], _ => []
   | sz :: sizes, xs => xs.take sz :: chunkBySizes sizes (xs.drop sz)
 

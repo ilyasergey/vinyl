@@ -49,14 +49,15 @@ def recombine (ch : Nat) : List (List (List Int)) → List (List Int)
 /-- Interleave channels sample-by-sample (the MD5 input order,
     RFC 9639 §8.2). -/
 def interleave (chs : List (List Int)) : List Int :=
-  if _h : (chs.headD []).length = 0 then []
+  if _h : (chs.headD []).isEmpty then []
   else chs.map (·.headD 0) ++ interleave (tailAll chs)
 termination_by (chs.headD []).length
 decreasing_by
   rcases chs with _ | ⟨c, t⟩
   · simp at _h
   · simp only [tailAll, List.map_cons, List.headD_cons, List.length_tail]
-    simp only [List.headD_cons] at _h
+    simp only [List.headD_cons, List.isEmpty_iff] at _h
+    have : 0 < c.length := List.length_pos_iff.mpr _h
     omega
 
 /-- Interleaved PCM as little-endian two's-complement bytes, `⌈b/8⌉` bytes

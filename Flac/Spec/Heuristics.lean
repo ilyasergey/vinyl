@@ -23,23 +23,55 @@ private theorem mem_zip_singleton {α β : Type} (a : α) (l : List β)
     simp only [List.zip_cons_cons, List.zip_nil_left, List.mem_singleton] at h
     simp [h]
 
+/-- Every padded partition choice is a legal Rice parameter. -/
+private theorem padChoices_mem (po : Nat) (ks : List Nat) :
+    ∀ q ∈ padChoices po ks, ∃ k, q = .rice k ∧ k < 15 := by
+  intro q hq
+  rcases List.mem_append.mp hq with h | h
+  · obtain ⟨k, _, rfl⟩ := List.mem_map.mp (List.mem_of_mem_take h)
+    exact ⟨min k 14, rfl, by omega⟩
+  · rw [List.eq_of_mem_replicate h]
+    exact ⟨10, rfl, by omega⟩
+
+private theorem padChoices_length (po : Nat) (ks : List Nat) :
+    (padChoices po ks).length = 2 ^ po := by
+  simp only [padChoices, List.length_append, List.length_take,
+    List.length_map, List.length_replicate]
+  omega
+
+/-- `riceCfg` is valid for any residual of the right length. -/
+theorem riceCfg_valid (bs ord po : Nat) (ks : List Nat) (res : List Int)
+    (hord : ord < bs) (hres : res.length = bs - ord) :
+    (riceCfg bs ord po ks).Valid bs ord res := by
+  unfold riceCfg
+  split
+  · rename_i h
+    obtain ⟨h1, h2, h3⟩ := h
+    refine ⟨h3, Nat.dvd_of_mod_eq_zero h1, h2, hres, padChoices_length po ks, ?_⟩
+    intro p hp
+    obtain ⟨k, hk, hk15⟩ := padChoices_mem po ks p.1 (List.of_mem_zip hp).1
+    rw [hk]
+    show k < 15
+    omega
+  · refine ⟨by simp, by simp, ?_, hres, by simp, ?_⟩
+    · simp only [Nat.pow_zero, Nat.div_one]
+      omega
+    · intro p hp
+      rw [mem_zip_singleton _ _ p hp]
+      show min (ks.headD 10) 14 < 15
+      omega
+
 /-- `fixedCfg` is valid for every nonempty block whose samples fit. -/
-theorem fixedCfg_valid (b : Nat) (blk : List Int) (ord k : Nat)
+theorem fixedCfg_valid (b : Nat) (blk : List Int) (ord po : Nat)
+    (ks : List Nat)
     (hne : 1 ≤ blk.length) (hfit : ∀ x ∈ blk, FitsSInt b x) :
-    (fixedCfg blk ord k).Valid b blk := by
+    (fixedCfg blk ord po ks).Valid b blk := by
   unfold fixedCfg
   refine ⟨by omega, fun x hx => hfit x (List.mem_of_mem_take hx), ?_⟩
-  refine ⟨by simp, ?_, ?_, ?_, by simp, ?_⟩
-  · simp
-  · simp only [Nat.pow_zero, Nat.div_one]
-    omega
+  apply riceCfg_valid
+  · omega
   · show (Fixed.diffN _ blk).length = _
     simp only [Fixed.length_diffN]
-  · intro p hp
-    have h1 := mem_zip_singleton _ _ p hp
-    rw [h1]
-    show min k 14 < 15
-    omega
 
 /-- `clampSInt` really clamps: the result fits `p` bits. -/
 theorem fitsSInt_clampSInt (p : Nat) (hp : 1 ≤ p) (c : Int) :
@@ -56,9 +88,9 @@ theorem fitsSInt_clampSInt (p : Nat) (hp : 1 ≤ p) (c : Int) :
 
 /-- `lpcCfg` is valid for every nonempty block whose samples fit. -/
 theorem lpcCfg_valid (b : Nat) (blk : List Int) (cs : List Int)
-    (shift prec k : Nat) (hne : 1 ≤ blk.length)
+    (shift prec po : Nat) (ks : List Nat) (hne : 1 ≤ blk.length)
     (hfit : ∀ x ∈ blk, FitsSInt b x) :
-    (lpcCfg blk cs shift prec k).Valid b blk := by
+    (lpcCfg blk cs shift prec po ks).Valid b blk := by
   unfold lpcCfg
   split
   · exact fun x hx => hfit x hx
@@ -78,16 +110,11 @@ theorem lpcCfg_valid (b : Nat) (blk : List Int) (cs : List Int)
       obtain ⟨orig, _, horig⟩ := List.mem_map.mp (List.mem_of_mem_take hc)
       rw [← horig]
       exact fitsSInt_clampSInt _ (by omega) orig
-    · refine ⟨by simp, by simp, ?_, ?_, by simp, ?_⟩
-      · simp only [Nat.pow_zero, Nat.div_one]
-        omega
+    · apply riceCfg_valid
+      · omega
       · show (Lpc.residualAux _ _ _ _).length = _
         rw [Lpc.length_residualAux]
         simp only [List.length_drop]
-      · intro p hp
-        rw [mem_zip_singleton _ _ p hp]
-        show min k 14 < 15
-        omega
 
 /-- The chooser's certificate: its output is always valid. -/
 theorem defaultChooser_valid (b : Nat) (blk : List Int)
@@ -107,17 +134,17 @@ theorem defaultChooser_valid (b : Nat) (blk : List Int)
     split
     · exact hverb
     · split
-      · exact lpcCfg_valid b blk _ _ _ _ hne hfit
+      · exact lpcCfg_valid b blk _ _ _ _ _ hne hfit
       · exact hverb
     · split
-      · exact fixedCfg_valid b blk _ _ hne hfit
+      · exact fixedCfg_valid b blk _ _ _ hne hfit
       · exact hverb
     · split
       · split
-        · exact lpcCfg_valid b blk _ _ _ _ hne hfit
+        · exact lpcCfg_valid b blk _ _ _ _ _ hne hfit
         · exact hverb
       · split
-        · exact fixedCfg_valid b blk _ _ hne hfit
+        · exact fixedCfg_valid b blk _ _ _ hne hfit
         · exact hverb
 
 /-! ## Wasted-bits detection -/
