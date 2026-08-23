@@ -89,13 +89,31 @@ def encodePcm16Cfg (cfg : Flac.Stream.EncoderCfg) (ch sampleRate : Nat)
 def encodePcm16 (ch : Nat) (bytes : ByteArray) : Option ByteArray :=
   encodePcm16Cfg ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ch 44100 bytes
 
+/-- One interleaved row of 16-bit LE samples at index `i`. -/
+def pcm16Row (arrs : List (Array Int)) (i : Nat) (out : ByteArray) : ByteArray :=
+  match arrs with
+  | [] => out
+  | a :: rest =>
+    let u := (a.getD i 0 % 65536).toNat
+    pcm16Row rest i ((out.push (UInt8.ofNat (u % 256))).push (UInt8.ofNat (u / 256)))
+
+def pcm16Go (arrs : List (Array Int)) : (n i : Nat) → ByteArray → ByteArray
+  | 0, _, out => out
+  | n + 1, i, out => pcm16Go arrs n (i + 1) (pcm16Row arrs i out)
+
+/-- Interleave + serialize in one indexed pass — proven equal to the
+    compositional `byteListOfPcm16 ∘ interleave` by `Flac.pcm16Fast_eq`. -/
+def pcm16Fast (chs : List (List Int)) : ByteArray :=
+  pcm16Go (chs.map List.toArray) (chs.headD []).length 0
+    (ByteArray.emptyWithCapacity (2 * chs.length * (chs.headD []).length))
+
 /-- **Byte-level decoder**: back to interleaved signed 16-bit
     little-endian PCM. -/
 def decodePcm16 (flac : ByteArray) : Except String ByteArray :=
   match decode flac with
   | .error e => .error e
   | .ok a =>
-    if a.bps = 16 then .ok (byteListOfPcm16 (interleave a.channels)).toByteArray
+    if a.bps = 16 then .ok (pcm16Fast a.channels)
     else .error "not 16-bit audio"
 
 /-! ## The certified fast encoder

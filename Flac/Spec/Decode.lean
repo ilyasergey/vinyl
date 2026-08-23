@@ -2125,6 +2125,117 @@ private theorem toByteArray_toList_data (b : ByteArray) :
   apply Array.toList_inj.mp
   rw [List.toList_data_toByteArray]
 
+/-! ### The fused PCM16 serializer computes `byteListOfPcm16 ∘ interleave` -/
+
+private theorem data_toList_push (b : ByteArray) (x : UInt8) :
+    (b.push x).data.toList = b.data.toList ++ [x] := by
+  cases b
+  simp [ByteArray.push]
+
+private theorem byteListOfPcm16_append (l₁ l₂ : List Int) :
+    byteListOfPcm16 (l₁ ++ l₂) = byteListOfPcm16 l₁ ++ byteListOfPcm16 l₂ := by
+  induction l₁ with
+  | nil => rfl
+  | cons x t ih =>
+    show UInt8.ofNat ((x % 65536).toNat % 256) :: UInt8.ofNat ((x % 65536).toNat / 256)
+        :: byteListOfPcm16 (t ++ l₂) = _
+    rw [ih]
+    rfl
+
+private theorem headD_drop (l : List Int) : ∀ i, (l.drop i).headD 0 = l.getD i 0 := by
+  induction l with
+  | nil => intro i; cases i <;> rfl
+  | cons x t ih =>
+    intro i
+    cases i with
+    | zero => rfl
+    | succ i => exact ih i
+
+private theorem getD_toArray (l : List Int) (i : Nat) :
+    l.toArray.getD i 0 = l.getD i 0 := by
+  rw [Array.getD_eq_getD_getElem?, List.getElem?_toArray, List.getD_eq_getElem?_getD]
+
+private theorem pcm16Row_eq (i : Nat) :
+    ∀ (chs : List (List Int)) (out : ByteArray),
+      pcm16Row (chs.map List.toArray) i out
+        = out ++ (byteListOfPcm16 (chs.map (fun l => l.getD i 0))).toByteArray := by
+  intro chs
+  induction chs with
+  | nil =>
+    intro out
+    show out = out ++ ([] : List UInt8).toByteArray
+    apply ByteArray.ext
+    apply Array.toList_inj.mp
+    rw [ByteArray.data_append]
+    simp [List.toList_data_toByteArray]
+  | cons c t ih =>
+    intro out
+    show pcm16Row (t.map List.toArray) i
+        ((out.push (UInt8.ofNat ((c.toArray.getD i 0 % 65536).toNat % 256))).push
+          (UInt8.ofNat ((c.toArray.getD i 0 % 65536).toNat / 256))) = _
+    rw [ih, getD_toArray]
+    apply ByteArray.ext
+    apply Array.toList_inj.mp
+    rw [ByteArray.data_append, ByteArray.data_append, Array.toList_append,
+      Array.toList_append, data_toList_push, data_toList_push,
+      List.toList_data_toByteArray, List.toList_data_toByteArray]
+    simp [byteListOfPcm16]
+
+private theorem map_headD_drop (chs : List (List Int)) (i : Nat) :
+    (chs.map (·.drop i)).map (·.headD 0) = chs.map (fun l => l.getD i 0) := by
+  induction chs with
+  | nil => rfl
+  | cons c t ih => simp only [List.map_cons, ih, headD_drop]
+
+private theorem map_tail_drop (chs : List (List Int)) (i : Nat) :
+    (chs.map (·.drop i)).map (·.tail) = chs.map (·.drop (i + 1)) := by
+  induction chs with
+  | nil => rfl
+  | cons c t ih => simp only [List.map_cons, ih, List.tail_drop]
+
+private theorem toByteArray_append (a b : List UInt8) :
+    (a ++ b).toByteArray = a.toByteArray ++ b.toByteArray := by
+  apply ByteArray.ext
+  apply Array.toList_inj.mp
+  rw [ByteArray.data_append]
+  simp [List.toList_data_toByteArray]
+
+private theorem pcm16Go_eq (chs : List (List Int)) :
+    ∀ (n i : Nat) (out : ByteArray),
+      pcm16Go (chs.map List.toArray) n i out
+        = out ++ (byteListOfPcm16 (interleaveN n (chs.map (·.drop i)))).toByteArray := by
+  intro n
+  induction n with
+  | zero =>
+    intro i out
+    show out = out ++ ([] : List UInt8).toByteArray
+    apply ByteArray.ext
+    apply Array.toList_inj.mp
+    rw [ByteArray.data_append]
+    simp [List.toList_data_toByteArray]
+  | succ n ih =>
+    intro i out
+    show pcm16Go (chs.map List.toArray) n (i + 1) (pcm16Row (chs.map List.toArray) i out) = _
+    rw [ih (i + 1), pcm16Row_eq,
+      show interleaveN (n + 1) (chs.map (·.drop i))
+          = (chs.map (·.drop i)).map (·.headD 0)
+            ++ interleaveN n ((chs.map (·.drop i)).map (·.tail)) from rfl,
+      map_headD_drop, map_tail_drop, byteListOfPcm16_append, toByteArray_append,
+      ByteArray.append_assoc]
+
+private theorem emptyWithCapacity_eq_empty' (c : Nat) :
+    ByteArray.emptyWithCapacity c = ByteArray.empty := by
+  apply ByteArray.ext
+  rfl
+
+/-- The fused serializer computes the compositional byte-level output. -/
+theorem pcm16Fast_eq (chs : List (List Int)) :
+    pcm16Fast chs = (byteListOfPcm16 (interleave chs)).toByteArray := by
+  unfold pcm16Fast interleave
+  rw [pcm16Go_eq chs (chs.headD []).length 0, emptyWithCapacity_eq_empty',
+    ByteArray.empty_append,
+    show chs.map (·.drop 0) = chs from by simp]
+
 /-- **The byte-level guarantee**: whenever `encodePcm16Cfg` produces a
     FLAC file at all, decoding that file returns exactly the input PCM
     bytes — no hypotheses. -/
@@ -2140,7 +2251,7 @@ theorem decodePcm16_encodePcm16Cfg {cfg : Stream.EncoderCfg}
     have hdec := decode_encodeCheckedCfg h
     unfold decodePcm16
     simp only [hdec]
-    rw [if_pos (by trivial)]
+    rw [if_pos (by trivial), pcm16Fast_eq]
     have hlist : bytes.data.toList.length = bytes.size := Array.length_toList
     obtain ⟨m, hm⟩ : ∃ m, bytes.size = m * (2 * ch) :=
       ⟨bytes.size / (2 * ch),

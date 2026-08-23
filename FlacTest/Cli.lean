@@ -267,6 +267,8 @@ def usage : String :=
   "      decode with the verified reference decoder (raw 16-bit LE out)\n" ++
   "  vinyl --decode-fast <in.flac> <out.pcm>\n" ++
   "      decode with the shipped buffered decoder (raw 16-bit LE out)\n" ++
+  "  vinyl --decode-pcm16 <in.flac> <out.pcm>\n" ++
+  "      decode via the verified byte-level pipeline (16-bit input only)\n" ++
   "  vinyl --samples <dir>\n" ++
   "      write sample .flac/.pcm pairs into <dir> (must exist)\n" ++
   "  vinyl (no arguments)\n" ++
@@ -289,6 +291,14 @@ def cliMain (args : List String) : IO UInt32 := do
     | none =>
       IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, or channels/blockSize out of range)"
       return 1
+  if let ["--decode-pcm16", inFile, outFile] := args then
+    let bytes ← IO.FS.readBinFile inFile
+    match Flac.decodePcm16 bytes with
+    | .error e => IO.println s!"DECODE ERROR: {e}"; return 1
+    | .ok pcm =>
+      IO.FS.writeBinFile outFile pcm
+      IO.println "decoded (byte-level pipeline)"
+      return 0
   if let ["--encode-slow", inFile, outFile, bs, ch] := args then
     let bytes ← IO.FS.readBinFile inFile
     -- the fully verified encoder (the fast path's fallback), kept for
