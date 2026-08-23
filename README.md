@@ -115,13 +115,17 @@ suite. To run the cross-check yourself on one file, see
 
 On the 37-file synthetic corpus of `bench/gen_corpus.py`, the encoder's
 overall compression ratio **beats `flac -8`** (39.6% vs 39.8% of raw) —
-the certified heuristics choose well. Throughput after the M6 work:
-~8 MB/s encode and ~15.5 MB/s decode (medians; 12 and 25 MB/s on a
-10 MB file) against libFLAC's ~31–37 MB/s in the same run — a
-×4.4 / ×2.4 gap, down from ×200 / ×25. Every decoder fast path is
-proven equal to its bit-level specification; the frame-parallel encoder
-is certified per call by the verified decoder (details and regeneration:
-`bench/README.md`).
+the certified heuristics choose well. A corrected-timer smoke pass measured
+approximately 12.0 MB/s encode and 30.6 MB/s decode for Vinyl, against
+106.3 MB/s for `flac -5` encode and 121.3 MB/s for libFLAC decode: gaps of
+about 8.9× and 4.0×. These replace the previously reported 4.4×/2.4×
+figures, which were biased downward because the old harness charged roughly
+20 ms of Python timestamp-process startup to every command. The current
+harness warms every case, interleaves implementations, and records five-run
+medians from one persistent timer process. Every decoder fast path is proven
+equal to its bit-level specification; the frame-parallel encoder is certified
+per call by the verified decoder. See [`bench/README.md`](bench/README.md)
+for the methodology, provisional status, and regeneration instructions.
 
 Compression, per file (sorted; lower is better) and aggregated per
 content category:

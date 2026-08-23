@@ -7,12 +7,24 @@ waveforms, noise, tonal+noise mixes, degenerate signals, stereo pairs).
 Regenerate everything with:
 
 ```sh
-./bench/run.sh        # times both codecs, writes results.csv (verifies every vinyl output with flac -t)
-python3 bench/plot.py # renders compression.png / performance.png, summary.md
+./bench/run.sh        # five measured runs per case by default
+BENCH_RUNS=9 ./bench/run.sh
+python3 bench/plot.py # re-render plots/tables from an existing results.csv
 ```
 
 `corpus/`, `out/`, `results.csv`, `summary.md`, and the two PNGs are all
-generated artifacts.
+generated artifacts. Each case receives an untimed warmup. The measured
+encode/decode commands are then shuffled with a fixed seed, and
+`results.csv` records their median wall time. Correctness checks (`flac -t`
+and a byte-for-byte PCM comparison) run outside the timed intervals.
+
+Timing is deliberately owned by one persistent Python parent process. The
+original shell harness launched `python3` separately for every timestamp;
+the startup of the second timestamp process added roughly 19–22 ms to every
+codec invocation. That fixed surcharge was especially large beside
+libFLAC's 7–10 ms work on these mostly 1 MB files, so the old dashboard
+substantially understated the relative gap. Results produced by the old
+harness must not be compared with results produced by the current one.
 
 All percentages are compression ratios: encoded size as a fraction of
 the raw PCM. 0% would mean the file vanished, 100% means no compression
@@ -51,14 +63,21 @@ decode (the shipped buffered decoder):
 
 ![Throughput vs libFLAC](performance.png)
 
-Honest reading: Vinyl encodes at ~8 MB/s and decodes at ~15.5 MB/s
-(medians), against libFLAC's ~31–37 MB/s measured in the same run —
-roughly 4.4× off on encode, 2.4× on decode (down from ×200 / ×25
-before the M6 work; a 10 MB file does better than the 1 MB-file
-medians: 12 MB/s encode, 25 MB/s decode). Compare medians *within* one
-run only; absolute throughput moves ±20% between runs with machine
-load, which is why the figure plots both codecs together. Both fast
-paths carry zero new proof debt: the decoder's landed under unchanged
-theorems, and the fast encoder certifies every call — it decodes its
-own output with the *verified* decoder and compares against the input,
-falling back to the verified encoder on any mismatch.
+The first corrected-timer smoke pass measured median throughput of
+approximately 12.0 MB/s for Vinyl encode and 30.6 MB/s for Vinyl decode,
+versus 106.3 MB/s for `flac -5` encode and 121.3 MB/s for libFLAC decode.
+That is an approximately 8.9× encode gap and 4.0× decode gap. This smoke
+pass used one measured sample per case; the published comparison should be
+regenerated with the default five samples after optimization work settles.
+
+The important correction is methodological: libFLAC did not suddenly get
+faster, and Vinyl also measures faster without the timestamp surcharge.
+Removing a fixed ~20 ms error simply benefits the shorter libFLAC commands
+much more. Compare medians only *within the same run*; machine load and
+thermal state still move absolute throughput, which is why the figure plots
+both codecs together and interleaves their measurements.
+
+Both Vinyl paths retain zero proof debt: decoder fast paths are proved equal
+to their specifications, while the production encoder currently certifies
+each call by decoding its own output with the verified decoder and comparing
+it with the input (falling back to the verified encoder on mismatch).
