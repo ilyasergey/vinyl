@@ -54,6 +54,16 @@ def padLen (len : Nat) : Nat := (8 - len % 8) % 8
 def alignToByte (s : BitStream) : BitStream :=
   s ++ List.replicate (padLen s.length) false
 
+/-- Run a reader and also return the bits it consumed — the FLAC frame
+    CRCs are recomputed by the decoder over exactly the bytes it has read
+    (RFC 9639 §9.3), and this combinator makes that both executable and
+    proof-friendly (`Flac.Bits.withConsumed_spec`). -/
+def withConsumed (f : BitStream → Option (α × BitStream)) (s : BitStream) :
+    Option (α × BitStream × BitStream) :=
+  match f s with
+  | none => none
+  | some (a, s') => some (a, s.take (s.length - s'.length), s')
+
 /-! ## Signed integers (two's complement, MSB-first) -/
 
 /-- `x` is representable as an `n`-bit two's-complement integer.

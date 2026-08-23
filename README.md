@@ -1,8 +1,8 @@
-# Soundproof
+# Vinyl
 
 **A formally verified FLAC codec in pure Lean 4.**
 
-Soundproof implements a FLAC ([RFC 9639](references/rfc9639.txt)) encoder
+Vinyl implements a FLAC ([RFC 9639](references/rfc9639.txt)) encoder
 and decoder with no FFI, together with machine-checked proofs — the goal is
 a kernel-certified losslessness theorem:
 

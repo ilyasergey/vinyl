@@ -89,6 +89,29 @@ theorem readUnary_writeUnary (q : Nat) (rest : BitStream) :
 @[simp] theorem length_writeUnary (q : Nat) : (writeUnary q).length = q + 1 := by
   simp [writeUnary]
 
+/-- All-zero bit runs read back as 0 (byte-alignment padding). -/
+theorem readBits_replicate_false (n : Nat) (rest : BitStream) :
+    readBits n (List.replicate n false ++ rest) = some (0, rest) := by
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+    simp [List.replicate_succ, readBits, ih]
+
+/-- The consumed prefix of a successful parse is recoverable by `take`. -/
+theorem take_sub_length (pre tail : BitStream) :
+    (pre ++ tail).take ((pre ++ tail).length - tail.length) = pre := by
+  rw [List.length_append, Nat.add_sub_cancel]
+  exact List.take_left' rfl
+
+/-- Specification of `withConsumed`: if `f` parses exactly `pre`, the
+    combinator returns `pre` as the consumed segment. -/
+theorem withConsumed_spec {α : Type} (f : BitStream → Option (α × BitStream))
+    (pre tail : BitStream) (a : α) (h : f (pre ++ tail) = some (a, tail)) :
+    withConsumed f (pre ++ tail) = some (a, pre, tail) := by
+  unfold withConsumed
+  rw [h]
+  simp only [take_sub_length]
+
 /-! ## Signed integers -/
 
 /-- Two's-complement round-trip for `n`-bit signed integers. -/

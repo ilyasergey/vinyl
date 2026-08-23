@@ -1,6 +1,6 @@
 # Repository structure
 
-Soundproof is a formally verified FLAC codec in pure Lean 4. This document
+Vinyl is a formally verified FLAC codec in pure Lean 4. This document
 explains how the repository is organized and *why* — the layering is the
 methodology (see `PLAN.md` for the full technical plan, milestones, and
 theorem stack).
@@ -20,7 +20,7 @@ lives outside the trusted base in `conformance/` and `bench/`.
 ## Directory map
 
 ```
-soundproof/
+vinyl/
 ├── PLAN.md              # the complete working plan (normative for agents)
 ├── CLAUDE.md            # workflow rules: no sorry on master, logging, commits
 ├── PROGRESS.md          # per-session log: what landed, what's blocked, next

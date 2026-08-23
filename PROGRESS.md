@@ -13,7 +13,7 @@ vectors).
 
 **Landed:** (updated as the session progresses)
 
-- Toolchain pinned to Lean 4.33.0; lake package `soundproof` with lib `Flac`,
+- Toolchain pinned to Lean 4.33.0; lake package `vinyl` with lib `Flac`,
   test lib `FlacTest`, test exe `flactest`. `.gitignore`, `CLAUDE.md`.
 - **M0 complete.** `Flac/Native/Bits.lean` (MSB-first bit model, unary,
   alignment, byte packing, signed two's-complement ints) with all L0

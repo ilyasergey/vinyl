@@ -1,4 +1,4 @@
-# Soundproof — agent working conventions
+# Vinyl — agent working conventions
 
 A formally verified FLAC codec in pure Lean 4. The complete technical plan is
 in `PLAN.md` — read it before writing code. This file holds the *workflow*

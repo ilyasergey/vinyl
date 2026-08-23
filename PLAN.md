@@ -1,4 +1,4 @@
-# Soundproof — PLAN.md
+# Vinyl — PLAN.md
 
 Lean version: 4.33
 Github repository to sync with:

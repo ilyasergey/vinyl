@@ -1,4 +1,4 @@
-name = "soundproof"
+name = "vinyl"
 version = "0.1.0"
 defaultTargets = ["Flac", "FlacTest", "flactest"]
 
