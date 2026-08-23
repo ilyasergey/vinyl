@@ -104,29 +104,24 @@ end BitWriter
 
 /-! ## Residual searches (exact mirrors of `Flac.Heuristics`) -/
 
-/-- Mirror of `Heuristics.partitionSearch`, fed by the residual directly:
-    one pass folds each residual (zigzag) into its finest-partition sum
-    (partition orders nest, so every coarser level's sums are pairwise
-    aggregates); each candidate order then costs O(partitions). Lowest
-    order wins ties, exactly like the list version. -/
-def partitionSearchF (bs ord : Nat) (res : Array Int) : Nat × Array Nat × Nat := Id.run do
+@[inline] private def foldResidual (x : Int) : Nat :=
+  if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1
+
+/-- Largest legal partition order. Validity is downward-closed, so one
+    pass characterises every order the cost search must consider. -/
+private def partitionMaxF (bs ord : Nat) : Nat := Id.run do
   -- validity is downward-closed in po, so a single maximum characterises it
   let mut pomax := 0
   for po in [1, 2, 3, 4, 5, 6] do
     if bs % p2 po = 0 ∧ ord < bs / p2 po then
       pomax := po
-  let cF := bs / p2 pomax
-  let mut sums : Array Nat := Array.emptyWithCapacity (p2 pomax)
-  let mut acc := 0
-  let mut left := cF - ord
-  for i in [0 : res.size] do
-    let x := res.getD i 0
-    acc := acc + (if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1)
-    left := left - 1
-    if left = 0 then
-      sums := sums.push acc
-      acc := 0
-      left := cF
+  return pomax
+
+/-- Cost all partition orders from the folded sums of the finest legal
+    partitioning. Partition orders nest, so coarser sums are aggregates
+    of consecutive entries. Lowest order wins ties. -/
+private def partitionSearchSumsF (bs ord pomax : Nat) (sums : Array Nat) :
+    Nat × Array Nat × Nat := Id.run do
   let mut best : Nat × Array Nat × Nat := (0, #[], 0)
   for po in [0 : pomax + 1] do
     let c := bs / p2 po
@@ -147,6 +142,25 @@ def partitionSearchF (bs ord : Nat) (res : Array Int) : Nat × Array Nat × Nat 
       best := (po, ks, cost)
   return best
 
+/-- Mirror of `Heuristics.partitionSearch`, fed by the residual directly:
+    one pass folds each residual (zigzag) into its finest-partition sum;
+    each candidate order then costs O(partitions). -/
+def partitionSearchF (bs ord : Nat) (res : Array Int) : Nat × Array Nat × Nat := Id.run do
+  let pomax := partitionMaxF bs ord
+  let cF := bs / p2 pomax
+  let mut sums : Array Nat := Array.emptyWithCapacity (p2 pomax)
+  let mut acc := 0
+  let mut left := cF - ord
+  for i in [0 : res.size] do
+    let x := res.getD i 0
+    acc := acc + foldResidual x
+    left := left - 1
+    if left = 0 then
+      sums := sums.push acc
+      acc := 0
+      left := cF
+  return partitionSearchSumsF bs ord pomax sums
+
 /-- First differences (`Fixed.diff1` over arrays). -/
 def diffArr (xs : Array Int) : Array Int := Id.run do
   if xs.size = 0 then return #[]
@@ -159,18 +173,51 @@ def diffArr (xs : Array Int) : Array Int := Id.run do
     are warmup, the rest are `x[n] - (Σ cs[i]·x[n-1-i]) >>ₐ shift`.
     The coefficients stay a (short) list — walking it costs no bounds
     check per multiply. -/
+private def lpcDotF (xs : Array Int) :
+    (cs : List Int) → (n : Nat) → cs.length ≤ n → n ≤ xs.size → Int → Int
+  | [], _, _, _, acc => acc
+  | _ :: _, 0, hlen, _, _ => nomatch hlen
+  | c :: cs, n + 1, hlen, hsize, acc =>
+    have hi : n < xs.size := by omega
+    have hlen' : cs.length ≤ n := by
+      simpa only [List.length_cons, Nat.succ_le_succ_iff] using hlen
+    lpcDotF xs cs n hlen' (Nat.le_of_lt hi) (acc + c * xs[n])
+
 def lpcResidualArr (cs : List Int) (shift : Nat) (xs : Array Int) : Array Int := Id.run do
   let ord := cs.length
   if xs.size ≤ ord then return #[]
   let mut out := Array.emptyWithCapacity (xs.size - ord)
-  for i in [ord : xs.size] do
-    let mut s : Int := 0
-    let mut j := i
-    for c in cs do
-      j := j - 1
-      s := s + c * xs.getD j 0
-    out := out.push (xs.getD i 0 - sar s shift)
+  for h : i in [ord : xs.size] do
+    have hlo : cs.length ≤ i := by simpa only [ord] using h.1
+    have hhi : i < xs.size := h.2.1
+    let s := lpcDotF xs cs i hlo (Nat.le_of_lt hhi) 0
+    out := out.push (xs[i] - sar s shift)
   return out
+
+/-- Evaluate one LPC candidate directly into finest-partition sums. This
+    performs the same residual arithmetic and visits values in the same
+    order as `lpcResidualArr` followed by `partitionSearchF`, but does not
+    allocate a block-sized residual for a candidate that may lose. -/
+private def lpcPartitionSearchF (cs : List Int) (shift : Nat) (xs : Array Int) :
+    Nat × Array Nat × Nat := Id.run do
+  let ord := cs.length
+  let pomax := partitionMaxF xs.size ord
+  let cF := xs.size / p2 pomax
+  let mut sums : Array Nat := Array.emptyWithCapacity (p2 pomax)
+  let mut acc := 0
+  let mut left := cF - ord
+  for h : i in [ord : xs.size] do
+    have hlo : cs.length ≤ i := by simpa only [ord] using h.1
+    have hhi : i < xs.size := h.2.1
+    let s := lpcDotF xs cs i hlo (Nat.le_of_lt hhi) 0
+    let x := xs[i] - sar s shift
+    acc := acc + foldResidual x
+    left := left - 1
+    if left = 0 then
+      sums := sums.push acc
+      acc := 0
+      left := cF
+  return partitionSearchSumsF xs.size ord pomax sums
 
 /-- Mirror of `Heuristics.fixedSearch`: all orders 0–4 with exact
     (sum-estimated-partition) costs off the difference cascade. -/
@@ -188,26 +235,40 @@ def fixedSearchF (b : Nat) (blk : Array Int) :
       d := diffArr d
   return best
 
-/-- Mirror of `Heuristics.lpcSearch`, estimate-first (the libFLAC
-    discipline): pick ONE order off the Levinson per-order prediction
-    errors, then quantize, one residual, one partition search. -/
-def lpcSearchF (b : Nat) (blk : Array Int) :
-    Option ((List Int × Nat × Nat × Array Nat) × Nat) := Id.run do
+private structure LpcChoice where
+  cs : List Int
+  shift : Nat
+  po : Nat
+  ks : Array Nat
+  cost : Nat
+
+/-- Internal LPC search result. Candidate residuals are folded directly
+    into partition sums; the eventual winner's residual is materialized
+    only if the subframe chooser actually selects LPC. -/
+private def lpcChoiceF (b : Nat) (blk : Array Int) : Option LpcChoice := Id.run do
   if blk.size < 16 then
     return none
   let r := Heuristics.autocorr (Heuristics.welch (blk.map Heuristics.floatOfInt)) 8
   if !(r.getD 0 (Float.ofBits 0) > Float.ofBits 0) then
     return none
   let ord := Heuristics.pickLpcOrder b blk.size (Heuristics.levinsonErrs r 8)
-  let mut best : Option ((List Int × Nat × Nat × Array Nat) × Nat) := none
+  let mut best : Option LpcChoice := none
   for o in (if ord = 1 ∨ ord = 2 ∨ ord = 4 ∨ ord = 6 ∨ ord = 8 then [1, 2, 4, 6, 8] else [ord, 1, 2, 4, 6, 8]) do
     let (cs, shift) := Heuristics.quantizeCoefs (Heuristics.levinson r o).toList 12
-    let (po, ks, rcost) := partitionSearchF blk.size o (lpcResidualArr cs shift blk)
+    let (po, ks, rcost) := lpcPartitionSearchF cs shift blk
     let cost := o * b + 9 + o * 12 + rcost
     match best with
-    | some (_, c) => if cost < c then best := some ((cs, shift, po, ks), cost)
-    | none => best := some ((cs, shift, po, ks), cost)
+    | some old => if cost < old.cost then best := some ⟨cs, shift, po, ks, cost⟩
+    | none => best := some ⟨cs, shift, po, ks, cost⟩
   return best
+
+/-- Mirror of `Heuristics.lpcSearch`, estimate-first (the libFLAC
+    discipline), preserving the existing result API and tie-breaking. -/
+def lpcSearchF (b : Nat) (blk : Array Int) :
+    Option ((List Int × Nat × Nat × Array Nat) × Nat) :=
+  match lpcChoiceF b blk with
+  | none => none
+  | some c => some ((c.cs, c.shift, c.po, c.ks), c.cost)
 
 /-- Mirror of `Heuristics.wastedDetect`: the largest `w < b` such that
     `2^w` divides every sample (`b - 1` for the all-zero block). -/
@@ -242,23 +303,35 @@ def SubPlan.typeCode : SubPlan → Nat
   | .fixed ord _ _ => 8 + ord
   | .lpc cs _ _ _ => 32 + (cs.length - 1)
 
+/-- Attach the chosen LPC residual so emission can reuse it instead of
+    running the winning predictor for a second time. -/
+private def preparedLpc (blk : Array Int) (c : LpcChoice) :
+    SubPlan × Option (Array Int) :=
+  (.lpc c.cs c.shift c.po c.ks, some (lpcResidualArr c.cs c.shift blk))
+
+/-- Internal chooser result with an emission-ready residual when LPC
+    wins. The public `choosePlan` projection remains API-compatible. -/
+private def choosePlanPrepared (b : Nat) (blk : Array Int) :
+    SubPlan × Option (Array Int) :=
+  if blk.all (fun x => x == blk.getD 0 0) then (.constant, none)
+  else
+    match fixedSearchF b blk, lpcChoiceF b blk with
+    | none, none => (.verbatim, none)
+    | none, some lc =>
+      if lc.cost < b * blk.size then preparedLpc blk lc else (.verbatim, none)
+    | some ((ord, po, ks), cost), none =>
+      if cost < b * blk.size then (.fixed ord po ks, none) else (.verbatim, none)
+    | some ((ord, po, ks), cost), some lc =>
+      if lc.cost ≤ cost then
+        if lc.cost < b * blk.size then preparedLpc blk lc else (.verbatim, none)
+      else
+        if cost < b * blk.size then (.fixed ord po ks, none) else (.verbatim, none)
+
 /-- The default subframe chooser (constant detection, fixed vs LPC by
     exact cost, LPC preferred on ties, verbatim when prediction does not
     pay), exactly as `Heuristics.defaultChooser` decides it. -/
 def choosePlan (b : Nat) (blk : Array Int) : SubPlan :=
-  if blk.all (fun x => x == blk.getD 0 0) then .constant
-  else
-    match fixedSearchF b blk, lpcSearchF b blk with
-    | none, none => .verbatim
-    | none, some ((lcs, lsh, lpo, lks), lcost) =>
-      if lcost < b * blk.size then .lpc lcs lsh lpo lks else .verbatim
-    | some ((ord, po, ks), cost), none =>
-      if cost < b * blk.size then .fixed ord po ks else .verbatim
-    | some ((ord, po, ks), cost), some ((lcs, lsh, lpo, lks), lcost) =>
-      if lcost ≤ cost then
-        if lcost < b * blk.size then .lpc lcs lsh lpo lks else .verbatim
-      else
-        if cost < b * blk.size then .fixed ord po ks else .verbatim
+  (choosePlanPrepared b blk).1
 
 /-! ## Writers -/
 
@@ -286,7 +359,7 @@ def pushSubframe (bw : BitWriter) (b : Nat) (blk : Array Int) : BitWriter := Id.
     let m : Int := ((p2 wa : Nat) : Int)
     blk.map (· / m)
   let b' := b - wa
-  let plan := choosePlan b' scaled
+  let (plan, lpcRes) := choosePlanPrepared b' scaled
   let mut w := (bw.push 1 0).push 6 plan.typeCode
   w := if wa = 0 then w.push 1 0 else (w.push 1 1).pushUnary (wa - 1)
   match plan with
@@ -308,7 +381,10 @@ def pushSubframe (bw : BitWriter) (b : Nat) (blk : Array Int) : BitWriter := Id.
     w := (w.push 4 (12 - 1)).pushSInt 5 (shift : Int)
     for cf in cs do
       w := w.pushSInt 12 cf
-    return pushResidual w scaled.size ord po ks (lpcResidualArr cs shift scaled)
+    let res := match lpcRes with
+      | some cached => cached
+      | none => lpcResidualArr cs shift scaled
+    return pushResidual w scaled.size ord po ks res
 
 def sumAbsArr (xs : Array Int) : Nat :=
   xs.foldl (fun a x => a + x.natAbs) 0
