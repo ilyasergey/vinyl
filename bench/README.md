@@ -63,28 +63,43 @@ decode (the shipped buffered decoder):
 
 ![Throughput vs libFLAC](performance.png)
 
-Current five-run medians (2026-08-23, after the array-typed decoder
-core): Vinyl encode 15.3 MB/s and Vinyl decode 40.3 MB/s, versus
-106.4 MB/s for `flac -5` encode, 72.7 MB/s for `flac -8` encode, and
-122.9 MB/s for libFLAC decode. That is a 6.9× encode gap against
-`flac -5` — **4.8× against `flac -8`, the level whose compression Vinyl
-matches** — and a **3.1× decode gap**.
+Current five-run medians (2026-08-23, after frame-parallel decoding):
+Vinyl encode 18.6 MB/s and Vinyl decode 67.4 MB/s, versus 106.7 MB/s for
+`flac -5` encode, 73.6 MB/s for `flac -8` encode, and 123.3 MB/s for
+libFLAC decode. That is a 5.7× encode gap against `flac -5` — **4.0×
+against `flac -8`, the level whose compression Vinyl matches** — and a
+**1.8× decode gap**.
 
-Recent stages, all with the capstones unchanged and no proof debt:
+Progress this session, all with the capstones unchanged and no proof debt:
 
-| stage | encode | decode |
-|---|---|---|
-| corrected-timer baseline | 13.9 MB/s | 30.6 MB/s |
-| allocation-free CRC ranges | 13.9 MB/s | 30.6 MB/s |
-| array-typed decoder core | 15.3 MB/s | 40.3 MB/s |
+| stage | encode | decode | decode gap |
+|---|---|---|---|
+| corrected-timer baseline | 13.9 MB/s | 30.6 MB/s | 4.0× |
+| allocation-free CRC ranges | 13.9 MB/s | 30.6 MB/s | 4.0× |
+| array-typed decoder core | 15.3 MB/s | 40.3 MB/s | 3.1× |
+| frame-parallel decoding | 18.6 MB/s | 67.4 MB/s | 1.8× |
 
-The decoder used to convert every decoded sample from its `Array Int`
-into a `List Int` (the type the theorems are phrased over) and then the
-serializer rebuilt the very same arrays. `Flac.Decode.decodeArrays` is
-now the decoder core, with `decodeOption` defined as that plus the
-conversion, so consumers that want bytes skip the round-trip entirely
-(`pcmBytesA_eq`, `pcm16FastA_eq`, `decodePcm16A_eq`). Encode benefits
-too: its runtime certificate is a decode, roughly 40% of encode time.
+Two structural changes did the work. First, the decoder used to convert
+every decoded sample from its `Array Int` into a `List Int` (the type the
+theorems are phrased over) and then the serializer rebuilt the very same
+arrays; `Flac.Decode.decodeArrays` is now the decoder core, with
+`decodeOption` defined as that plus the conversion, so consumers that
+want bytes skip the round-trip (`pcmBytesA_eq`, `pcm16FastA_eq`,
+`decodePcm16A_eq`).
+
+Second, frames now decode in parallel. FLAC frames are byte-aligned and
+self-contained and `BitReader` reads a shared immutable `ByteArray` at an
+absolute bit position, so decoding the frame at position `p` on a worker
+runs *literally the call the serial loop runs there*. Each worker result
+carries the frame reader's own equation as a proof field, so consuming
+one trusts neither the thread nor the sync-code scan that guessed the
+position — a wrong guess costs work, never correctness. `readFramesFast_eq`
+collapses the whole parallel path back to the serial loop, leaving
+`decodeOption_eq_reference` and every capstone untouched.
+
+Encode improves with decode because the fast encoder is certified per
+call by decoding its own output with the verified decoder (roughly 40% of
+encode time); the encoder has emitted frames in parallel for a while.
 
 The important correction is methodological: libFLAC did not suddenly get
 faster, and Vinyl also measures faster without the timestamp surcharge.
