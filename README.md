@@ -55,9 +55,12 @@ byte-identically with libFLAC (`conformance/smoke.sh`).
 
 ## Benchmarks
 
-Cactus plots (per-encoder sorted curves, SAT-solver style) on the
-synthetic mono 16-bit corpus of `bench/gen_corpus.py`, against libFLAC
-1.5.0 — regenerate with `./bench/run.sh`:
+Cactus plots on the synthetic mono 16-bit corpus of `bench/gen_corpus.py`,
+against libFLAC 1.5.0 — regenerate with `./bench/run.sh`. **Left** —
+compression: each encoder's per-file ratios sorted ascending; a curve that
+stays lower compresses better. **Right** — speed: cumulative encode time
+(log scale) after finishing its `n` fastest files; a curve that stays lower
+is faster:
 
 ![Compression and speed vs libFLAC](bench/cactus.png)
 

@@ -14,7 +14,7 @@ results_csv = sys.argv[1] if len(sys.argv) > 1 else "bench/results.csv"
 out_png = sys.argv[2] if len(sys.argv) > 2 else "bench/cactus.png"
 
 ratio = defaultdict(list)      # encoder -> [encoded/raw]
-speed = defaultdict(list)      # encoder -> [raw MB/s]
+times = defaultdict(list)      # encoder -> [seconds per file]
 with open(results_csv) as f:
     for row in csv.DictReader(f):
         enc = row["encoder"]
@@ -22,7 +22,7 @@ with open(results_csv) as f:
         if raw == 0:
             continue
         ratio[enc].append(int(row["bytes"]) / raw)
-        speed[enc].append(raw / 1e6 / float(row["seconds"]))
+        times[enc].append(float(row["seconds"]))
 
 STYLE = {
     "vinyl":   dict(color="#7c3aed", marker="o", lw=2.2, zorder=5),
@@ -45,15 +45,22 @@ ax1.set_title("Compression ratio cactus")
 ax1.grid(alpha=0.25)
 ax1.legend()
 
+# classic cactus: x = files completed, y = cumulative encode time.
+# A curve that stays lower/reaches further right = faster encoder.
 for enc in STYLE:
-    if enc not in speed:
+    if enc not in times:
         continue
-    ys = sorted(speed[enc])
-    ax2.plot(range(1, len(ys) + 1), ys, label=enc, ms=4, **STYLE[enc])
-ax2.set_xlabel("files (sorted per encoder)")
-ax2.set_ylabel("encode throughput, raw MB/s (higher = better)")
+    cum = 0.0
+    xs, ys = [], []
+    for i, t in enumerate(sorted(times[enc]), start=1):
+        cum += t
+        xs.append(i)
+        ys.append(cum)
+    ax2.plot(xs, ys, label=enc, ms=4, **STYLE[enc])
+ax2.set_xlabel("files encoded")
+ax2.set_ylabel("cumulative encode time, s (lower = faster)")
 ax2.set_yscale("log")
-ax2.set_title("Encode speed cactus")
+ax2.set_title("Encode time cactus")
 ax2.grid(alpha=0.25, which="both")
 ax2.legend()
 
