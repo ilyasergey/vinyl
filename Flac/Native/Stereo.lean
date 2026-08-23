@@ -40,8 +40,16 @@ def decodeMSL (m s : List Int) : List Int :=
 def decodeMSR (m s : List Int) : List Int :=
   List.zipWith (fun mm ss => sar (2 * mm + ss % 2 - ss) 1) m s
 
-/-! ### Array forms (the production decoder's hot path; proven equal to
+/-! ### Array forms (the production codec's hot paths; proven equal to
 the list forms in `Flac.Spec.Stereo`) -/
+
+/-- Side channel over arrays: `L - R`. -/
+def sideA (l r : Array Int) : Array Int :=
+  Array.zipWith (fun a b => a - b) l r
+
+/-- Mid channel over arrays: `(L + R) >>ₐ 1`. -/
+def midA (l r : Array Int) : Array Int :=
+  Array.zipWith (fun a b => sar (a + b) 1) l r
 
 def decodeLSA (l s : Array Int) : Array Int :=
   Array.zipWith (fun a v => a - v) l s

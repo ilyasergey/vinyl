@@ -2,6 +2,9 @@ import Flac.Native.Bits
 import Flac.Native.Rice
 import Flac.Native.Subframe
 import Flac.Native.Lpc
+import Flac.Native.Frame
+import Flac.Native.Crc
+import Flac.Native.Utf8Num
 
 /-!
 # The verified fast emitter — bit writer layer
@@ -177,6 +180,58 @@ def pushSubframe (b : Nat) (sc : Subframe.SubCfg) (xs : Array Int) (w : W) : W :
     (if sc.wasted = 0 then ((w.push 1 0).push 6 sc.inner.typeCode).push 1 0
      else (((w.push 1 0).push 6 sc.inner.typeCode).push 1 1).pushUnary
        (sc.wasted - 1))
+
+/-- Continuation bytes of a coded number (computes
+    `Utf8Num.writeConts`). -/
+def pushConts (v : Nat) : (k : Nat) → W → W
+  | 0, w => w
+  | k + 1, w => pushConts v k (w.push 8 (0x80 + v / p2 (6 * k) % 64))
+
+/-- Coded number (computes `Utf8Num.write`). -/
+def pushUtf8 (v : Nat) (w : W) : W :=
+  if v < p2 7 then w.push 8 v
+  else if v < p2 11 then pushConts v 1 (w.push 8 (0xC0 + v / p2 6))
+  else if v < p2 16 then pushConts v 2 (w.push 8 (0xE0 + v / p2 12))
+  else if v < p2 21 then pushConts v 3 (w.push 8 (0xF0 + v / p2 18))
+  else if v < p2 26 then pushConts v 4 (w.push 8 (0xF8 + v / p2 24))
+  else if v < p2 31 then pushConts v 5 (w.push 8 (0xFC + v / p2 30))
+  else pushConts v 6 (w.push 8 0xFE)
+
+/-- Frame-header fields up to the CRC-8 (computes `Frame.headerCore`). -/
+def pushHeaderCore (b : Nat) (strat : Bool) (num bs chCode : Nat) (w : W) : W :=
+  (pushUtf8 num ((((((((w.push 14 0x3FFE).push 1 0).push 1
+    (if strat then 1 else 0)).push 4 7).push 4 0).push 4 chCode).push 3
+    (Frame.bpsCode b)).push 1 0)).push 16 (bs - 1)
+
+/-- The subframe plan over arrays (mirrors `Frame.subframePlan`). -/
+def planA (b : Nat) (asg : Frame.ChannelAsg) (chs : List (Array Int)) :
+    List ((Nat × Subframe.SubCfg) × Array Int) :=
+  match asg, chs with
+  | .independent cfgs, chs => (cfgs.map ((b, ·))).zip chs
+  | .leftSide c0 c1, [l, r] =>
+    [((b, c0), l), ((b + 1, c1), Stereo.sideA l r)]
+  | .rightSide c0 c1, [l, r] =>
+    [((b + 1, c0), Stereo.sideA l r), ((b, c1), r)]
+  | .midSide c0 c1, [l, r] =>
+    [((b, c0), Stereo.midA l r), ((b + 1, c1), Stereo.sideA l r)]
+  | _, _ => []
+
+def pushPlan : List ((Nat × Subframe.SubCfg) × Array Int) → W → W
+  | [], w => w
+  | p :: ps, w => pushPlan ps (pushSubframe p.1.1 p.1.2 p.2 w)
+
+/-- One frame: header, CRC-8, subframes, alignment, CRC-16, all CRCs
+    computed over the emitter's own bytes (computes `Frame.write`;
+    requires a byte-aligned writer, which frames always have). -/
+def pushFrame (b : Nat) (strat : Bool) (num : Nat) (asg : Frame.ChannelAsg)
+    (chs : List (Array Int)) (w : W) : W :=
+  let start := w.buf.size
+  let w1 := pushHeaderCore b strat num (chs.headD #[]).size
+    (asg.code chs.length) w
+  let w2 := w1.push 8 (Crc.crc8 (w1.buf.extract start w1.buf.size)).toNat
+  let w3 := pushPlan (planA b asg chs) w2
+  let w4 := w3.push ((8 - w3.n % 8) % 8) 0
+  w4.push 16 (Crc.crc16 (w4.buf.extract start w4.buf.size)).toNat
 
 end W
 end Flac.Emit

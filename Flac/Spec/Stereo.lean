@@ -107,6 +107,14 @@ end Flac.Stereo
 
 namespace Flac.Stereo
 
+@[simp] theorem sideA_toList (l r : Array Int) :
+    (sideA l r).toList = side l.toList r.toList := by
+  simp [sideA, side]
+
+@[simp] theorem midA_toList (l r : Array Int) :
+    (midA l r).toList = mid l.toList r.toList := by
+  simp [midA, mid]
+
 @[simp] theorem decodeLSA_toList (l s : Array Int) :
     (decodeLSA l s).toList = decodeLS l.toList s.toList := by
   simp [decodeLSA, decodeLS]
