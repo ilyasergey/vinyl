@@ -184,12 +184,13 @@ shipped buffered decoder):
 
 ![Throughput vs libFLAC](bench/performance.png)
 
-Honest reading: Vinyl encodes at ~0.2 MB/s and decodes at ~1.5 MB/s vs
-libFLAC's tens of MB/s. The encoder still runs on the proof-oriented
-`List Bool` bit model and does exhaustive searches; performance work is
-deliberately deferred to M6, *after* the capstone makes optimization
-safe: any faster implementation must re-prove the same simulation
-theorems.
+Honest reading: Vinyl encodes at ~0.16 MB/s (median; the checked encoder
+re-validates every heuristic certificate) and decodes at ~1.5 MB/s,
+vs libFLAC's ~30–37 MB/s for both. The encoder still runs on the
+proof-oriented `List Bool` bit model and does exhaustive searches;
+performance work is deliberately deferred to M6, *after* the capstone
+makes optimization safe: any faster implementation must re-prove the
+same simulation theorems.
 
 ## Building
 
