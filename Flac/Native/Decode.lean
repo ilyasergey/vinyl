@@ -170,20 +170,20 @@ def readResidualA (bs ord : Nat) (br : BitReader) : Option (Array Int × BitRead
 
 /-! ## Subframes -/
 
-def readContent (bs b ty : Nat) (br : BitReader) : Option (List Int × BitReader) :=
+def readContent (bs b ty : Nat) (br : BitReader) : Option (Array Int × BitReader) :=
   if ty = 0 then
     match br.readSInt b with
     | none => none
-    | some (v, br) => some (List.replicate bs v, br)
+    | some (v, br) => some (Array.replicate bs v, br)
   else if ty = 1 then
-    readSIntSeq b bs br
+    readSIntSeqFast b bs br #[]
   else if 8 ≤ ty ∧ ty ≤ 12 then
     match readSIntSeq b (ty - 8) br with
     | none => none
     | some (warmup, br) =>
       match readResidualA bs (ty - 8) br with
       | none => none
-      | some (res, br) => some ((Fixed.restoreA (ty - 8) warmup res).toList, br)
+      | some (res, br) => some (Fixed.restoreA (ty - 8) warmup res, br)
   else if 32 ≤ ty then
     match readSIntSeq b (ty - 31) br with
     | none => none
@@ -203,11 +203,11 @@ def readContent (bs b ty : Nat) (br : BitReader) : Option (List Int × BitReader
                 match readResidualA bs (ty - 31) br with
                 | none => none
                 | some (res, br) =>
-                  some ((Lpc.restoreA cs sh.toNat warmup res).toList, br)
+                  some (Lpc.restoreA cs sh.toNat warmup res, br)
             else none
   else none
 
-def readSubframe (bs b : Nat) (br : BitReader) : Option (List Int × BitReader) :=
+def readSubframe (bs b : Nat) (br : BitReader) : Option (Array Int × BitReader) :=
   match br.readBits 1 with
   | none => none
   | some (r, br) =>
@@ -316,7 +316,7 @@ def readHeader (b0 : Nat) (br0 : BitReader) : Option (Frame.Fields × BitReader)
       if c8 = (Crc.crc8 (sliceBytes br0 br1)).toNat then some (f, br2)
       else none
 
-def readSubframes (bs b : Nat) : Nat → BitReader → Option (List (List Int) × BitReader)
+def readSubframes (bs b : Nat) : Nat → BitReader → Option (List (Array Int) × BitReader)
   | 0, br => some ([], br)
   | n + 1, br =>
     match readSubframe bs b br with
@@ -327,7 +327,7 @@ def readSubframes (bs b : Nat) : Nat → BitReader → Option (List (List Int) �
       | some (cs, br) => some (c :: cs, br)
 
 def readChannels (bs b chCode : Nat) (br : BitReader) :
-    Option (List (List Int) × BitReader) :=
+    Option (List (Array Int) × BitReader) :=
   if chCode ≤ 7 then
     readSubframes bs b (chCode + 1) br
   else if chCode = 8 then
@@ -336,30 +336,30 @@ def readChannels (bs b chCode : Nat) (br : BitReader) :
     | some (l, br) =>
       match readSubframe bs (b + 1) br with
       | none => none
-      | some (sd, br) => some ([l, Stereo.decodeLS l sd], br)
+      | some (sd, br) => some ([l, Stereo.decodeLSA l sd], br)
   else if chCode = 9 then
     match readSubframe bs (b + 1) br with
     | none => none
     | some (sd, br) =>
       match readSubframe bs b br with
       | none => none
-      | some (r, br) => some ([Stereo.decodeRS sd r, r], br)
+      | some (r, br) => some ([Stereo.decodeRSA sd r, r], br)
   else if chCode = 10 then
     match readSubframe bs b br with
     | none => none
     | some (m, br) =>
       match readSubframe bs (b + 1) br with
       | none => none
-      | some (sd, br) => some ([Stereo.decodeMSL m sd, Stereo.decodeMSR m sd], br)
+      | some (sd, br) => some ([Stereo.decodeMSLA m sd, Stereo.decodeMSRA m sd], br)
   else none
 
 def readHeaderChannels (b0 : Nat) (br : BitReader) :
-    Option (List (List Int) × BitReader) :=
+    Option (List (Array Int) × BitReader) :=
   match readHeader b0 br with
   | none => none
   | some (f, br) => readChannels f.blockSize f.bps f.chCode br
 
-def readBody (b0 : Nat) (br0 : BitReader) : Option (List (List Int) × BitReader) :=
+def readBody (b0 : Nat) (br0 : BitReader) : Option (List (Array Int) × BitReader) :=
   match readHeaderChannels b0 br0 with
   | none => none
   | some (chs, br1) =>
@@ -367,7 +367,7 @@ def readBody (b0 : Nat) (br0 : BitReader) : Option (List (List Int) × BitReader
     | none => none
     | some (z, br2) => if z = 0 then some (chs, br2) else none
 
-def readFrame (b0 : Nat) (br0 : BitReader) : Option (List (List Int) × BitReader) :=
+def readFrame (b0 : Nat) (br0 : BitReader) : Option (List (Array Int) × BitReader) :=
   match readBody b0 br0 with
   | none => none
   | some (chs, br1) =>
@@ -448,7 +448,7 @@ def readMeta (fuel : Nat) (br : BitReader) : Option (Stream.Info × BitReader) :
           else none
         else none
 
-def readFrames (b0 : Nat) : Nat → BitReader → Option (List (List (List Int)))
+def readFrames (b0 : Nat) : Nat → BitReader → Option (List (List (Array Int)))
   | 0, br => if br.remaining = 0 then some [] else none
   | fuel + 1, br =>
     if br.remaining = 0 then some []
@@ -459,6 +459,19 @@ def readFrames (b0 : Nat) : Nat → BitReader → Option (List (List (List Int))
         match readFrames b0 fuel br' with
         | none => none
         | some rest => some (chs :: rest)
+
+/-- Reassemble channels from per-frame channel arrays, left to right (so
+    each channel grows amortized-linearly). Computes exactly
+    `Stream.recombine` on the underlying lists
+    (`Flac.Spec.Decode.recombineA_toList`). -/
+def recombineGo (ch : Nat) (acc : List (Array Int)) :
+    List (List (Array Int)) → List (Array Int)
+  | [] => List.zipWith (· ++ ·) acc (List.replicate ch #[])
+  | fr :: frs => recombineGo ch (List.zipWith (· ++ ·) acc fr) frs
+
+def recombineA (ch : Nat) : List (List (Array Int)) → List (Array Int)
+  | [] => List.replicate ch #[]
+  | fr :: frs => recombineGo ch fr frs
 
 /-- The production decoder body (Option-typed, mirroring the reference). -/
 def decodeOption (bytes : ByteArray) : Option Stream.Audio :=
@@ -473,7 +486,8 @@ def decodeOption (bytes : ByteArray) : Option Stream.Audio :=
         match readFrames si.bps (br.remaining + 1) br with
         | none => none
         | some frames =>
-          some ⟨Stream.recombine si.channels frames, si.bps, si.sampleRate⟩
+          some ⟨(recombineA si.channels frames).map (·.toList), si.bps,
+            si.sampleRate⟩
     else none
 
 end Flac.Decode

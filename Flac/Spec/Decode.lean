@@ -422,17 +422,17 @@ theorem readResidualA_sim (bs ord : Nat) (br : BitReader) :
 
 theorem readContent_sim (bs b ty : Nat) (br : BitReader) :
     Subframe.readContent bs b ty (toStream br)
-      = (readContent bs b ty br).map (fun p => (p.1, toStream p.2)) := by
+      = (readContent bs b ty br).map (fun p => (p.1.toList, toStream p.2)) := by
   unfold Subframe.readContent readContent
   by_cases h0 : ty = 0
   · rw [if_pos h0, if_pos h0, readSInt_sim b br]
     cases br.readSInt b with
     | none => rfl
-    | some p => rfl
+    | some p => simp only [Option.map_some, Array.toList_replicate]
   rw [if_neg h0, if_neg h0]
   by_cases h1 : ty = 1
-  · rw [if_pos h1, if_pos h1]
-    exact readSIntSeq_sim b bs br
+  · rw [if_pos h1, if_pos h1, readSIntSeqFast_eq]
+    exact readSIntSeqA_sim b bs br
   rw [if_neg h1, if_neg h1]
   by_cases h2 : 8 ≤ ty ∧ ty ≤ 12
   · rw [if_pos h2, if_pos h2, readSIntSeq_sim b (ty - 8) br]
@@ -481,7 +481,7 @@ theorem readContent_sim (bs b ty : Nat) (br : BitReader) :
 
 theorem readSubframe_sim (bs b : Nat) (br : BitReader) :
     Subframe.read bs b (toStream br)
-      = (readSubframe bs b br).map (fun p => (p.1, toStream p.2)) := by
+      = (readSubframe bs b br).map (fun p => (p.1.toList, toStream p.2)) := by
   unfold Subframe.read readSubframe
   rw [readBits_sim 1 br]
   cases br.readBits 1 with
@@ -510,7 +510,7 @@ theorem readSubframe_sim (bs b : Nat) (br : BitReader) :
               rw [readContent_sim bs (b - (k.1 + 1)) q.1 k.2]
               cases readContent bs (b - (k.1 + 1)) q.1 k.2 with
               | none => rfl
-              | some u => rfl
+              | some u => simp only [Option.map_some, Array.toList_map]
     · rw [if_neg h0, if_neg h0]
       rfl
 
@@ -717,7 +717,8 @@ theorem posOK_readContent (bs b ty : Nat) : PosOK (readContent bs b ty) := by
       subst hbr
       exact posOK_readSInt b br v _ hwf h1
   split at h
-  · exact posOK_readSIntSeq b bs br a br' hwf h
+  · rw [readSIntSeqFast_eq] at h
+    exact posOK_readSIntSeqA b bs #[] br a br' hwf h
   split at h
   · match h1 : readSIntSeq b (ty - 8) br with
     | none => rw [h1] at h; simp at h
@@ -1343,7 +1344,8 @@ theorem readHeader_pos8 {b0 : Nat} {br br' : BitReader} {f : Frame.Fields}
 theorem readSubframes_sim (bs b : Nat) :
     ∀ (n : Nat) (br : BitReader),
       Frame.readSubframes bs b n (toStream br)
-        = (readSubframes bs b n br).map (fun p => (p.1, toStream p.2)) := by
+        = (readSubframes bs b n br).map
+            (fun p => (p.1.map (·.toList), toStream p.2)) := by
   intro n
   induction n with
   | zero => intro br; rfl
@@ -1362,7 +1364,8 @@ theorem readSubframes_sim (bs b : Nat) :
 
 theorem readChannels_sim (bs b chCode : Nat) (br : BitReader) :
     Frame.readChannels bs b chCode (toStream br)
-      = (readChannels bs b chCode br).map (fun p => (p.1, toStream p.2)) := by
+      = (readChannels bs b chCode br).map
+          (fun p => (p.1.map (·.toList), toStream p.2)) := by
   unfold Frame.readChannels readChannels
   by_cases h1 : chCode ≤ 7
   · rw [if_pos h1, if_pos h1]
@@ -1377,7 +1380,7 @@ theorem readChannels_sim (bs b chCode : Nat) (br : BitReader) :
       rw [readSubframe_sim bs (b + 1) p.2]
       cases readSubframe bs (b + 1) p.2 with
       | none => rfl
-      | some q => rfl
+      | some q => simp [Stereo.decodeLSA_toList]
   rw [if_neg h2, if_neg h2]
   by_cases h3 : chCode = 9
   · rw [if_pos h3, if_pos h3, readSubframe_sim bs (b + 1) br]
@@ -1388,7 +1391,7 @@ theorem readChannels_sim (bs b chCode : Nat) (br : BitReader) :
       rw [readSubframe_sim bs b p.2]
       cases readSubframe bs b p.2 with
       | none => rfl
-      | some q => rfl
+      | some q => simp [Stereo.decodeRSA_toList]
   rw [if_neg h3, if_neg h3]
   by_cases h4 : chCode = 10
   · rw [if_pos h4, if_pos h4, readSubframe_sim bs b br]
@@ -1399,14 +1402,15 @@ theorem readChannels_sim (bs b chCode : Nat) (br : BitReader) :
       rw [readSubframe_sim bs (b + 1) p.2]
       cases readSubframe bs (b + 1) p.2 with
       | none => rfl
-      | some q => rfl
+      | some q => simp [Stereo.decodeMSLA_toList, Stereo.decodeMSRA_toList]
   · rw [if_neg h4, if_neg h4]
     rfl
 
 theorem readHeaderChannels_sim (b0 : Nat) (br : BitReader)
     (h8 : br.pos % 8 = 0) (hwf : br.pos ≤ br.size) :
     Frame.readHeaderChannels b0 (toStream br)
-      = (readHeaderChannels b0 br).map (fun p => (p.1, toStream p.2)) := by
+      = (readHeaderChannels b0 br).map
+          (fun p => (p.1.map (·.toList), toStream p.2)) := by
   unfold Frame.readHeaderChannels readHeaderChannels
   rw [readHeader_sim b0 br h8 hwf]
   cases readHeader b0 br with
@@ -1428,7 +1432,7 @@ theorem posOK_readHeaderChannels (b0 : Nat) : PosOK (readHeaderChannels b0) := b
 theorem readBody_sim (b0 : Nat) (br : BitReader)
     (h8 : br.pos % 8 = 0) (hwf : br.pos ≤ br.size) :
     Frame.readBody b0 (toStream br)
-      = (readBody b0 br).map (fun p => (p.1, toStream p.2)) := by
+      = (readBody b0 br).map (fun p => (p.1.map (·.toList), toStream p.2)) := by
   unfold Frame.readBody readBody Flac.Bits.withConsumed
   rw [readHeaderChannels_sim b0 br h8 hwf]
   cases hc : readHeaderChannels b0 br with
@@ -1451,7 +1455,7 @@ theorem readBody_sim (b0 : Nat) (br : BitReader)
       · rw [if_neg hz, if_neg hz]
         rfl
 
-theorem readBody_pos8 {b0 : Nat} {br br' : BitReader} {chs : List (List Int)}
+theorem readBody_pos8 {b0 : Nat} {br br' : BitReader} {chs : List (Array Int)}
     (hwf : br.pos ≤ br.size) (h : readBody b0 br = some (chs, br')) :
     br'.data = br.data ∧ (∃ k, br'.pos = br.pos + 8 * k)
       ∧ br'.pos ≤ br.size := by
@@ -1479,7 +1483,7 @@ theorem readBody_pos8 {b0 : Nat} {br br' : BitReader} {chs : List (List Int)}
 theorem readFrame_sim (b0 : Nat) (br : BitReader)
     (h8 : br.pos % 8 = 0) (hwf : br.pos ≤ br.size) :
     Frame.read b0 (toStream br)
-      = (readFrame b0 br).map (fun p => (p.1, toStream p.2)) := by
+      = (readFrame b0 br).map (fun p => (p.1.map (·.toList), toStream p.2)) := by
   unfold Frame.read readFrame Flac.Bits.withConsumed
   rw [readBody_sim b0 br h8 hwf]
   cases hb : readBody b0 br with
@@ -1501,7 +1505,7 @@ theorem readFrame_sim (b0 : Nat) (br : BitReader)
       · rw [if_neg hc, if_neg hc]
         rfl
 
-theorem readFrame_pos8 {b0 : Nat} {br br' : BitReader} {chs : List (List Int)}
+theorem readFrame_pos8 {b0 : Nat} {br br' : BitReader} {chs : List (Array Int)}
     (hwf : br.pos ≤ br.size) (h : readFrame b0 br = some (chs, br')) :
     br'.data = br.data ∧ (∃ k, br'.pos = br.pos + 8 * k)
       ∧ br'.pos ≤ br.size ∧ br.pos < br'.pos := by
@@ -1855,7 +1859,8 @@ theorem readMeta_pos8 {fuel : Nat} {br br' : BitReader} {si : Stream.Info}
 
 theorem readFrames_sim (b0 : Nat) :
     ∀ (fuel : Nat) (br : BitReader), br.pos % 8 = 0 → br.pos ≤ br.size →
-      Stream.readFrames b0 fuel (toStream br) = readFrames b0 fuel br := by
+      Stream.readFrames b0 fuel (toStream br)
+        = (readFrames b0 fuel br).map (·.map (·.map (·.toList))) := by
   intro fuel
   induction fuel with
   | zero =>
@@ -1865,6 +1870,7 @@ theorem readFrames_sim (b0 : Nat) :
     · have hnil : toStream br = [] :=
         List.eq_nil_of_length_eq_zero (by rw [length_toStream]; exact hrem)
       rw [if_pos hnil, if_pos hrem]
+      rfl
     · have hnil : ¬ toStream br = [] := by
         intro h
         apply hrem
@@ -1872,6 +1878,7 @@ theorem readFrames_sim (b0 : Nat) :
         rw [length_toStream] at this
         exact this
       rw [if_neg hnil, if_neg hrem]
+      rfl
   | succ fuel ih =>
     intro br h8 hwf
     unfold Stream.readFrames readFrames
@@ -1879,6 +1886,7 @@ theorem readFrames_sim (b0 : Nat) :
     · have hnil : toStream br = [] :=
         List.eq_nil_of_length_eq_zero (by rw [length_toStream]; exact hrem)
       rw [if_pos hnil, if_pos hrem]
+      rfl
     · have hnil : ¬ toStream br = [] := by
         intro h
         apply hrem
@@ -1893,7 +1901,70 @@ theorem readFrames_sim (b0 : Nat) :
         obtain ⟨d1, ⟨k, hk⟩, hb, _⟩ := readFrame_pos8 hwf hf
         have hsz : br'.size = br.size := size_congr d1
         rw [ih br' (by omega) (by omega)]
-        rfl
+        cases readFrames b0 fuel br' with
+        | none => rfl
+        | some rest => rfl
+
+/-! ### Channel reassembly: the left-fold array form computes `recombine` -/
+
+private theorem zipApp_toList (a : List (Array Int)) :
+    ∀ b : List (Array Int),
+      (List.zipWith (· ++ ·) a b).map (·.toList)
+        = List.zipWith (· ++ ·) (a.map (·.toList)) (b.map (·.toList)) := by
+  induction a with
+  | nil => intro b; rfl
+  | cons x t ih =>
+    intro b
+    cases b with
+    | nil => rfl
+    | cons y u => simp [ih]
+
+private theorem zipApp_assoc (a : List (List Int)) :
+    ∀ (b c : List (List Int)),
+      List.zipWith (· ++ ·) (List.zipWith (· ++ ·) a b) c
+        = List.zipWith (· ++ ·) a (List.zipWith (· ++ ·) b c) := by
+  induction a with
+  | nil => intro b c; rfl
+  | cons x t ih =>
+    intro b c
+    cases b with
+    | nil => rfl
+    | cons y u =>
+      cases c with
+      | nil => rfl
+      | cons z v => simp [ih, List.append_assoc]
+
+private theorem recombineGo_eq (ch : Nat) :
+    ∀ (frs : List (List (Array Int))) (acc : List (Array Int)),
+      (recombineGo ch acc frs).map (·.toList)
+        = List.zipWith (· ++ ·) (acc.map (·.toList))
+            (Stream.recombine ch (frs.map (·.map (·.toList)))) := by
+  intro frs
+  induction frs with
+  | nil =>
+    intro acc
+    show (List.zipWith (· ++ ·) acc (List.replicate ch #[])).map (·.toList) = _
+    rw [zipApp_toList]
+    show _ = List.zipWith (· ++ ·) (acc.map (·.toList)) (List.replicate ch [])
+    simp
+  | cons fr frs ih =>
+    intro acc
+    show (recombineGo ch (List.zipWith (· ++ ·) acc fr) frs).map (·.toList) = _
+    rw [ih, zipApp_toList]
+    show _ = List.zipWith (· ++ ·) (acc.map (·.toList))
+      (List.zipWith (· ++ ·) (fr.map (·.toList))
+        (Stream.recombine ch (frs.map (·.map (·.toList)))))
+    rw [zipApp_assoc]
+
+private theorem recombineA_toList (ch : Nat) (frames : List (List (Array Int))) :
+    (recombineA ch frames).map (·.toList)
+      = Stream.recombine ch (frames.map (·.map (·.toList))) := by
+  match frames with
+  | [] => simp [recombineA, Stream.recombine]
+  | fr :: frs =>
+    show (recombineGo ch fr frs).map (·.toList) = _
+    rw [recombineGo_eq]
+    rfl
 
 /-- **Decoder equivalence**: the buffered production decoder computes
     exactly the reference decoder's result on every input. -/
@@ -1932,7 +2003,7 @@ theorem decodeOption_eq_reference (bytes : ByteArray) :
         (by omega) (by have := b2 (b1 hwf0); omega)]
       match readFrames si.bps (br2.remaining + 1) br2 with
       | none => rfl
-      | some frames => rfl
+      | some frames => simp only [Option.map_some, recombineA_toList]
 
 end Flac.Decode
 

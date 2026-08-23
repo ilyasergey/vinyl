@@ -102,3 +102,25 @@ theorem mid_fits (b : Nat) (x y : Int)
     (mid l r).length = min l.length r.length := by simp [mid]
 
 end Flac.Stereo
+
+/-! ## Array forms compute the list forms -/
+
+namespace Flac.Stereo
+
+@[simp] theorem decodeLSA_toList (l s : Array Int) :
+    (decodeLSA l s).toList = decodeLS l.toList s.toList := by
+  simp [decodeLSA, decodeLS]
+
+@[simp] theorem decodeRSA_toList (s r : Array Int) :
+    (decodeRSA s r).toList = decodeRS s.toList r.toList := by
+  simp [decodeRSA, decodeRS]
+
+@[simp] theorem decodeMSLA_toList (m s : Array Int) :
+    (decodeMSLA m s).toList = decodeMSL m.toList s.toList := by
+  simp [decodeMSLA, decodeMSL]
+
+@[simp] theorem decodeMSRA_toList (m s : Array Int) :
+    (decodeMSRA m s).toList = decodeMSR m.toList s.toList := by
+  simp [decodeMSRA, decodeMSR]
+
+end Flac.Stereo
