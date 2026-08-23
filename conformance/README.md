@@ -24,7 +24,7 @@ works). Three rigs live in this directory, one more in `scripts/`:
 - [`../scripts/check.sh`](../scripts/check.sh) — the ratchet: full
   build, **zero `sorry`/`axiom`**, grep-pinned capstone theorems
   present, decoder-totality lint (no `partial`, no panicking indexing),
-  71-check unit suite.
+  unit suite.
 
 ## Checking one file by hand
 

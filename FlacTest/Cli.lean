@@ -241,6 +241,44 @@ def fastMirrorTests : TestM Unit := do
     (fun i => (9000.0 * Float.sin (Float.ofNat i * 0.01)).toInt64.toInt)
     (fun i => (9000.0 * Float.sin (Float.ofNat i * 0.01)).toInt64.toInt / 8 + 77) 9000)
 
+/-! ## Interleaved PCM bytes at every bit depth
+
+`Stream.pcmBytesRange` is deliberately outside every theorem
+(`pcmBytesA_eq` cancels only the array/list conversion, and MD5 is a
+conformance checksum, not part of the losslessness claim), so its
+little-endian two's-complement arithmetic — which runs through the
+`UInt64` lane — is pinned here instead. -/
+
+def pcmBytesTests : TestM Unit := do
+  let bytesOf (b : Nat) (chs : List (List Int)) : List UInt8 :=
+    (Stream.pcmBytes b chs).toList
+  -- 16-bit mono: sign boundary, extremes, zero
+  checkEq "pcmBytes 16-bit mono"
+    (bytesOf 16 [[0, 1, -1, 32767, -32768, 258]])
+    [0x00, 0x00, 0x01, 0x00, 0xFF, 0xFF, 0xFF, 0x7F, 0x00, 0x80, 0x02, 0x01]
+  -- 16-bit stereo interleaves sample-major
+  checkEq "pcmBytes 16-bit stereo"
+    (bytesOf 16 [[1, -1], [-2, 2]])
+    [0x01, 0x00, 0xFE, 0xFF, 0xFF, 0xFF, 0x02, 0x00]
+  -- 8-bit
+  checkEq "pcmBytes 8-bit" (bytesOf 8 [[0, 1, -1, 127, -128]])
+    [0x00, 0x01, 0xFF, 0x7F, 0x80]
+  -- 24-bit (three bytes, little-endian)
+  checkEq "pcmBytes 24-bit" (bytesOf 24 [[0, 1, -1, 8388607, -8388608]])
+    [0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
+     0xFF, 0xFF, 0x7F, 0x00, 0x00, 0x80]
+  -- three channels, 16-bit
+  checkEq "pcmBytes 3 channels" (bytesOf 16 [[1], [2], [-1]])
+    [0x01, 0x00, 0x02, 0x00, 0xFF, 0xFF]
+  -- the windowed (parallel) path agrees with the single-window path
+  let long : List Int := (List.range 200000).map fun i => ((i % 65536 : Nat) : Int) - 32768
+  checkEq "pcmBytes windows agree" (Stream.pcmBytes 16 [long])
+    (Stream.pcmBytesRange 16 [long.toArray] 0 long.length)
+  -- and matches the verified byte-level serializer on the same samples
+  checkEq "pcmBytes = pcm16Fast (16-bit)"
+    (Stream.pcmBytes 16 [[0, 1, -1, 32767, -32768], [5, -5, 0, 1, -1]])
+    (Flac.pcm16Fast [[0, 1, -1, 32767, -32768], [5, -5, 0, 1, -1]])
+
 /-! ## Bit-level spot checks -/
 
 def bitsTests : TestM Unit := do
@@ -379,7 +417,7 @@ def cliMain (args : List String) : IO UInt32 := do
     IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
     IO.eprintln usage
     return 2
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; e2eTests; fastMirrorTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; e2eTests; fastMirrorTests; pcmBytesTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0
