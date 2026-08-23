@@ -6,7 +6,7 @@ Vinyl implements a FLAC ([RFC 9639](references/rfc9639.txt)) encoder and
 decoder with no FFI, together with machine-checked proofs. The main
 correctness theorem — kernel-certified losslessness of the shipped
 encoder/decoder pair — is
-[`Flac.decode_encode`](Flac/Spec/Decode.lean#L1750):
+[`Flac.decode_encode`](Flac/Spec/Decode.lean#L2240):
 
 ```lean
 /-- Decoding an encoded stream recovers the audio exactly,
@@ -15,13 +15,13 @@ theorem Flac.decode_encode (a : Audio) (h : a.WellFormed) :
     decode (encode a) = .ok a
 ```
 
-Here [`Audio.WellFormed`](Flac/Native/Stream.lean#L210) says exactly
+Here [`Audio.WellFormed`](Flac/Native/Stream.lean#L259) says exactly
 "representable as FLAC" — 1–8 equal-length channels, bit depth 1–32,
 samples in range for the bit depth, and the STREAMINFO field bounds — and
 it is **decidable**, so the precondition can be tested at runtime. The
-checked encoder [`Flac.encodeChecked`](Flac/Native/Codec.lean#L24) does
+checked encoder [`Flac.encodeChecked`](Flac/Native/Codec.lean#L25) does
 exactly that, which turns the runtime check itself into the theorem's
-premise ([`Flac.decode_encodeChecked`](Flac/Spec/Decode.lean#L1757)):
+premise ([`Flac.decode_encodeChecked`](Flac/Spec/Decode.lean#L2247)):
 
 ```lean
 /-- If the checked encoder returns bytes at all, decoding them
@@ -31,7 +31,7 @@ theorem Flac.decode_encodeChecked
 ```
 
 At the byte level the same guarantee holds for raw PCM files
-([`Flac.decodePcm16_encodePcm16`](Flac/Spec/Decode.lean#L1951)):
+([`Flac.decodePcm16_encodePcm16`](Flac/Spec/Decode.lean#L2661)):
 
 ```lean
 /-- If encoding a raw 16-bit PCM byte array succeeds at all,
@@ -56,7 +56,7 @@ theorems above cover bit depths 1–32.)
 The statements quantify over every encoder knob: block size, numbering
 strategy, stereo-decorrelation mode, wasted bits, subframe types, Rice
 parameters and partitions
-([`Flac.decode_encode_cfg`](Flac/Spec/Decode.lean#L1738)). The encoder
+([`Flac.decode_encode_cfg`](Flac/Spec/Decode.lean#L2228)). The encoder
 validates each heuristic choice against a decidable certificate and falls
 back to VERBATIM when the check fails, so **arbitrary — even
 adversarial — heuristics cannot break correctness**: they only choose
@@ -64,11 +64,11 @@ adversarial — heuristics cannot break correctness**: they only choose
 
 The proof is layered: a verified *reference* decoder over a `List Bool`
 bit model carries the round-trip proof
-([`Flac.Stream.decodeReference_encode`](Flac/Spec/Stream.lean#L315)); the
+([`Flac.Stream.decodeReference_encode`](Flac/Spec/Stream.lean#L316)); the
 shipped *production* decoder (a buffered `ByteArray` reader) is proven to
 compute exactly the same function on every input
 ([`decodeOption_eq_reference`](Flac/Spec/Decode.lean), accept-set
-transfer [`decode_ok_iff_reference`](Flac/Spec/Decode.lean#L1728)); and
+transfer [`decode_ok_iff_reference`](Flac/Spec/Decode.lean#L2218)); and
 both are *total* — no `partial`, no panics — so the decoder terminates on
 arbitrary bytes. Interoperability with the real world is established
 separately by differential testing against libFLAC (below).
@@ -77,9 +77,12 @@ separately by differential testing against libFLAC (below).
 
 Milestones M0–M5 are complete and M6 (performance under the theorem
 ratchet) has largely landed: every decoder fast path is proven equal to
-its bit-level specification, and the frame-parallel encoder is certified
-per call by the verified decoder — the remaining step is a statically
-verified fast emitter to retire that runtime certificate. M7 (two-sided
+its bit-level specification, *including* frame-parallel decoding
+([`readFramesFast_eq`](Flac/Spec/Decode.lean#L2088)) and parallel PCM
+serialization ([`pcm16FastPar_eq`](Flac/Spec/Decode.lean#L2607)), and the
+frame-parallel encoder is certified per call by the verified decoder — the
+remaining step is a statically verified fast emitter to retire that
+runtime certificate. M7 (two-sided
 verification against RFC 9639) is a stretch goal. See [`PLAN.md`](PLAN.md) §8 for the milestone-by-milestone
 roadmap and [`PROGRESS.md`](PROGRESS.md) for the session log. In short:
 bit-level I/O, CRCs, MD5, Rice coding, all subframe types (CONSTANT /
@@ -115,17 +118,28 @@ suite. To run the cross-check yourself on one file, see
 
 On the 37-file synthetic corpus of `bench/gen_corpus.py`, the encoder's
 overall compression ratio **beats `flac -8`** (39.6% vs 39.8% of raw) —
-the certified heuristics choose well. A corrected-timer smoke pass measured
-approximately 12.0 MB/s encode and 30.6 MB/s decode for Vinyl, against
-106.3 MB/s for `flac -5` encode and 121.3 MB/s for libFLAC decode: gaps of
-about 8.9× and 4.0×. These replace the previously reported 4.4×/2.4×
-figures, which were biased downward because the old harness charged roughly
-20 ms of Python timestamp-process startup to every command. The current
-harness warms every case, interleaves implementations, and records five-run
-medians from one persistent timer process. Every decoder fast path is proven
-equal to its bit-level specification; the frame-parallel encoder is certified
+the certified heuristics choose well. Speed is therefore measured against
+`flac -8`, the preset whose ratio Vinyl matches. Five-run medians:
+
+| | Vinyl | libFLAC | gap |
+|---|---|---|---|
+| decode | 79.2 MB/s | 125.1 MB/s | **1.58×** |
+| encode | 24.5 MB/s | 75.1 MB/s (`flac -8`) | **3.06×** |
+| encode vs `flac -5` | 24.5 MB/s | 108.7 MB/s | 4.43× |
+
+Decoding is within about 1.6× of libFLAC because frames decode in
+parallel — and *provably* so: a worker decoding the frame at a given bit
+position runs literally the call the serial loop would run there, and
+returns the frame reader's own equation as a proof field, so nothing
+trusts either the thread or the sync-code scan that guessed the position
+(`readFramesFast_eq`). Encoding stays further behind: about three
+quarters of it is the parallel frame workers, and roughly a third of that
+is exactly costing five or six candidate LPC orders in Lean `Int`
+arithmetic — a *more expensive search* than libFLAC runs at any preset,
+not the same search more slowly. Every decoder fast path is proven equal
+to its bit-level specification; the frame-parallel encoder is certified
 per call by the verified decoder. See [`bench/README.md`](bench/README.md)
-for the methodology, provisional status, and regeneration instructions.
+for the methodology, the per-stage history, and regeneration instructions.
 
 Compression, per file (sorted; lower is better) and aggregated per
 content category:
