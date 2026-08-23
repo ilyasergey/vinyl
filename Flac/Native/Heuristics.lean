@@ -254,7 +254,7 @@ def lpcSearch (b : Nat) (blk : List Int) :
     return none
   let ord := pickLpcOrder b blk.length (levinsonErrs r 8)
   let mut best : Option ((List Int × Nat × Nat × List Nat) × Nat) := none
-  for o in (if ord = 8 then [8] else [ord, 8]) do
+  for o in (if ord = 1 ∨ ord = 2 ∨ ord = 4 ∨ ord = 6 ∨ ord = 8 then [1, 2, 4, 6, 8] else [ord, 1, 2, 4, 6, 8]) do
     let (cs, shift) := quantizeCoefs (levinson r o).toList 12
     let us := (Lpc.residual cs shift blk).map Rice.zigzag
     let (po, ks, rcost) := partitionSearch blk.length o us
@@ -264,28 +264,23 @@ def lpcSearch (b : Nat) (blk : List Int) :
     | none => best := some ((cs, shift, po, ks), cost)
   return best
 
-/-- Fixed search, estimate-first: pick the order by the folded sum of
-    each difference level (O(1) cost estimate per order from the sum),
-    then run the partition search once on the chosen residual. -/
+/-- Fixed search: all orders 0–4 with exact (sum-estimated-partition)
+    costs — the partition search is O(partitions) given the folded sums,
+    so exhaustive evaluation is cheap. Lowest order wins ties. -/
 def fixedSearch (b : Nat) (blk : List Int) :
     Option ((Nat × Nat × List Nat) × Nat) := Id.run do
-  let mut best : Option (Nat × Nat) := none
+  let mut best : Option ((Nat × Nat × List Nat) × Nat) := none
   let mut d := blk
   for ord in [0:5] do
     if ord + 1 ≤ blk.length then
-      let sum := (d.map Rice.zigzag).foldl (· + ·) 0
-      let (_, c) := bestParamSum sum (blk.length - ord)
-      let est := ord * b + c
+      let us := d.map Rice.zigzag
+      let (po, ks, rcost) := partitionSearch blk.length ord us
+      let cost := ord * b + rcost
       match best with
-      | some (_, bc) => if est < bc then best := some (ord, est)
-      | none => best := some (ord, est)
+      | some (_, c) => if cost < c then best := some ((ord, po, ks), cost)
+      | none => best := some ((ord, po, ks), cost)
       d := Fixed.diff1 d
-  match best with
-  | none => return none
-  | some (ord, _) =>
-    let us := (Fixed.residual ord blk).map Rice.zigzag
-    let (po, ks, rcost) := partitionSearch blk.length ord us
-    return some ((ord, po, ks), ord * b + rcost)
+  return best
 
 /-- The default subframe chooser. Certified valid by
     `Flac.Spec.Heuristics.defaultChooser_valid`. -/

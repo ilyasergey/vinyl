@@ -172,32 +172,21 @@ def lpcResidualArr (cs : List Int) (shift : Nat) (xs : Array Int) : Array Int :=
     out := out.push (xs.getD i 0 - sar s shift)
   return out
 
-/-- Mirror of `Heuristics.fixedSearch`, estimate-first: pick the order
-    from the folded sum of each difference level (O(1) per order from
-    the sum), then one partition search on the chosen residual. -/
+/-- Mirror of `Heuristics.fixedSearch`: all orders 0–4 with exact
+    (sum-estimated-partition) costs off the difference cascade. -/
 def fixedSearchF (b : Nat) (blk : Array Int) :
     Option ((Nat × Nat × Array Nat) × Nat) := Id.run do
-  let mut best : Option (Nat × Nat) := none
+  let mut best : Option ((Nat × Nat × Array Nat) × Nat) := none
   let mut d := blk
   for ord in [0 : 5] do
     if ord + 1 ≤ blk.size then
-      let mut sum := 0
-      for x in d do
-        sum := sum + (if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1)
-      let (_, c) := Heuristics.bestParamSum sum (blk.size - ord)
-      let est := ord * b + c
+      let (po, ks, rcost) := partitionSearchF blk.size ord d
+      let cost := ord * b + rcost
       match best with
-      | some (_, bc) => if est < bc then best := some (ord, est)
-      | none => best := some (ord, est)
+      | some (_, c) => if cost < c then best := some ((ord, po, ks), cost)
+      | none => best := some ((ord, po, ks), cost)
       d := diffArr d
-  match best with
-  | none => return none
-  | some (ord, _) =>
-    let mut r := blk
-    for _ in [0 : ord] do
-      r := diffArr r
-    let (po, ks, rcost) := partitionSearchF blk.size ord r
-    return some ((ord, po, ks), ord * b + rcost)
+  return best
 
 /-- Mirror of `Heuristics.lpcSearch`, estimate-first (the libFLAC
     discipline): pick ONE order off the Levinson per-order prediction
@@ -211,7 +200,7 @@ def lpcSearchF (b : Nat) (blk : Array Int) :
     return none
   let ord := Heuristics.pickLpcOrder b blk.size (Heuristics.levinsonErrs r 8)
   let mut best : Option ((List Int × Nat × Nat × Array Nat) × Nat) := none
-  for o in (if ord = 8 then [8] else [ord, 8]) do
+  for o in (if ord = 1 ∨ ord = 2 ∨ ord = 4 ∨ ord = 6 ∨ ord = 8 then [1, 2, 4, 6, 8] else [ord, 1, 2, 4, 6, 8]) do
     let (cs, shift) := Heuristics.quantizeCoefs (Heuristics.levinson r o).toList 12
     let (po, ks, rcost) := partitionSearchF blk.size o (lpcResidualArr cs shift blk)
     let cost := o * b + 9 + o * 12 + rcost
