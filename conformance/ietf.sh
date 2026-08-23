@@ -2,7 +2,9 @@
 # Rig 2 against the RFC 9639 companion test suite
 # (https://github.com/ietf-wg-cellar/flac-test-files):
 #   subset/   — the "must decode" set: every file must decode byte-identically
-#               to `flac -d` raw output.
+#               to `flac -d` raw output. (Decoded with the shipped production
+#               decoder; `decodeOption_eq_reference` proves it computes the
+#               reference decoder's function, so this also covers the model.)
 #   uncommon/ — edge-case set: report pass/skip per file (not merge-gating;
 #               triaged as future completeness work, PLAN.md §9).
 # Usage: conformance/ietf.sh <path-to-flac-test-files>
@@ -27,7 +29,7 @@ run_set () {
       echo "skip (flac itself rejects): $name"
       continue
     fi
-    if .lake/build/bin/vinyl --decode "$f" "$WORK/got.raw" >/dev/null 2>&1 \
+    if .lake/build/bin/vinyl --decode-fast "$f" "$WORK/got.raw" >/dev/null 2>&1 \
         && cmp -s "$WORK/got.raw" "$WORK/ref.raw"; then
       pass=$((pass+1))
     else

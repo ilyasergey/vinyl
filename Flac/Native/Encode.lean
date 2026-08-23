@@ -27,10 +27,11 @@ open Flac.Bits (p2 sar)
 /-! ## Bit writer -/
 
 /-- MSB-first bit accumulator over a `ByteArray`. The low `n` bits of
-    `acc` are pending; `n < 8` between pushes, so `acc` stays a scalar. -/
+    `acc` are pending; `n < 8` between pushes. `UInt64` throughout — its
+    shifts and masks are unboxed intrinsics, unlike scalar `Nat` ops. -/
 structure BitWriter where
   buf : ByteArray
-  acc : Nat
+  acc : UInt64
   n : Nat
 
 namespace BitWriter
@@ -38,18 +39,22 @@ namespace BitWriter
 def empty (cap : Nat) : BitWriter := ⟨ByteArray.emptyWithCapacity cap, 0, 0⟩
 
 /-- Emit completed bytes out of the accumulator. -/
-def flushGo (buf : ByteArray) (acc n : Nat) : ByteArray × Nat × Nat :=
+def flushGo (buf : ByteArray) (acc : UInt64) (n : Nat) : ByteArray × UInt64 × Nat :=
   if h : n < 8 then (buf, acc, n)
   else
     let hi := n - 8
-    flushGo (buf.push (UInt8.ofNat (acc >>> hi))) (acc &&& (p2 hi - 1)) hi
+    flushGo (buf.push (acc >>> UInt64.ofNat hi).toUInt8)
+      (acc &&& ((1 <<< UInt64.ofNat hi) - 1)) hi
 termination_by n
 decreasing_by omega
 
-/-- Push the low `k` bits of `v`, MSB first. Requires `k ≤ 55` so the
-    accumulator stays scalar; use `pushBits` for wider fields. -/
-def push (bw : BitWriter) (k v : Nat) : BitWriter :=
-  let (buf, acc, n) := flushGo bw.buf (bw.acc * p2 k + (v &&& (p2 k - 1))) (bw.n + k)
+/-- Push the low `k` bits of `v`, MSB first. Requires `k ≤ 32` so the
+    accumulator never overflows (`n + k ≤ 39`); use `pushBits` for wider
+    fields. -/
+def push (bw : BitWriter) (k : Nat) (v : Nat) : BitWriter :=
+  let kk := UInt64.ofNat k
+  let (buf, acc, n) := flushGo bw.buf
+    ((bw.acc <<< kk) ||| (UInt64.ofNat v &&& ((1 <<< kk) - 1))) (bw.n + k)
   ⟨buf, acc, n⟩
 
 /-- Arbitrary-width big-endian push, chunked to keep the accumulator
@@ -167,25 +172,36 @@ def lpcResidualArr (cs : List Int) (shift : Nat) (xs : Array Int) : Array Int :=
     out := out.push (xs.getD i 0 - sar s shift)
   return out
 
-/-- Mirror of `Heuristics.fixedSearch`: orders 0–4 by exact cost,
-    lowest order wins ties. -/
+/-- Mirror of `Heuristics.fixedSearch`, estimate-first: pick the order
+    from the folded sum of each difference level (O(1) per order from
+    the sum), then one partition search on the chosen residual. -/
 def fixedSearchF (b : Nat) (blk : Array Int) :
     Option ((Nat × Nat × Array Nat) × Nat) := Id.run do
-  let mut best : Option ((Nat × Nat × Array Nat) × Nat) := none
+  let mut best : Option (Nat × Nat) := none
   let mut d := blk
   for ord in [0 : 5] do
     if ord + 1 ≤ blk.size then
-      let (po, ks, rcost) := partitionSearchF blk.size ord d
-      let cost := ord * b + rcost
+      let mut sum := 0
+      for x in d do
+        sum := sum + (if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1)
+      let (_, c) := Heuristics.bestParamSum sum (blk.size - ord)
+      let est := ord * b + c
       match best with
-      | some (_, c) => if cost < c then best := some ((ord, po, ks), cost)
-      | none => best := some ((ord, po, ks), cost)
+      | some (_, bc) => if est < bc then best := some (ord, est)
+      | none => best := some (ord, est)
       d := diffArr d
-  return best
+  match best with
+  | none => return none
+  | some (ord, _) =>
+    let mut r := blk
+    for _ in [0 : ord] do
+      r := diffArr r
+    let (po, ks, rcost) := partitionSearchF blk.size ord r
+    return some ((ord, po, ks), ord * b + rcost)
 
-/-- Mirror of `Heuristics.lpcSearch`: Welch window, autocorrelation,
-    Levinson–Durbin at orders 1,2,4,6,8, 12-bit quantization, adaptive
-    partitions, exact cost. -/
+/-- Mirror of `Heuristics.lpcSearch`, estimate-first (the libFLAC
+    discipline): pick ONE order off the Levinson per-order prediction
+    errors, then quantize, one residual, one partition search. -/
 def lpcSearchF (b : Nat) (blk : Array Int) :
     Option ((List Int × Nat × Nat × Array Nat) × Nat) := Id.run do
   if blk.size < 16 then
@@ -193,16 +209,10 @@ def lpcSearchF (b : Nat) (blk : Array Int) :
   let r := Heuristics.autocorr (Heuristics.welch (blk.map Heuristics.floatOfInt)) 8
   if !(r.getD 0 (Float.ofBits 0) > Float.ofBits 0) then
     return none
-  let mut best : Option ((List Int × Nat × Nat × Array Nat) × Nat) := none
-  for ord in [1, 2, 4, 6, 8] do
-    if ord < blk.size then
-      let (cs, shift) := Heuristics.quantizeCoefs (Heuristics.levinson r ord).toList 12
-      let (po, ks, rcost) := partitionSearchF blk.size ord (lpcResidualArr cs shift blk)
-      let cost := ord * b + 9 + ord * 12 + rcost
-      match best with
-      | some (_, c) => if cost < c then best := some ((cs, shift, po, ks), cost)
-      | none => best := some ((cs, shift, po, ks), cost)
-  return best
+  let ord := Heuristics.pickLpcOrder b blk.size (Heuristics.levinsonErrs r 8)
+  let (cs, shift) := Heuristics.quantizeCoefs (Heuristics.levinson r ord).toList 12
+  let (po, ks, rcost) := partitionSearchF blk.size ord (lpcResidualArr cs shift blk)
+  return some ((cs, shift, po, ks), ord * b + 9 + ord * 12 + rcost)
 
 /-- Mirror of `Heuristics.wastedDetect`: the largest `w < b` such that
     `2^w` divides every sample (`b - 1` for the all-zero block). -/

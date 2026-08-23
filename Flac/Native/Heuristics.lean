@@ -191,9 +191,59 @@ def quantizeCoefs (cf : List Float) (prec : Nat) : List Int × Nat := Id.run do
     out := clampSInt prec (floatToInt q) :: out
   return (out.reverse, shift)
 
-/-- LPC search: Welch window, autocorrelation, Levinson–Durbin at a few
-    orders, quantize to 12 bits, adaptive partitions, exact bit cost.
-    Returns `((cs, shift, po, ks), cost)`. -/
+/-- The Levinson recursion's prediction error after each order `1..ord`
+    (`errs[o-1]` is the error at order `o`; a non-positive error freezes
+    the remaining entries, mirroring `levinson`'s early return). -/
+def levinsonErrs (r : Array Float) (ord : Nat) : Array Float := Id.run do
+  let mut lpc := Array.replicate ord f0
+  let mut errs := Array.replicate ord f0
+  let mut err := r[0]!
+  let mut dead := false
+  for i in [0:ord] do
+    if dead ∨ err ≤ f0 then
+      dead := true
+      errs := errs.set! i err
+    else
+      let mut acc := r[i + 1]!
+      for j in [0:i] do
+        acc := acc - lpc[j]! * r[i - j]!
+      let k := acc / err
+      let old := lpc
+      for j in [0:i] do
+        lpc := lpc.set! j (old[j]! - k * old[i - 1 - j]!)
+      lpc := lpc.set! i k
+      err := err * (f1 - k * k)
+      errs := errs.set! i err
+  return errs
+
+/-- libFLAC-style expected bits per residual sample from a Levinson
+    prediction error over `n` (windowed) samples: `½·log₂(err/n)`,
+    clamped at zero. -/
+def expectedBits (err : Float) (n : Nat) : Float :=
+  if err > f0 ∧ n ≠ 0 then
+    let bits := Float.log2 (err / floatOfNat n) / f2
+    if bits > f0 then bits else f0
+  else f0
+
+/-- Pick the LPC order among `1..errs.size` by estimated total bits
+    (residual estimate + warmup/coefficient header); lowest order wins
+    ties. -/
+def pickLpcOrder (b n : Nat) (errs : Array Float) : Nat := Id.run do
+  let mut best := 1
+  let mut bestCost := f0
+  for o in [1 : errs.size + 1] do
+    let cost := floatOfNat (n - o) * (expectedBits (errs.getD (o - 1) f0) n + f1)
+      + floatOfNat (o * (b + 12) + 9)
+    if o = 1 ∨ cost < bestCost then
+      best := o
+      bestCost := cost
+  return best
+
+/-- LPC search, estimate-first (the libFLAC discipline): window +
+    autocorrelation once, read the per-order prediction errors off the
+    Levinson recursion, pick ONE order, and only then quantize, compute
+    the residual, and search partitions. Returns `((cs, shift, po, ks),
+    cost)`. -/
 def lpcSearch (b : Nat) (blk : List Int) :
     Option ((List Int × Nat × Nat × List Nat) × Nat) := Id.run do
   if blk.length < 16 then
@@ -202,28 +252,34 @@ def lpcSearch (b : Nat) (blk : List Int) :
   let r := autocorr (welch fl) 8
   if !(r[0]! > f0) then
     return none
-  let mut best : Option ((List Int × Nat × Nat × List Nat) × Nat) := none
-  for ord in [1, 2, 4, 6, 8] do
-    if ord < blk.length then
-      let (cs, shift) := quantizeCoefs (levinson r ord).toList 12
-      let us := (Lpc.residual cs shift blk).map Rice.zigzag
-      let (po, ks, rcost) := partitionSearch blk.length ord us
-      let cost := ord * b + 9 + ord * 12 + rcost
-      match best with
-      | some (_, c) => if cost < c then best := some ((cs, shift, po, ks), cost)
-      | none => best := some ((cs, shift, po, ks), cost)
-  return best
+  let ord := pickLpcOrder b blk.length (levinsonErrs r 8)
+  let (cs, shift) := quantizeCoefs (levinson r ord).toList 12
+  let us := (Lpc.residual cs shift blk).map Rice.zigzag
+  let (po, ks, rcost) := partitionSearch blk.length ord us
+  return some ((cs, shift, po, ks), ord * b + 9 + ord * 12 + rcost)
 
-/-- Search fixed orders 0–4, returning `((ord, po, ks), cost)` best. -/
-def fixedSearch (b : Nat) (blk : List Int) : Option ((Nat × Nat × List Nat) × Nat) :=
-  match (List.range 5).filterMap (fun ord =>
+/-- Fixed search, estimate-first: pick the order by the folded sum of
+    each difference level (O(1) cost estimate per order from the sum),
+    then run the partition search once on the chosen residual. -/
+def fixedSearch (b : Nat) (blk : List Int) :
+    Option ((Nat × Nat × List Nat) × Nat) := Id.run do
+  let mut best : Option (Nat × Nat) := none
+  let mut d := blk
+  for ord in [0:5] do
     if ord + 1 ≤ blk.length then
-      let us := (Fixed.residual ord blk).map Rice.zigzag
-      let (po, ks, cost) := partitionSearch blk.length ord us
-      some ((ord, po, ks), ord * b + cost)
-    else none) with
-  | [] => none
-  | c :: cs => some (pickMin c cs)
+      let sum := (d.map Rice.zigzag).foldl (· + ·) 0
+      let (_, c) := bestParamSum sum (blk.length - ord)
+      let est := ord * b + c
+      match best with
+      | some (_, bc) => if est < bc then best := some (ord, est)
+      | none => best := some (ord, est)
+      d := Fixed.diff1 d
+  match best with
+  | none => return none
+  | some (ord, _) =>
+    let us := (Fixed.residual ord blk).map Rice.zigzag
+    let (po, ks, rcost) := partitionSearch blk.length ord us
+    return some ((ord, po, ks), ord * b + rcost)
 
 /-- The default subframe chooser. Certified valid by
     `Flac.Spec.Heuristics.defaultChooser_valid`. -/
