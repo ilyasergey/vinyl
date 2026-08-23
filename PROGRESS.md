@@ -535,10 +535,26 @@ algorithmic are analysed at the end of this entry.
   input; that was 10% of encode and serial. `pcm16FastPar` runs one task
   per sample window using the same self-certifying arrangement as the
   frame decoder — a `PcmChunk` carries the equation for the window it
-  actually serialized, since `Task.spawn`/`Task.get` are opaque and a
-  worker therefore cannot be *assumed* to have done what was asked.
-  Proofs `pcm16Row_app`, `pcm16Go_app`, `pcm16Go_split`, `pcm16Chunks_eq`,
-  `pcm16FastPar_eq`. 1.64 → 1.57 s; 40 MB probe 1.97 → 1.63 s.
+  actually serialized. Proofs `pcm16Row_app`, `pcm16Go_app`,
+  `pcm16Go_split`, `pcm16Chunks_eq`, `pcm16FastPar_eq`. 1.64 → 1.57 s;
+  40 MB probe 1.97 → 1.63 s.
+
+**Correction to two of this session's commit messages** (`59595a2`,
+`34e4a22`) and to the first draft of the notes above: they justified the
+self-certifying payloads by claiming `Task.spawn`/`Task.get` are `opaque`,
+so that a worker "cannot be assumed" to have computed what was asked.
+That is **wrong** for this toolchain. `Task` is a plain structure whose
+`get` is a field and `Task.spawn`'s logical model is `⟨fn ()⟩`, so
+`(Task.spawn f).get = f ()` holds by `rfl` and `#print axioms` reports no
+axioms; reasoning about tasks directly is available and sound, trading
+only the `@[extern]`-model trust that Lean programs already accept. The
+payload design is therefore a *choice*, and its real justifications are
+the two in `ARCHITECTURE.md`: the consumer's equality theorem is
+unconditional in the payload, so the heuristic producers (the sync-code
+candidate scan, the window tiling) never need characterizing at all —
+which is what kept these proofs small — and no proof in the parallel path
+mentions `Task`, so none of them leans on the task model matching the
+runtime.
 - `9921c43`, `2ebc9f9`, `3e7a410`, and one refresh per stage after — the
   benchmark dashboard was regenerated (five runs, plots,
   `bench/README.md` narrative) after every committed stage.

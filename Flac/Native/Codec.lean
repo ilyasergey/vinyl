@@ -110,12 +110,13 @@ def pcm16FastA (arrs : List (Array Int)) : ByteArray :=
 /-! ### Serializing in parallel windows
 
 The interleaved layout is sample-major, so a window of samples serializes
-independently and the windows concatenate. `Task.spawn`/`Task.get` are
-opaque, so a worker cannot be *assumed* to have computed the window asked
-of it: it returns a `PcmChunk` carrying the equation for what it did
-compute, and the consumer uses a chunk only when its recorded window
-matches the one it wants, serializing that window itself otherwise. This
-is the same self-certifying arrangement the parallel frame decoder uses. -/
+independently and the windows concatenate. Each worker returns a
+`PcmChunk` carrying the equation for the window it actually serialized,
+and the consumer uses a chunk only when its recorded window matches the
+one it wants, serializing that window itself otherwise — the same
+self-certifying arrangement the parallel frame decoder uses. So
+`pcm16FastPar_eq` needs no lemma about how the window list was produced,
+and none about `Task`. -/
 
 /-- The serialization of the sample window `[lo, lo + len)`. -/
 def pcm16Window (arrs : List (Array Int)) (lo len : Nat) : ByteArray :=

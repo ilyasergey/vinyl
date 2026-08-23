@@ -129,6 +129,70 @@ byte-level PCM16 serializer is a fused indexed pass (`pcm16Fast_eq`) —
 each fast path proven equal to its specification, so every simulation
 lemma and capstone keeps its statement.
 
+The decoder also stops *at* arrays. `Decode.decodeArrays` is the core, and
+`decodeOption` is defined as that plus the `Array → List` conversion the
+theorem statements are phrased over, so consumers that want bytes never
+pay for the round-trip (`pcmBytesA_eq`, `pcm16FastA_eq`,
+`decodePcm16A_eq`). Before that split, decoding allocated a cons cell per
+sample only for the serializer to rebuild the very same arrays.
+
+## Parallelism under the ratchet
+
+Both directions now use a `Task` per unit of work, and on the decode side
+that parallelism is *proven*, not trusted. Two facts make it possible.
+FLAC frames are byte-aligned and self-contained, and `BitReader` reads a
+**shared immutable** `ByteArray` at an absolute bit position — so decoding
+the frame at position `p` on a worker runs literally the call the serial
+loop would run there. There is no shared mutable state to reason about,
+and the result does not depend on scheduling.
+
+One route would be to reason about the tasks directly. `Task` is a plain
+structure whose `get` is a field, and `Task.spawn`'s logical model is
+`⟨fn ()⟩` (the `@[extern "lean_task_spawn"]` implementation is what
+actually spawns a thread), so `(Task.spawn f).get = f ()` holds by `rfl`,
+axiom-free. That route is available and sound; it just trades the trust
+in `@[extern]` models that Lean programs already accept.
+
+Vinyl takes a different route: each worker's payload carries its own
+proof.
+
+```lean
+structure Step (b0 : Nat) (d : ByteArray) where
+  pos : Nat
+  chs : List (Array Int)
+  next : Nat
+  ok : readFrameAt b0 d pos = some (chs, next)   -- erased at runtime
+```
+
+A worker builds a `Step` by pattern-matching on its own call, so the
+equation is discharged by the match itself, and the field is erased at
+runtime. The consumer then takes an *arbitrary* list of `Step`s — however
+they were produced — checks the cheap scalar part (does this step record
+the position I want?), and uses `ok` for the rest; anything unmatched or
+missing it decodes on the spot.
+
+Two things fall out, and they are the reason for the choice. First the
+equality theorem is unconditional in the payload, so the *producer* never
+has to be characterized at all: `stepFor_eq`, `readFramesSteps_eq` and
+`readFramesFast_eq` collapse the parallel path back to the serial loop
+without a single lemma about task lists, candidate scans, or window
+tilings, leaving `decodeOption_eq_reference` and every capstone untouched.
+That matters because frame *starts* are only guessed (a sync-code scan)
+and the guess is deliberately not on the proof path — a wrong guess costs
+work, never correctness. `pcm16FastPar_eq` does the same for the parallel
+PCM serializer via a `PcmChunk`, whose windows are likewise a heuristic
+tiling.
+
+Second, no proof here mentions `Task` at all, so none of them depends on
+the `@[extern]` task model matching the runtime. A well-typed `Step`
+cannot lie either: its `ok` field proves a proposition that is false for
+any other frame content, so no worker — however scheduled, however
+buggy — can construct a `Step` that misdecodes a frame. What remains
+trusted is exactly what every compiled Lean program already trusts, the
+compiler and runtime including type safety across `Task.get`, and
+specifically *not* the scheduler, the thread count, or the sync-scan
+heuristic.
+
 The writer-side ratchet now exists as well. `Flac.Emit.emitFast` writes a
 complete stream into a byte buffer, and `Flac.Emit.emitFast_eq_encode` proves
 byte-for-byte equality with `Stream.encode`; the proof stack covers the bit
