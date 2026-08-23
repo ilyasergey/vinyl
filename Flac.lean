@@ -6,10 +6,12 @@ import Flac.Native.Rice
 import Flac.Native.Fixed
 import Flac.Native.Subframe
 import Flac.Native.Frame
+import Flac.Native.Stream
 import Flac.Spec.Bits
 import Flac.Spec.Fixed
 import Flac.Spec.Frame
 import Flac.Spec.Rice
+import Flac.Spec.Stream
 import Flac.Spec.Subframe
 import Flac.Spec.Utf8Num
 

@@ -117,6 +117,45 @@ def riceTests : TestM Unit := do
   checkEq "residual roundtrip (ord=2)"
     (Rice.readResidual 8 2 (Rice.writeResidual 8 2 pcfg pres)) (some (pres, []))
 
+/-! ## End-to-end: encode → decodeReference -/
+
+/-- A test chooser exercising CONSTANT and FIXED subframes. -/
+def testChooser (blk : List Int) : Subframe.SubframeCfg :=
+  if blk.all (· == blk.headD 0) then .constant
+  else if 2 < blk.length then
+    .fixed 2 { method := .rice4, po := 0, choices := [.rice 4] }
+  else .verbatim
+
+def e2eTests : TestM Unit := do
+  let mkCfg (chooser : List Int → Subframe.SubframeCfg) : Stream.EncoderCfg :=
+    { blockSize := 16, sampleRate := 44100, bps := 16, chooser := chooser }
+  -- 40 samples → frames of 16/16/8 (short last frame)
+  let pcm : List Int := (List.range 40).map fun (i : Nat) =>
+    (100 * (i : Int)) - 2000 + (if i % 3 == 0 then 7 else -5)
+  checkEq "e2e verbatim 40 samples"
+    (Stream.decodeReference (Stream.encode (mkCfg Stream.verbatimChooser) pcm))
+    (some pcm)
+  checkEq "e2e fixed/constant 40 samples"
+    (Stream.decodeReference (Stream.encode (mkCfg testChooser) pcm)) (some pcm)
+  -- constant blocks
+  let flat : List Int := List.replicate 48 (-12345)
+  checkEq "e2e constant blocks"
+    (Stream.decodeReference (Stream.encode (mkCfg testChooser) flat)) (some flat)
+  -- empty stream (zero frames)
+  checkEq "e2e empty pcm"
+    (Stream.decodeReference (Stream.encode (mkCfg Stream.verbatimChooser) []))
+    (some ([] : List Int))
+  -- extreme 16-bit values
+  let extremes : List Int := [32767, -32768, 0, -1, 1] ++ List.replicate 20 32767
+  checkEq "e2e extreme values"
+    (Stream.decodeReference (Stream.encode (mkCfg Stream.verbatimChooser) extremes))
+    (some extremes)
+  -- 8-bit depth
+  let cfg8 : Stream.EncoderCfg :=
+    { blockSize := 16, sampleRate := 8000, bps := 8, chooser := Stream.verbatimChooser }
+  let pcm8 : List Int := (List.range 30).map fun (i : Nat) => ((i : Int) % 100) - 50
+  checkEq "e2e 8-bit" (Stream.decodeReference (Stream.encode cfg8 pcm8)) (some pcm8)
+
 /-! ## Bit-level spot checks -/
 
 def bitsTests : TestM Unit := do
@@ -130,8 +169,40 @@ def bitsTests : TestM Unit := do
   checkEq "align pads to byte" (Bits.alignToByte [true, true, false]).length 8
   checkEq "align keeps aligned" (Bits.alignToByte (Bits.byteToBits 1)).length 8
 
-def main : IO UInt32 := do
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests).run {}
+/-- With an argument, write sample encoded streams into that directory
+    (for differential testing against `flac`/`ffmpeg` from the shell). -/
+def emitSamples (dir : String) : IO Unit := do
+  let mk (name : String) (cfg : Stream.EncoderCfg) (pcm : List Int) : IO Unit := do
+    IO.FS.writeBinFile s!"{dir}/{name}.flac" (Stream.encode cfg pcm)
+    -- raw PCM for byte-compare: signed little-endian, ⌈bps/8⌉ bytes/sample
+    IO.FS.writeBinFile s!"{dir}/{name}.pcm" (Stream.pcmBytes cfg.bps pcm)
+  let sine : List Int := (List.range 4000).map fun (i : Nat) =>
+    (8000 * Float.sin (Float.ofNat i * 0.05)).toInt64.toInt
+  let cfg16 : Stream.EncoderCfg :=
+    { blockSize := 4096, sampleRate := 44100, bps := 16,
+      chooser := Stream.verbatimChooser }
+  mk "sine-verbatim" cfg16 sine
+  mk "sine-fixed" { cfg16 with chooser := testChooser } sine
+  mk "flat-constant" { cfg16 with chooser := testChooser }
+    (List.replicate 10000 (1234 : Int))
+  mk "noise-small-blocks" { cfg16 with blockSize := 256 }
+    ((List.range 5000).map fun (i : Nat) => ((i * i * 2654435761 + i * 40503) % 65536 : Int) - 32768)
+  mk "empty" cfg16 []
+
+def main (args : List String) : IO UInt32 := do
+  if let ["--decode", inFile, outFile] := args then
+    let bytes ← IO.FS.readBinFile inFile
+    match Stream.decodeReference bytes with
+    | none => IO.println "DECODE ERROR"; return 1
+    | some pcm =>
+      IO.FS.writeBinFile outFile (Stream.pcmBytes 16 pcm)
+      IO.println s!"decoded {pcm.length} samples"
+      return 0
+  if let dir :: _ := args then
+    emitSamples dir
+    IO.println s!"samples written to {dir}"
+    return 0
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; e2eTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0
