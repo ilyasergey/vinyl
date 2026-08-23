@@ -379,12 +379,13 @@ private structure LpcChoice where
 private def lpcChoiceF (b : Nat) (blkF : FloatArray) : Option LpcChoice := Id.run do
   if blkF.size < 16 then
     return none
-  let r := autocorrFf (welchFf blkF) 8
+  let r := autocorrFf (welchFf blkF) Heuristics.lpcMaxOrder
   if !(r.getD 0 ff0 > ff0) then
     return none
-  let ord := Heuristics.pickLpcOrder b blkF.size (Heuristics.levinsonErrs r 8)
+  let ord :=
+    Heuristics.pickLpcOrder b blkF.size (Heuristics.levinsonErrs r Heuristics.lpcMaxOrder)
   let mut best : Option LpcChoice := none
-  for o in (if ord = 1 ∨ ord = 2 ∨ ord = 4 ∨ ord = 6 ∨ ord = 8 then [1, 2, 4, 6, 8] else [ord, 1, 2, 4, 6, 8]) do
+  for o in Heuristics.lpcCandidates ord do
     let (cs, shift) := Heuristics.quantizeCoefs (Heuristics.levinson r o).toList 12
     let (po, ks, rcost) :=
       lpcPartitionSearchFf (cs.map Heuristics.floatOfInt) shift blkF

@@ -23,13 +23,20 @@ namespace Flac.Heuristics
 open Flac Flac.Rice Flac.Subframe
 
 /-- Mean-based Rice parameter estimate: smallest `k ≤ 14` with
-    `Σ folded ≤ n · 2^k`. -/
+    `Σ folded ≤ n · 2^k`.
+
+    The bound is carried as `n · 2^k` and doubled per step, so a step is
+    one add and one compare — no `p2` table lookup and no multiply. The
+    partition cost search calls this once per partition per candidate
+    partition order (127 times per candidate at `po ≤ 6`), which put the
+    unoptimized loop at ~4% of encode. -/
 def riceParam (sum n : Nat) : Nat :=
-  go 14 0
+  go 14 0 n
 where
-  go : Nat → Nat → Nat
-    | 0, k => k
-    | fuel + 1, k => if sum ≤ n * Flac.Bits.p2 k then k else go fuel (k + 1)
+  /-- `bound = n · 2^k`. -/
+  go : Nat → Nat → Nat → Nat
+    | 0, k, _ => k
+    | fuel + 1, k, bound => if sum ≤ bound then k else go fuel (k + 1) (bound + bound)
 
 /-- Estimated bit cost of Rice-coding a partition with parameter `k`,
     from its folded sum alone (the libFLAC-style estimate:
@@ -40,9 +47,49 @@ def riceCostEst (k sum n : Nat) : Nat :=
   (sum >>> k) + n * (k + 1)
 
 /-- Best parameter and estimated cost for one partition, from its sum. -/
-def bestParamSum (sum n : Nat) : Nat × Nat :=
+@[inline] def bestParamSum (sum n : Nat) : Nat × Nat :=
   let k := riceParam sum n
   (k, riceCostEst k sum n)
+
+/-! ### The LPC candidate set
+
+`lpcMaxOrder` is the highest order the recursion runs to, and so also the
+autocorrelation lag count; `lpcCandidates` names the orders whose residual
+and partitioning are then costed *exactly*. Both the verified chooser
+(`lpcSearch`) and the fast encoder (`Flac.Encode.lpcChoiceF`) read them
+from here, which is what keeps the two byte-identical.
+
+libFLAC's `-8` costs exactly **one** order per apodization window (its
+`do_exhaustive_model_search` is false at every level) and buys its ratio
+with several windows instead. Vinyl does the opposite — one Welch window,
+several orders — so the candidate list is where its
+compression-per-unit-work is decided. -/
+
+/-- Highest LPC order considered (= autocorrelation lags). -/
+def lpcMaxOrder : Nat := 8
+
+/-- Orders costed exactly. The Levinson estimate winner `est` is listed
+    first so it takes ties (candidates are compared with a strict `<`).
+
+    Measured alternatives on the 37-file corpus (`flac -8` is 39.784%),
+    ratio / relative encode speed on a 32 MB probe:
+
+    | base | max order | ratio | encode |
+    |---|---|---|---|
+    | `[1,2,4,6,8]` | 8 | 39.580% | 1.00x |
+    | `[2,4,8]` | 8 | 39.634% | 1.06x |
+    | `[4,8]` | 8 | 39.876% | 1.11x |
+    | `[8]` | 8 | 40.072% | 1.16x |
+    | `[]` (estimate only, libFLAC's rule) | 8 | 40.504% | 1.22x |
+    | `[2,4,12]` | 12 | 39.571% | 1.00x |
+    | `[2,12]` | 12 | 39.701% | 1.04x |
+    | `[1,2,4,8,12]` | 12 | 39.450% | 0.94x |
+
+    So pruning buys little speed for real ratio, and the two entries that
+    beat this one on ratio cost speed. This set is kept. -/
+def lpcCandidates (est : Nat) : List Nat :=
+  let base : List Nat := [1, 2, 4, 6, 8]
+  if base.contains est then base else est :: base
 
 /-- Search partition orders 0–6 over the folded residual: per-partition
     best parameters, estimated total bit cost from partition sums.
@@ -259,12 +306,12 @@ def lpcSearch (b : Nat) (blk : List Int) :
     Option ((List Int × Nat × Nat × List Nat) × Nat) := Id.run do
   if blk.length < 16 then
     return none
-  let r := autocorrF (welchF blk.toArray) 8
+  let r := autocorrF (welchF blk.toArray) lpcMaxOrder
   if !(r[0]! > f0) then
     return none
-  let ord := pickLpcOrder b blk.length (levinsonErrs r 8)
+  let ord := pickLpcOrder b blk.length (levinsonErrs r lpcMaxOrder)
   let mut best : Option ((List Int × Nat × Nat × List Nat) × Nat) := none
-  for o in (if ord = 1 ∨ ord = 2 ∨ ord = 4 ∨ ord = 6 ∨ ord = 8 then [1, 2, 4, 6, 8] else [ord, 1, 2, 4, 6, 8]) do
+  for o in lpcCandidates ord do
     let (cs, shift) := quantizeCoefs (levinson r o).toList 12
     let us := (Lpc.residual cs shift blk).map Rice.zigzag
     let (po, ks, rcost) := partitionSearch blk.length o us
