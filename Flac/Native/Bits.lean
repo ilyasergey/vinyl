@@ -19,6 +19,23 @@ abbrev BitStream := List Bool
 
 namespace Bits
 
+/-! ## Fast powers of two
+
+The Lean runtime evaluates `Nat.pow` and `Nat.shiftLeft` through GMP even
+for word-sized values (only `>>>`, `&&&`, `+`, `*`, … have scalar fast
+paths), so `2 ^ k` in a per-sample loop allocates. `p2` is a table lookup
+for the word-sized range, proven equal to `2 ^ ·` (`Flac.Spec.Bits.p2_eq`),
+so hot paths can use it under the unchanged theorems. -/
+
+/-- The first 64 powers of two, computed once. -/
+def pow2Table : Array Nat := Array.ofFn (n := 64) fun i => 2 ^ i.val
+
+/-- `2 ^ n` without GMP traffic for `n < 64`. -/
+def p2 (n : Nat) : Nat :=
+  if h : n < 64 then
+    pow2Table[n]'(by simp only [pow2Table, Array.size_ofFn]; exact h)
+  else 2 ^ n
+
 /-- Write the low `n` bits of `v`, most significant bit first. -/
 def writeBits : (n : Nat) → (v : Nat) → BitStream
   | 0, _ => []
@@ -74,9 +91,10 @@ def sar (x : Int) (s : Nat) : Int :=
   | .ofNat m => .ofNat (m >>> s)
   | .negSucc m => .negSucc (m >>> s)
 
-/-- Undo `w` wasted bits (RFC 9639 §9.2.2): scale back up. -/
+/-- Undo `w` wasted bits (RFC 9639 §9.2.2): scale back up.
+    (`p2`, not `2 ^ ·`: `Nat.pow` goes through GMP on the hot path.) -/
 def shiftUp (w : Nat) (x : Int) : Int :=
-  x * ((2 ^ w : Nat) : Int)
+  x * ((p2 w : Nat) : Int)
 
 /-- Scale a sample down by `w` wasted bits (exact for valid inputs;
     `/` on ℤ is Euclidean division = floor for positive divisors). -/

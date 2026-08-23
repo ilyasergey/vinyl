@@ -12,6 +12,26 @@ and even any prediction function. No hypotheses needed.
 
 namespace Flac.Lpc
 
+/-- `dot` computes the folded zip it replaced — pins the RFC 9639 §9.2.6
+    prediction sum to the allocation-free implementation. -/
+theorem dot_eq_zip_foldl (cs : List Int) (hs : List Int) :
+    dot cs hs = (cs.zip hs).foldl (fun a p => a + p.1 * p.2) 0 := by
+  suffices h : ∀ (cs hs : List Int) (acc : Int),
+      acc + dot cs hs = (cs.zip hs).foldl (fun a p => a + p.1 * p.2) acc by
+    have := h cs hs 0
+    omega
+  intro cs
+  induction cs with
+  | nil => intro hs acc; simp [dot]
+  | cons c cs ih =>
+    intro hs acc
+    match hs with
+    | [] => simp [dot]
+    | h :: hs =>
+      show acc + (c * h + dot cs hs) = (cs.zip hs).foldl _ (acc + c * h)
+      rw [← ih hs (acc + c * h)]
+      omega
+
 theorem restoreAux_residualAux (cs : List Int) (shift : Nat) :
     ∀ (ys hist : List Int),
       restoreAux cs shift hist (residualAux cs shift hist ys) = ys := by

@@ -55,7 +55,7 @@ def readRiceNat (k : Nat) (br : BitReader) : Option (Nat × BitReader) :=
   | some (q, br) =>
     match br.readBits k with
     | none => none
-    | some (r, br) => some (q * 2 ^ k + r, br)
+    | some (r, br) => some (q * p2 k + r, br)
 
 def readRice (k : Nat) (br : BitReader) : Option (Int × BitReader) :=
   match readRiceNat k br with

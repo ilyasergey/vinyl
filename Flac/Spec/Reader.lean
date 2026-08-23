@@ -117,6 +117,126 @@ theorem toStream_cons (br : BitReader) (h : br.pos < br.size) :
   unfold bit
   rw [dif_pos hk, Option.getD_some]
 
+/-! ## The fast bit paths compute the specification
+
+`bitFast` and `extractBitsFast` are what the reader runs; `bit` and
+`extractBits` are what the simulation lemmas below reason about. These
+equalities are the entire trusted bridge. -/
+
+theorem bitFast_eq (d : ByteArray) (i : Nat) : bitFast d i = bit d i := by
+  unfold bitFast bit
+  rw [Nat.and_one_is_mod, Nat.shiftRight_eq_div_pow]
+
+/-- Splitting an extraction at any midpoint. -/
+theorem extractBits_append (d : ByteArray) (pos m n : Nat) :
+    extractBits d pos (m + n)
+      = extractBits d pos m * 2 ^ n + extractBits d (pos + m) n := by
+  induction m generalizing pos with
+  | zero => simp [extractBits]
+  | succ m ih =>
+    rw [show m + 1 + n = (m + n) + 1 from by omega]
+    show (if bit d pos then 2 ^ (m + n) else 0) + extractBits d (pos + 1) (m + n)
+      = ((if bit d pos then 2 ^ m else 0) + extractBits d (pos + 1) m) * 2 ^ n
+        + extractBits d (pos + (m + 1)) n
+    rw [ih (pos + 1), show pos + 1 + m = pos + (m + 1) from by omega, Nat.add_mul,
+      Nat.pow_add]
+    by_cases hb : bit d pos <;> simp [hb] <;> omega
+
+theorem extractBits_lt (d : ByteArray) (pos n : Nat) :
+    extractBits d pos n < 2 ^ n := by
+  induction n generalizing pos with
+  | zero => simp [extractBits]
+  | succ n ih =>
+    show (if bit d pos then 2 ^ n else 0) + extractBits d (pos + 1) n < 2 ^ (n + 1)
+    have := ih (pos + 1)
+    rw [Nat.pow_succ]
+    by_cases hb : bit d pos <;> simp [hb] <;> omega
+
+private theorem ite_bit (c k : Nat) :
+    (if decide (c % 2 = 1) then k else 0) = k * (c % 2) := by
+  rcases Nat.mod_two_eq_zero_or_one c with h | h <;> simp [h]
+
+/-- The low `j` bits of byte `i`, extracted bit-by-bit from its tail. -/
+private theorem extractBits_within_byte (d : ByteArray) (i : Nat) :
+    ∀ j, j ≤ 8 →
+      extractBits d (8 * i + (8 - j)) j
+        = (if h : i < d.size then d[i] else 0).toNat % 2 ^ j := by
+  intro j
+  induction j with
+  | zero => intro _; simp [extractBits, Nat.mod_one]
+  | succ j ih =>
+    intro hj
+    show (if bit d (8 * i + (8 - (j + 1))) then 2 ^ j else 0)
+        + extractBits d (8 * i + (8 - (j + 1)) + 1) j = _
+    have hbit : bit d (8 * i + (8 - (j + 1)))
+        = decide ((if h : i < d.size then d[i] else 0).toNat / 2 ^ j % 2 = 1) := by
+      have h1 : (8 * i + (8 - (j + 1))) / 8 = i := by omega
+      have h2 : 7 - (8 * i + (8 - (j + 1))) % 8 = j := by omega
+      unfold bit
+      rw [h1, h2]
+    rw [show 8 * i + (8 - (j + 1)) + 1 = 8 * i + (8 - j) from by omega,
+      ih (by omega), hbit, ite_bit, Nat.mod_pow_succ]
+    omega
+
+/-- A whole aligned byte. -/
+private theorem extractBits_byte (d : ByteArray) (i : Nat) :
+    extractBits d (8 * i) 8 = (if h : i < d.size then d[i] else 0).toNat := by
+  have h := extractBits_within_byte d i 8 (by omega)
+  rw [show 8 * i + (8 - 8) = 8 * i from by omega] at h
+  have hlt : (if h : i < d.size then d[i] else 0).toNat < 2 ^ 8 := by
+    have h256 : (2 : Nat) ^ 8 = 256 := rfl
+    rw [h256]
+    split
+    · exact UInt8.toNat_lt_size _
+    · decide
+  rw [h, Nat.mod_eq_of_lt hlt]
+
+theorem accBytes_eq (d : ByteArray) :
+    ∀ (k i acc : Nat),
+      accBytes d i k acc = acc * 2 ^ (8 * k) + extractBits d (8 * i) (8 * k) := by
+  intro k
+  induction k with
+  | zero => intro i acc; simp [accBytes, extractBits]
+  | succ k ih =>
+    intro i acc
+    show accBytes d (i + 1) k
+        (acc * 256 + (if h : i < d.size then d[i] else 0).toNat) = _
+    rw [ih, show 8 * (k + 1) = 8 + 8 * k from by omega,
+      extractBits_append d (8 * i) 8 (8 * k), extractBits_byte,
+      Nat.pow_add, show (2 : Nat) ^ 8 = 256 from rfl,
+      show 8 * i + 8 = 8 * (i + 1) from by omega,
+      Nat.add_mul, ← Nat.mul_assoc]
+    omega
+
+/-- **The word-level extraction computes the bit-level specification** —
+    unconditionally (out-of-range bytes and bits both read as zero). -/
+theorem extractBitsFast_eq (d : ByteArray) (pos n : Nat) :
+    extractBitsFast d pos n = extractBits d pos n := by
+  unfold extractBitsFast
+  have hcount : 8 * ((pos + n + 7) / 8 - pos / 8)
+      = pos % 8 + (n + (8 - (pos + n) % 8) % 8) := by omega
+  rw [accBytes_eq, Nat.zero_mul, Nat.zero_add, hcount,
+    extractBits_append d (8 * (pos / 8)) (pos % 8) _,
+    show 8 * (pos / 8) + pos % 8 = pos from by omega,
+    extractBits_append d pos n _,
+    Nat.shiftRight_eq_div_pow, p2_eq, Nat.and_two_pow_sub_one_eq_mod,
+    Nat.pow_add, ← Nat.mul_assoc]
+  have h2 := extractBits_lt d pos n
+  have h3 := extractBits_lt d (pos + n) ((8 - (pos + n) % 8) % 8)
+  rw [show extractBits d (8 * (pos / 8)) (pos % 8) * 2 ^ n
+          * 2 ^ ((8 - (pos + n) % 8) % 8)
+        + (extractBits d pos n * 2 ^ ((8 - (pos + n) % 8) % 8)
+          + extractBits d (pos + n) ((8 - (pos + n) % 8) % 8))
+      = 2 ^ ((8 - (pos + n) % 8) % 8)
+          * (extractBits d (8 * (pos / 8)) (pos % 8) * 2 ^ n + extractBits d pos n)
+        + extractBits d (pos + n) ((8 - (pos + n) % 8) % 8) from by
+        rw [Nat.mul_add, Nat.mul_comm (2 ^ ((8 - (pos + n) % 8) % 8))
+          (extractBits d (8 * (pos / 8)) (pos % 8) * 2 ^ n),
+          Nat.mul_comm (2 ^ ((8 - (pos + n) % 8) % 8)) (extractBits d pos n)]
+        omega,
+    Nat.mul_add_div (Nat.two_pow_pos _), Nat.div_eq_of_lt h3, Nat.add_zero,
+    Nat.mul_add_mod', Nat.mod_eq_of_lt h2]
+
 /-! ## Primitive simulations -/
 
 theorem readBits_none_of_short {n : Nat} {s : BitStream} (h : s.length < n) :
@@ -157,7 +277,7 @@ theorem readBits_sim (n : Nat) (br : BitReader) :
     rfl
   rw [if_neg h0]
   by_cases hb : br.pos + n ≤ br.size
-  · rw [if_pos hb]
+  · rw [if_pos hb, extractBitsFast_eq]
     show Bits.readBits n ((bytesToBits br.data).drop br.pos) = _
     rw [readBits_extract br.data n br.pos (by simpa [size] using hb)]
     rfl
@@ -211,6 +331,7 @@ theorem readUnaryGo_sim (d : ByteArray) :
       simp only [toStream] at hcons
       rw [hcons]
       unfold readUnaryGo
+      rw [bitFast_eq]
       by_cases hbit : bit d pos
       · rw [if_pos hbit, hbit]
         show _ = (Bits.readUnary (true :: _)).map _
@@ -227,7 +348,7 @@ theorem readUnaryGo_sim (d : ByteArray) :
           simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq]
           omega
     · unfold readUnaryGo
-      rw [if_neg (by rw [bit_oob d pos (by omega)]; simp),
+      rw [if_neg (by rw [bitFast_eq, bit_oob d pos (by omega)]; simp),
         ih (pos + 1) (q + 1) (by omega),
         List.drop_eq_nil_of_le (as := bytesToBits d)
           (by simp only [length_bytesToBits]; omega),
@@ -258,6 +379,7 @@ theorem readSInt_sim (n : Nat) (br : BitReader) :
       = (br.readSInt n).map (fun p => (p.1, toStream p.2)) := by
   unfold Bits.readSInt BitReader.readSInt
   rw [readBits_sim n br]
+  simp only [p2_eq]
   match br.readBits n with
   | none => rfl
   | some (v, br') => rfl
@@ -292,6 +414,7 @@ theorem readUnaryGo_spec (d : ByteArray) :
   | succ fuel ih =>
     intro q pos q' pos' h
     unfold readUnaryGo at h
+    rw [bitFast_eq] at h
     split at h
     · rename_i hbit
       simp only [Option.some.injEq, Prod.mk.injEq] at h

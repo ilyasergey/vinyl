@@ -20,10 +20,17 @@ namespace Flac.Lpc
 
 open Flac.Bits (sar)
 
+/-- Dot product over two lists directly — no intermediate `zip`
+    allocation per sample. Pinned to the folded-zip formulation by
+    `Flac.Spec.Lpc.dot_eq_zip_foldl`. -/
+def dot : List Int → List Int → Int
+  | c :: cs, h :: hs => c * h + dot cs hs
+  | _, _ => 0
+
 /-- Dot product of coefficients with the reversed history (most recent
     sample first), then the quantization shift. -/
 def predict (cs : List Int) (shift : Nat) (hist : List Int) : Int :=
-  sar ((cs.zip hist).foldl (fun a p => a + p.1 * p.2) 0) shift
+  sar (dot cs hist) shift
 
 /-- Residuals of `ys`, given the reversed history `hist` of preceding
     samples. -/

@@ -10,6 +10,14 @@ opaquely.
 
 namespace Flac.Bits
 
+/-- The table-driven power of two computes `2 ^ ·` — the bridge that lets
+    every hot path use `p2` under the unchanged round-trip theorems. -/
+@[simp] theorem p2_eq (n : Nat) : p2 n = 2 ^ n := by
+  unfold p2
+  split
+  · simp only [pow2Table, Array.getElem_ofFn]
+  · rfl
+
 @[simp] theorem length_writeBits (n v : Nat) : (writeBits n v).length = n := by
   induction n generalizing v with
   | zero => rfl
@@ -155,7 +163,7 @@ theorem map_shiftUp_shiftDown (w : Nat) (xs : List Int)
     rw [ih (fun y hy => h y (List.mem_cons_of_mem _ hy))]
     show shiftUp w (shiftDown w x) :: t = x :: t
     unfold shiftUp shiftDown
-    rw [Int.ediv_mul_cancel hx]
+    rw [p2_eq, Int.ediv_mul_cancel hx]
 
 /-! ## Signed integers -/
 

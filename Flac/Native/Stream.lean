@@ -62,12 +62,21 @@ decreasing_by
 
 /-- Interleaved PCM as little-endian two's-complement bytes, `⌈b/8⌉` bytes
     per sample (the MD5 input format of RFC 9639 §8.2). Unverified — MD5
-    is a conformance checksum, not part of the losslessness claim. -/
-def pcmBytes (b : Nat) (chs : List (List Int)) : ByteArray :=
+    is a conformance checksum, not part of the losslessness claim (so this
+    runs on arrays, off the proof-oriented list model). -/
+def pcmBytes (b : Nat) (chs : List (List Int)) : ByteArray := Id.run do
   let w := (b + 7) / 8
-  ⟨((interleave chs).flatMap fun x =>
-      let u := ((x + ((2 ^ (8 * w) : Nat) : Int)).toNat) % 2 ^ (8 * w)
-      (List.range w).map fun i => UInt8.ofNat (u / 2 ^ (8 * i) % 256)).toArray⟩
+  let mm := p2 (8 * w)
+  let m : Int := (mm : Int)
+  let arrs := chs.map (List.toArray ·)
+  let n := (arrs.headD #[]).size
+  let mut out := ByteArray.emptyWithCapacity (arrs.length * n * w)
+  for i in [0:n] do
+    for a in arrs do
+      let u := ((a.getD i 0 + m).toNat) % mm
+      for j in [0:w] do
+        out := out.push (UInt8.ofNat (u >>> (8 * j) % 256))
+  return out
 
 /-- A digest as a big-endian natural, for `writeBits 128`. -/
 def md5Nat (d : ByteArray) : Nat :=

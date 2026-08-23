@@ -41,6 +41,18 @@ def crcTests : TestM Unit := do
   checkEq "crc16 empty" (Crc.crc16 (strBytes "")) 0x0000
   checkEq "crc16 check-string" (Crc.crc16 (strBytes "123456789")) 0xFEE8
   checkEq "crc16 fLaC" (Crc.crc16 (strBytes "fLaC")) 0x3A6D
+  -- the table-driven byte updates agree with the shift-register definition
+  -- (crc8: exhaustive over the full state × byte space)
+  check "crc8 table = bitwise (exhaustive)" ((List.range 256).all fun c =>
+    (List.range 256).all fun b =>
+      Crc.crc8Update (UInt8.ofNat c) (UInt8.ofNat b)
+        == Crc.crc8UpdateBitwise (UInt8.ofNat c) (UInt8.ofNat b))
+  -- (crc16: every byte against a 256-state sample covering both halves)
+  check "crc16 table = bitwise (sampled states)" ((List.range 256).all fun s =>
+    let c := UInt16.ofNat (s * 40503 + s)   -- spreads over all 16 bits
+    (List.range 256).all fun b =>
+      Crc.crc16Update c (UInt8.ofNat b)
+        == Crc.crc16UpdateBitwise c (UInt8.ofNat b))
 
 /-! ## MD5 — the full RFC 1321 §A.5 test suite -/
 

@@ -90,7 +90,7 @@ theorem readRiceNat_sim (k : Nat) (br : BitReader) :
     rw [readBits_sim k p.2]
     cases p.2.readBits k with
     | none => rfl
-    | some q => rfl
+    | some q => simp only [p2_eq]; rfl
 
 theorem readRice_sim (k : Nat) (br : BitReader) :
     Rice.readRice k (toStream br)
