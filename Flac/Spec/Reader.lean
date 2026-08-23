@@ -579,4 +579,71 @@ theorem bitsToByteList_byteListToBits :
   | cons b t ih =>
     rw [byteListToBits_cons, bitsToByteList_byteToBits, ih]
 
+/-! ## The three-byte extraction window
+
+`extractBits3` reads a fixed three bytes with the mask supplied by the
+caller, where `extractBitsFast` computes a byte count with two `Nat`
+divisions, loops `accBytes`, and rebuilds `2^n - 1`. They agree exactly
+when the field fits in the window, `pos % 8 + n ≤ 24` — which every
+`n ≤ 17` satisfies. -/
+
+private theorem byte_lt (d : ByteArray) (i : Nat) :
+    (if h : i < d.size then d[i] else 0).toNat < 256 := by
+  split
+  · exact UInt8.toNat_lt_size _
+  · simp
+
+private theorem shiftRight_mul_add (A r s t : Nat) (hr : r < 2 ^ s) :
+    (A * 2 ^ s + r) >>> (t + s) = A >>> t := by
+  rw [Nat.shiftRight_eq_div_pow, Nat.shiftRight_eq_div_pow]
+  have h1 : (A * 2 ^ s + r) / 2 ^ s = A := by
+    rw [Nat.add_comm, Nat.add_mul_div_right _ _ (Nat.two_pow_pos s), Nat.div_eq_of_lt hr]
+    omega
+  rw [show (2 : Nat) ^ (t + s) = 2 ^ s * 2 ^ t from by rw [Nat.pow_add, Nat.mul_comm],
+    ← Nat.div_div_eq_div_mul, h1]
+
+private theorem win16 (b0 b1 b2 t mask : Nat) (h1 : b1 < 256) (h2 : b2 < 256) :
+    ((b0 * 256 + b1) * 256 + b2) >>> (t + 16) &&& mask = b0 >>> t &&& mask := by
+  rw [show (b0 * 256 + b1) * 256 + b2 = b0 * 2 ^ 16 + (b1 * 256 + b2) from by omega,
+    shiftRight_mul_add _ _ 16 _ (by omega)]
+
+private theorem win8 (b0 b1 b2 t mask : Nat) (h2 : b2 < 256) :
+    ((b0 * 256 + b1) * 256 + b2) >>> (t + 8) &&& mask = (b0 * 256 + b1) >>> t &&& mask := by
+  rw [show (b0 * 256 + b1) * 256 + b2 = (b0 * 256 + b1) * 2 ^ 8 + b2 from by omega,
+    shiftRight_mul_add _ _ 8 _ (by omega)]
+
+private theorem acc1 (d : ByteArray) (p : Nat) :
+    accBytes d p 1 0 = (if h : p < d.size then d[p] else 0).toNat := by simp [accBytes]
+
+private theorem acc2 (d : ByteArray) (p : Nat) :
+    accBytes d p 2 0 = (if h : p < d.size then d[p] else 0).toNat * 256
+      + (if h : p + 1 < d.size then d[p + 1] else 0).toNat := by simp [accBytes]
+
+private theorem acc3 (d : ByteArray) (p : Nat) :
+    accBytes d p 3 0 = ((if h : p < d.size then d[p] else 0).toNat * 256
+      + (if h : p + 1 < d.size then d[p + 1] else 0).toNat) * 256
+      + (if h : p + 2 < d.size then d[p + 2] else 0).toNat := by simp [accBytes]
+
+/-- **The three-byte window computes `extractBitsFast`** whenever the
+    requested field fits in it. -/
+theorem extractBits3_eq (d : ByteArray) (pos n : Nat) (h : pos % 8 + n ≤ 24) :
+    extractBits3 d pos n (p2 n - 1) = extractBitsFast d pos n := by
+  have hb : pos % 8 < 8 := Nat.mod_lt _ (by omega)
+  have hcnt : (pos + n + 7) / 8 - pos / 8 = (pos % 8 + n + 7) / 8 := by omega
+  have hsh : (8 - (pos + n) % 8) % 8 = 8 * ((pos % 8 + n + 7) / 8) - pos % 8 - n := by omega
+  have h1 := byte_lt d (pos / 8 + 1)
+  have h2 := byte_lt d (pos / 8 + 2)
+  simp only [extractBits3, extractBitsFast]
+  rw [hcnt, hsh]
+  have hcase : (pos % 8 + n + 7) / 8 = 0 ∨ (pos % 8 + n + 7) / 8 = 1
+      ∨ (pos % 8 + n + 7) / 8 = 2 ∨ (pos % 8 + n + 7) / 8 = 3 := by omega
+  rcases hcase with hk | hk | hk | hk
+  · have hn : n = 0 := by omega
+    simp [hk, hn]
+  · rw [hk, acc1, show 24 - pos % 8 - n = (8 * 1 - pos % 8 - n) + 16 from by omega,
+      win16 _ _ _ _ _ h1 h2]
+  · rw [hk, acc2, show 24 - pos % 8 - n = (8 * 2 - pos % 8 - n) + 8 from by omega,
+      win8 _ _ _ _ _ h2]
+  · rw [hk, acc3, show 8 * 3 - pos % 8 - n = 24 - pos % 8 - n from by omega]
+
 end Flac.Bits.BitReader

@@ -58,6 +58,31 @@ def extractBits (d : ByteArray) (pos : Nat) : Nat → Nat
   accBytes d (pos / 8) ((pos + n + 7) / 8 - pos / 8) 0
     >>> ((8 - (pos + n) % 8) % 8) &&& (p2 n - 1)
 
+/-- `extractBitsFast` over a fixed three-byte window, with the `2^n - 1`
+    mask supplied by the caller. Valid exactly when `pos % 8 + n ≤ 24`,
+    which holds for every `n ≤ 17` — so every RICE partition parameter
+    (`k < 15`) and all but the widest RICE2 ones.
+
+    What it avoids is the point: `extractBitsFast` computes its byte count
+    with two `Nat` divisions, runs `accBytes` as a loop, and rebuilds
+    `2^n - 1` on every call. Three straight-line byte loads against a
+    hoisted mask measured **1.35x** on a 2M-sample Rice run — and the Rice
+    reader is ~22% of decode and ~20% of the encoder's certificate.
+    Proven equal to `extractBitsFast` by
+    `Flac.Spec.Reader.extractBits3_eq`.
+
+    (A libFLAC-style *windowed* reader — a cached 64-bit word plus a
+    leading-zero count — was prototyped and measured **5.7x slower**:
+    Lean boxes `UInt64` values carried across control flow, so word
+    refills and `clz` cost far more than the scalar `Nat` path they were
+    meant to replace. Three-byte extraction is what is left of that idea.) -/
+@[inline] def extractBits3 (d : ByteArray) (pos n mask : Nat) : Nat :=
+  let p := pos / 8
+  let b0 := (if h : p < d.size then d[p] else 0).toNat
+  let b1 := (if h : p + 1 < d.size then d[p + 1] else 0).toNat
+  let b2 := (if h : p + 2 < d.size then d[p + 2] else 0).toNat
+  ((b0 * 256 + b1) * 256 + b2) >>> (24 - pos % 8 - n) &&& mask
+
 /-- Total bit count of the buffer. -/
 def size (br : BitReader) : Nat := 8 * br.data.size
 

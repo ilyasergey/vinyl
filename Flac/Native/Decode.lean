@@ -123,10 +123,59 @@ def readRiceSeqScan (d : ByteArray) (k pk total : Nat) :
         else none
     else none
 
-@[inline] def readRiceSeqFast (k count : Nat) (br : BitReader) (acc : Array Int) :
+/-- `readRiceSeqScan` with the remainder read through the three-byte
+    window and the mask hoisted out of the loop. Identical in structure;
+    `Flac.Spec.Decode.readRiceSeqScan3_eq` pins it to `readRiceSeqScan`
+    for every `k ≤ 17`. -/
+def readRiceSeqScan3 (d : ByteArray) (k pk mask total : Nat) :
+    (count : Nat) → (pos : Nat) → Array Int → Option (Array Int × Nat)
+  | 0, pos, acc => some (acc, pos)
+  | count + 1, pos, acc =>
+    if pos < total then
+      if bitFast d pos then
+        let pos1 := pos + 1
+        if k = 0 then
+          readRiceSeqScan3 d k pk mask total count pos1 (acc.push 0)
+        else if pos1 + k ≤ total then
+          readRiceSeqScan3 d k pk mask total count (pos1 + k)
+            (acc.push (Rice.unzigzag (extractBits3 d pos1 k mask)))
+        else none
+      else
+        let onePos := scanOne d (pos + 1) (total - (pos + 1))
+        if onePos < total then
+          let q := onePos - pos
+          let pos1 := onePos + 1
+          if k = 0 then
+            readRiceSeqScan3 d k pk mask total count pos1
+              (acc.push (Rice.unzigzag q))
+          else if pos1 + k ≤ total then
+            readRiceSeqScan3 d k pk mask total count (pos1 + k)
+              (acc.push (Rice.unzigzag (q * pk + extractBits3 d pos1 k mask)))
+          else none
+        else none
+    else none
+
+/-- The byte-addressed Rice run (the form the simulation proof is phrased
+    over). -/
+@[inline] def readRiceSeqScanFast (k count : Nat) (br : BitReader) (acc : Array Int) :
     Option (Array Int × BitReader) :=
   let result :=
     readRiceSeqScan br.data k (p2 k) (8 * br.data.size) count br.pos acc
+  match result with
+  | none => none
+  | some (a, pos) => some (a, ⟨br.data, pos⟩)
+
+/-- The shipped Rice run: the three-byte window where it is valid
+    (`k ≤ 17`, i.e. always in practice), the general reader otherwise.
+    Equal to `readRiceSeqScanFast` either way
+    (`Flac.Spec.Decode.readRiceSeqFast_eq_scanFast`). -/
+@[inline] def readRiceSeqFast (k count : Nat) (br : BitReader) (acc : Array Int) :
+    Option (Array Int × BitReader) :=
+  let result :=
+    if k ≤ 17 then
+      readRiceSeqScan3 br.data k (p2 k) (p2 k - 1) (8 * br.data.size) count br.pos acc
+    else
+      readRiceSeqScan br.data k (p2 k) (8 * br.data.size) count br.pos acc
   match result with
   | none => none
   | some (a, pos) => some (a, ⟨br.data, pos⟩)

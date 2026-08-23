@@ -216,16 +216,16 @@ theorem readRiceSeqScan_eq (d : ByteArray) (k : Nat) :
       rw [hz]
       rfl
 
-theorem readRiceSeqFast_eq (k : Nat) :
+theorem readRiceSeqScanFast_eq (k : Nat) :
     ∀ (count : Nat) (br : BitReader) (acc : Array Int),
-      readRiceSeqFast k count br acc = readRiceSeqA k count br acc := by
+      readRiceSeqScanFast k count br acc = readRiceSeqA k count br acc := by
   intro count
   induction count with
   | zero => intro br acc; rfl
   | succ count ih =>
     intro br acc
     obtain ⟨d, pos⟩ := br
-    unfold readRiceSeqFast
+    unfold readRiceSeqScanFast
     rw [readRiceSeqScan_eq]
     unfold readRiceSeqGo readRiceSeqA
     dsimp only
@@ -237,7 +237,7 @@ theorem readRiceSeqFast_eq (k : Nat) :
       by_cases hk : k = 0
       · rw [if_pos hk, if_pos hk]
         have h := ih ⟨d, p.2⟩ (acc.push (Rice.unzigzag p.1))
-        unfold readRiceSeqFast at h
+        unfold readRiceSeqScanFast at h
         rw [readRiceSeqScan_eq] at h
         exact h
       · rw [if_neg hk, if_neg hk]
@@ -245,10 +245,41 @@ theorem readRiceSeqFast_eq (k : Nat) :
         · simp only [hb, if_true]
           have h := ih ⟨d, p.2 + k⟩
             (acc.push (Rice.unzigzag (p.1 * p2 k + extractBitsFast d p.2 k)))
-          unfold readRiceSeqFast at h
+          unfold readRiceSeqScanFast at h
           rw [readRiceSeqScan_eq] at h
           exact h
         · simp only [hb, if_false]
+
+/-- The three-byte-window Rice run computes the byte-addressed one for
+    every parameter it is valid at. -/
+theorem readRiceSeqScan3_eq (d : ByteArray) (k pk total : Nat) (hk : k ≤ 17) :
+    ∀ (count pos : Nat) (acc : Array Int),
+      readRiceSeqScan3 d k pk (p2 k - 1) total count pos acc
+        = readRiceSeqScan d k pk total count pos acc := by
+  have hx : ∀ q : Nat, extractBits3 d q k (p2 k - 1) = extractBitsFast d q k := by
+    intro q
+    exact extractBits3_eq d q k (by have := Nat.mod_lt q (show 0 < 8 by omega); omega)
+  intro count
+  induction count with
+  | zero => intro pos acc; rfl
+  | succ count ih =>
+    intro pos acc
+    unfold readRiceSeqScan3 readRiceSeqScan
+    simp only [hx, ih]
+
+/-- The shipped Rice run is the byte-addressed one on either branch. -/
+theorem readRiceSeqFast_eq_scanFast (k count : Nat) (br : BitReader) (acc : Array Int) :
+    readRiceSeqFast k count br acc = readRiceSeqScanFast k count br acc := by
+  unfold readRiceSeqFast readRiceSeqScanFast
+  split
+  · rw [readRiceSeqScan3_eq br.data k (p2 k) (8 * br.data.size) (by assumption)]
+  · rfl
+
+theorem readRiceSeqFast_eq (k : Nat) :
+    ∀ (count : Nat) (br : BitReader) (acc : Array Int),
+      readRiceSeqFast k count br acc = readRiceSeqA k count br acc := by
+  intro count br acc
+  rw [readRiceSeqFast_eq_scanFast, readRiceSeqScanFast_eq]
 
 theorem readSIntSeqFast_eq (bits : Nat) :
     ∀ (count : Nat) (br : BitReader) (acc : Array Int),
