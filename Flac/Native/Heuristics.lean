@@ -70,26 +70,32 @@ therefore where Vinyl's compression-per-unit-work is decided. -/
 def lpcMaxOrder : Nat := 8
 
 /-- Orders costed exactly. The Levinson estimate winner `est` is listed
-    first so it takes ties (candidates are compared with a strict `<`).
+    first so it takes ties (candidates are compared with a strict `<`) —
+    which is why dropping an order from `base` costs so little: the
+    estimator still reaches it.
 
-    Measured alternatives on the 37-file corpus (`flac -8` is 39.784%),
-    ratio / relative encode speed on a 32 MB probe:
+    Measured on the 37-file corpus (`flac -8` is **39.784%**), ratio and
+    encode speed on a 32 MB probe:
 
-    | base | max order | ratio | encode |
+    | base | ratio | encode | gap vs `flac -8` |
     |---|---|---|---|
-    | `[1,2,4,6,8]` | 8 | 39.580% | 1.00x |
-    | `[2,4,8]` | 8 | 39.634% | 1.06x |
-    | `[4,8]` | 8 | 39.876% | 1.11x |
-    | `[8]` | 8 | 40.072% | 1.16x |
-    | `[]` (estimate only, libFLAC's rule) | 8 | 40.504% | 1.22x |
-    | `[2,4,12]` | 12 | 39.571% | 1.00x |
-    | `[2,12]` | 12 | 39.701% | 1.04x |
-    | `[1,2,4,8,12]` | 12 | 39.450% | 0.94x |
+    | `[1,2,4,6,8]` | 39.580% | 64.8 MB/s | 1.48x |
+    | `[2,4,6,8]` | 39.580% | 67.7 MB/s | 1.42x |
+    | `[1,2,4,8]` | 39.634% | 68.4 MB/s | 1.41x |
+    | **`[2,4,8]`** | **39.634%** | **71.2 MB/s** | **1.35x** |
+    | `[2,8]` | 39.773% | 76.4 MB/s | 1.26x |
+    | `[3,8]` | 39.912% | 76.7 MB/s | (loses to `flac -8`) |
+    | `[8]` | 40.072% | — | (loses) |
+    | `[]` (estimate only, libFLAC's rule) | 40.504% | — | (loses) |
+    | `[1,2,4,8,12]` at max order 12 | 39.450% | 0.94x of the top row | 1.57x |
 
-    So pruning buys little speed for real ratio, and the two entries that
-    beat this one on ratio cost speed. This set is kept. -/
+    `[2,4,8]` is the chosen point: 10% faster than the five-order set for
+    0.054 percentage points, keeping a 0.15-point margin over `flac -8`.
+    `[2,8]` is faster still but its margin is 0.011 points — too thin to
+    rely on off this corpus. If ratio is what is wanted instead,
+    `[1,2,4,8,12]` at max order 12 beats `flac -8` by 0.33 points. -/
 def lpcCandidates (est : Nat) : List Nat :=
-  let base : List Nat := [1, 2, 4, 6, 8]
+  let base : List Nat := [2, 4, 8]
   if base.contains est then base else est :: base
 
 /-- Search partition orders 0–6 over the folded residual: per-partition
