@@ -827,3 +827,147 @@ proofs so the statically verified emitter can ship and the runtime
 certificate can be retired. That is the only remaining change that
 improves encode without trading compression, adding trusted code, or
 taking on a bit-level simulation proof.
+
+---
+
+## 2026-08-24 — Session 9: M6 fifth pass — decode past libFLAC, encode to 1.3×
+
+**Attempted:** the user's escalating targets, in order — get within 1.1× of
+libFLAC on both directions, then make *decode faster than libFLAC*, then
+push encode toward 1.1× — without giving up the compression win over
+`flac -8` and with the ratchet green throughout.
+
+**Landed** (32 MB mono probe; corpus five-run medians in brackets):
+
+| stage | encode | decode | encode gap (`-8`) | decode gap |
+|---|---|---|---|---|
+| session 8 end | 47.1 MB/s | 127.5 MB/s | 2.07× | 1.59× |
+| `bcdcaaf` frame-parallel serialization | 46.6 | 220.7 | 2.07× | **0.96×** |
+| `74739a0` certificate via the byte path | 57.7 | 222.2 | 1.67× | 0.94× |
+| `3732892` three-byte Rice window | 58.5 | 246.2 | 1.63× | **0.83×** |
+| `9104522` MD5 off the critical path | 64.9 | 244.3 | 1.48× | 0.85× |
+| `8a4888d` three LPC orders, not five | 71.7 | 246.2 | 1.34× | 0.84× |
+| `86ff281` float residual for emission | 73.7 | 244.3 | **1.32×** | **0.85×** |
+
+Corpus medians moved 38.8 → 55.4 MB/s encode (gap 1.94× → **1.35×**) and
+82.7 → 121.7 MB/s decode (1.53× → **1.03×**). Ratio 39.580% → 39.634%,
+still ahead of `flac -8`'s 39.784%.
+
+**Decode is now faster than libFLAC above ~4 MB** — 0.96× at 4 MB, 0.89×
+(11% faster) from 8 MB up. Below that the residual is *process init*, not
+decoding: 3.1 ms of Lean runtime setup against libFLAC's 2.7 ms on an
+8–9 ms measurement, of which only 0.09 ms is this project's own module
+initialization (a trivial Lean binary also takes 3.10 ms, and the binary
+is already statically linked, so there is no dynamic-loading cost to
+remove). The size-scaling table is in `bench/README.md`.
+
+1. **Frame-parallel serialization, with proof** (`Flac/Spec/PcmBytes.lean`,
+   613 lines). Turning decoded samples into interleaved PCM bytes was 46%
+   of decode wall time and none of it was decoding: `recombineA`
+   concatenated every frame's channels into whole-file arrays (41 ms,
+   serial) and `pcmBytesA` walked those again (61 ms — its task fan-out
+   bought nothing, because `lean_mark_mt` on the shared `Array Int`
+   channels cost about what the parallelism saved). A frame covers a
+   contiguous sample range, so **a frame is a serialization window**:
+   `pcmBytesRange_eq` pins all three serialization loops to a list model,
+   `pcmModel_split` splits it along the sample index, `pcmModel_left`/
+   `pcmModel_right` split it at a frame boundary, `recombineA_model` is the
+   keystone, and `decodeBytes_spec` the capstone — a `some` result is
+   exactly `pcmBytesRange` of what `decodeArrays` returns. `ByteStep`
+   carries the frame reader's equation with the channel arrays
+   *existentially quantified*, so they are erased and never cross the
+   thread boundary; a `ByteArray` is O(1) to mark. Nothing mentions
+   `Task`. This **narrowed** the trusted surface: `--decode-fast`
+   previously wrote `Stream.pcmBytesA`, whose window concatenation was
+   asserted in prose and unprovable.
+2. **The certificate runs the same byte path** (~27% of encode). Needed a
+   bridge, since the certificate must imply `decodePcm16 out = .ok bytes`
+   and `decodePcm16` serializes with `Flac.pcm16Row`:
+   `pcm16FastA_eq_range` proves the two serializers agree for *every*
+   `Int`, because `Int.toInt64` is reduction mod `2^64` and `2^16` divides
+   `2^64` (`lane_lo`, `lane_hi`, off `Int64.toBitVec_ofInt` and
+   `Int.emod_emod_of_dvd`). `pcm16Certified_ok` unchanged in statement.
+3. **Three-byte Rice window** (`extractBits3`, `extractBits3_eq`).
+   `extractBitsFast` computed its byte count with two `Nat` divisions, ran
+   `accBytes` as a loop, and rebuilt `2^n - 1` per call; for `n ≤ 17`
+   (every RICE parameter) three straight-line byte loads against a hoisted
+   mask compute the same value. 1.35× on a 2M-sample Rice run.
+4. **MD5 off the critical path.** Chained, so unsplittable, but it does not
+   have to be *first*: 62 ms of a 550 ms encode, computed before the first
+   frame task. Spawned alongside them it overlaps work that already
+   saturated the cores.
+5. **Three LPC orders instead of five.** The estimate winner is listed
+   first and takes ties, so dropping an order costs far less than it looks
+   — dropping order 1 is *free* (identical ratio, 4.5% faster), and
+   `[2,4,8]` gives 10% for 0.054 points, keeping a 0.15-point margin over
+   `flac -8`. Whole curve in the `lpcCandidates` docstring, including the
+   two points deliberately not taken.
+6. **Emission off the float array.** The search already computes every
+   residual exactly in `Float`; emission recomputed the winner's in `Int`.
+   `lpcResidualArrF`/`diffArrFf` replace that, and `pushRiceRange` folds
+   the zigzag magnitude straight off the float. One whole duplicate
+   arithmetic path left the file.
+
+**Measured and discarded (working tree restored):**
+
+- **A libFLAC-style windowed bit reader** — cached 64-bit word plus
+  leading-zero count — **5.7× slower** (207 ms vs 36 ms on a 2M-sample
+  Rice run). Lean boxes `UInt64` values carried across control flow, so
+  refills and `clz` cost far more than the scalar `Nat` path they replace.
+  **This was the top item on session 8's "next" list; it should not be
+  attempted again.** The three-byte window is what survives of it.
+- **`>>>3`/`&&&7` for `/8`/`%8`** in the Rice loop: identical (27 ms
+  either way), confirming the session-5 microbenchmark.
+- **A constructor-level `unzigzag`** (`Int.negSucc` + `&&&1` instead of
+  `%`/`/` and `Int.neg`): identical.
+- **Decode task granularity** re-swept for the byte-emitting workers
+  (1/2/4/8/16): 2 is best at both 1 MB and 32 MB, spread under 3%.
+- **Sync-scan window** below 1 MB (64K/16K/4K): no effect; the serial scan
+  was not the small-file fixed cost.
+- **Serial vs parallel PCM serialization** (before the fusion): a wash —
+  128 MB probe, serial 1.00 s / 3.93 CPU-s versus parallel 0.99 s / 4.11
+  CPU-s. Superseded by moving it into the frame workers.
+- **`LEAN_NUM_THREADS`** 8/12/16: no effect.
+
+**Profiling notes (macOS `sample`, 512 MB decode / 128 MB encode probes).**
+Decode, 43% Rice reader (`readRiceSeqScan3` 38%, `scanOne` 5%), 29%
+predictor restoration (`Lpc.dotAGo` 23%), `crc16` 6%, serialization 9%,
+array pushes 3% — `lean_mark_mt` has disappeared entirely. Encode, of 3.23
+CPU-seconds: certificate ~35% of work (0.119 s of 0.434 s wall), candidate
+search ~31% (`lpcDotFf` 18%, `acorrGo` 8%), emission ~18%, fixed search
+~7%.
+
+**Honest assessment.** Decode is done: faster than libFLAC wherever
+process startup is not a third of the measurement, and the per-operation
+cost of what remains is at the pure-Lean floor (`Lpc.dotAGo` must stay
+`Int` — it is the proven path, and converting `Int → Int64` per tap would
+cost what it saves).
+
+Encode is at 1.32× and the path to 1.1× is **one project, not a list**:
+retire the runtime certificate in favour of the statically verified
+emitter. Measured, that alone lands at ~0.96×. What is *not* in the way is
+the searches — a chooser's output carries a decidable validity certificate
+by construction and `safeChooser` checks it, so the round-trip theorem
+already holds for every chooser, `Float` included, and nothing about the
+search needs proving. What *is* in the way is the emitter's plumbing:
+`W.pushFrames` folds serially over `Stream.chunkChannels`, and
+`Stream.Audio` carries `List (List Int)` channels, so driving it means
+materializing the file as cons cells — which is exactly `--encode-slow`,
+measured **113× slower** than the fast encoder for byte-identical output
+(7.89 s vs 0.07 s on 4 MB).
+
+**Blocked:** nothing.
+
+**Next:** M6b, in four stages, in this order:
+1. De-tuple `Flac.Emit.W`'s bit writer (`flushGo` returns
+   `ByteArray × Nat × Nat` — two `Prod` cells per bit push — and multiplies
+   by `p2 k` where the fast writer shifts a `UInt64`); its `Emits` lemmas
+   need the same treatment `flushBytes` got this session.
+2. A byte→array input pipeline proven equal to
+   `deinterleave ∘ pcm16OfByteList`.
+3. Array-side chunking proven equal to `Stream.chunkChannels`.
+4. Parallel frame emission proven equal to the serial `pushFrames`. This
+   one is already well-supported: `pushFrame_spec` says emission only
+   *appends* (`(pushFrame … w).bits = w.bits ++ Frame.write …`), which is
+   the same locality argument that licensed per-frame serialization on the
+   decode side this session.

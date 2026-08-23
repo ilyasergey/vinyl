@@ -227,7 +227,7 @@ folds serially over `Stream.chunkChannels cfg.blockSize a.channels`, and
 materializing the whole file as cons cells. That is exactly what
 `--encode-slow` does, and it measures **113× slower** than the fast
 encoder on the same input for byte-identical output (7.89 s vs 0.07 s on
-4 MB) — roughly 6.6× from the missing frame parallelism and ~17× from
+4 MB) — roughly 7× from the missing frame parallelism and ~16× from
 lists-and-`Int` instead of arrays-and-`Float`.
 
 The fast *encoder* (`Flac/Native/Encode.lean`) uses the other sound
@@ -270,9 +270,16 @@ serial `pushFrames` — and this last part is already well-supported,
 because `pushFrame_spec` says emission only *appends*
 (`(pushFrame … w).bits = w.bits ++ Frame.write …`), which is the same
 locality argument that licensed per-frame serialization on the decode
-side. The payoff is measured: the certificate is 0.82 of encode's 3.55
-CPU-seconds (23%), so retiring it would take the encode gap from ~1.6× to
-roughly 1.25×.
+side. The payoff is measured: decoding the encoder's own output takes
+0.119 s of encode's 0.434 s wall on a 32 MB probe, so retiring the
+certificate would take the encode gap from ~1.3× to roughly **0.96×** —
+past parity, trading nothing.
+
+A fourth, smaller stage belongs on that list: `W`'s own bit writer has the
+allocation problem the fast one had until recently — `W.flushGo` returns
+`ByteArray × Nat × Nat` (two `Prod` cells per bit push, plus a boxed
+scalar) and multiplies by `p2 k` where the fast writer shifts a `UInt64`.
+Its `Emits` lemmas need the same de-tupling treatment `flushBytes` got.
 
 One more by-construction safety device: heuristic outputs carry decidable
 validity certificates, and the encoder (`EncoderCfg.safeChooser`) checks

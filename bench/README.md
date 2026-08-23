@@ -67,39 +67,55 @@ the legend, so the `-0`/`-5` presets stay visible for context.
 
 ![Throughput vs libFLAC](performance.png)
 
-Current five-run medians (2026-08-24): Vinyl encode 38.8 MB/s and Vinyl
-decode 82.7 MB/s, versus 109.9 MB/s for `flac -5` encode, 75.1 MB/s for
-`flac -8` encode, and 126.2 MB/s for libFLAC decode. That is a
-**1.53× decode gap** and a 2.83× encode gap against `flac -5` — **1.94×
+Current five-run medians (2026-08-24): Vinyl encode 55.4 MB/s and Vinyl
+decode 121.7 MB/s, versus 107.9 MB/s for `flac -5` encode, 74.6 MB/s for
+`flac -8` encode, and 125.1 MB/s for libFLAC decode. That is a
+**1.03× decode gap** and a 1.95× encode gap against `flac -5` — **1.35×
 against `flac -8`, the level whose compression Vinyl matches**.
 
-These corpus files are 1 MB each, so process startup is charged to every
-measurement and compresses the apparent gaps. A 32 MB probe, where
-startup is negligible, is the better instrument for a *change*: it puts
-the gaps at 1.6× decode and 2.1× encode, and it is the yardstick the
-stage tables below use.
+### Read the corpus medians with the file size in mind
+
+These files are 1 MB each, by design: `gen_corpus.py` sizes them for
+*compression* coverage, not throughput. At that size **process startup is
+a third of the measurement** — 3.1 ms of Lean runtime init against
+libFLAC's 2.7 ms, on an 8–9 ms decode — and only 0.09 ms of Vinyl's share
+is this project's own module initialization (a trivial Lean binary also
+takes 3.10 ms; the binary is already statically linked against Lean, so
+there is no dynamic-loading cost to remove).
+
+Same material, medians against file size:
+
+| PCM | Vinyl decode | libFLAC | gap | Vinyl encode | `flac -8` | gap |
+|---|---|---|---|---|---|---|
+| 1 MB | 104.8 MB/s | 121.8 MB/s | 1.16× | 52.1 MB/s | 71.1 MB/s | 1.37× |
+| 2 MB | 140.0 MB/s | 149.0 MB/s | 1.06× | 59.9 MB/s | 80.5 MB/s | 1.34× |
+| 4 MB | 173.1 MB/s | 166.8 MB/s | **0.96×** | 64.5 MB/s | 85.6 MB/s | 1.33× |
+| 8 MB | 196.6 MB/s | 179.1 MB/s | **0.91×** | 68.0 MB/s | 89.2 MB/s | 1.31× |
+| 16 MB | 208.7 MB/s | 185.9 MB/s | **0.89×** | 70.0 MB/s | 90.8 MB/s | 1.30× |
+| 32 MB | 206.6 MB/s | 184.7 MB/s | **0.89×** | 70.3 MB/s | 91.9 MB/s | 1.31× |
+
+Decode overtakes libFLAC at about 4 MB and settles ~11% faster; encode is
+flat at ~1.3×, which is the honest figure for it. The 32 MB probe below is
+the instrument for judging a *change*.
 
 ### Sessions 6–7: parallelism and the array-typed decoder
 
 | stage | encode | decode | encode gap (`-8`) | decode gap |
 |---|---|---|---|---|
 | corrected-timer baseline | 13.9 MB/s | 30.6 MB/s | 5.2× | 4.0× |
-| allocation-free CRC ranges | 13.9 MB/s | 30.6 MB/s | 5.2× | 4.0× |
 | array-typed decoder core | 15.3 MB/s | 40.3 MB/s | 4.8× | 3.1× |
 | frame-parallel decoding | 18.6 MB/s | 67.4 MB/s | 4.0× | 1.8× |
 | parallel PCM serialization | 18.5 MB/s | 73.9 MB/s | 4.0× | 1.68× |
-| decode task granularity 8 | 18.8 MB/s | 78.0 MB/s | 3.9× | 1.58× |
+| decode task granularity | 18.8 MB/s | 78.0 MB/s | 3.9× | 1.58× |
 | channel-major deinterleave | 21.4 MB/s | 78.6 MB/s | 3.5× | 1.59× |
 | unboxed `FloatArray` search | 21.9 MB/s | 78.3 MB/s | 3.4× | 1.60× |
 | deinterleave in the workers | 23.8 MB/s | 79.3 MB/s | 3.15× | 1.59× |
 | parallel certificate serialize | 24.5 MB/s | 79.2 MB/s | 3.06× | 1.58× |
 
-### Session 8: exact float arithmetic, and not allocating per bit
+### Sessions 8–9: exact float arithmetic, and not allocating
 
-Measured on the 32 MB probe (mono, 4096-sample blocks), so these numbers
-are not comparable with the corpus medians above — only with each other.
-Every stage left the corpus ratio at 39.580% and kept the output
-byte-identical to the verified encoder's.
+Measured on the 32 MB probe (mono, 4096-sample blocks), so not comparable
+with the corpus medians above — only with each other.
 
 | stage | encode | decode | encode gap (`-8`) | decode gap |
 |---|---|---|---|---|
@@ -108,106 +124,93 @@ byte-identical to the verified encoder's.
 | bit writer without tuples | 42.8 MB/s | — | 2.27× | — |
 | unboxed PCM serialization | 43.5 MB/s | 117.2 MB/s | 2.24× | 1.76× |
 | parallel sync-code scan | 44.6 MB/s | 126.5 MB/s | 2.18× | 1.65× |
-| fused fixed-order search | 47.1 MB/s | 127.5 MB/s | **2.07×** | **1.59×** |
+| fused fixed-order search | 47.1 MB/s | 127.5 MB/s | 2.07× | 1.59× |
+| frame-parallel serialization | 46.6 MB/s | 220.7 MB/s | 2.07× | **0.96×** |
+| certificate via the byte path | 57.7 MB/s | 222.2 MB/s | 1.67× | 0.94× |
+| three-byte Rice window | 58.5 MB/s | 246.2 MB/s | 1.63× | **0.83×** |
+| MD5 off the critical path | 64.9 MB/s | 244.3 MB/s | 1.48× | 0.85× |
+| three LPC orders, not five | 71.7 MB/s | 246.2 MB/s | 1.34× | 0.84× |
+| float residual for emission | 73.7 MB/s | 244.3 MB/s | **1.32×** | 0.85× |
 
-Four changes, and the two largest were not about algorithms.
+Every stage but one kept the corpus ratio at 39.580% and the output
+byte-identical to the verified encoder's; "three LPC orders" moved it to
+39.634%, still ahead of `flac -8`'s 39.784%.
 
-**Exact float arithmetic in the searches.** A candidate search only
-*chooses* a subframe; the bytes are always emitted from the exact `Int`
-path. Every value a search computes is an integer well inside 2^53 — for
-16-bit input, samples below 2^17, quantized coefficients below 2^11, order
-at most 8, so prediction sums below 2^32, residuals below 2^19, and
-4096-sample partition sums below 2^32 — and IEEE-754 doubles represent
-those exactly. So the searches run over unboxed `FloatArray` at one
-hardware `fmul`/`fadd` per tap instead of `lean_int_mul`/`lean_int_add` on
-a boxed `Array Int`, and choose the *same subframe bit for bit*. A
-differential test pins that: `Flac.Encode`'s float searches and
-`Flac.Heuristics`' `Int`/list searches emit byte-identical streams on
-LPC, FIXED, noise, wasted-bit, constant, and stereo material.
+**Exact float arithmetic in the searches — and now in emission.** A search
+only *chooses* a subframe, and every value it computes is an integer well
+inside 2^53 (for 16-bit input: samples below 2^17, quantized coefficients
+below 2^11, order at most 8, so prediction sums below 2^32, residuals
+below 2^19, 4096-sample partition sums below 2^32). IEEE-754 doubles
+represent those exactly, so an unboxed `FloatArray` search picks the *same
+subframe bit for bit* at one hardware `fmul`/`fadd` per tap instead of
+`lean_int_mul`/`lean_int_add` on a boxed `Array Int`. The same holds for
+the residual that gets *emitted*, so the `Int` residual path is gone
+entirely and `pushRiceRange` folds the zigzag magnitude straight off the
+float. A differential test pins all of it against the verified encoder on
+LPC, FIXED, noise, wasted-bit, constant and stereo material.
 
-Two shapes mattered for the measured 2.5× on the inner loops, and both
-are worth remembering. `Float`-typed `let mut` variables carried across a
-`for` loop get **boxed once per iteration**, which costs more than the
-arithmetic saves — an order-8 residual fold went from 84 ms to 255 ms
-when its accumulators moved from tail-recursion parameters into ten
-mutable locals. So every accumulator here is a tail-recursion parameter,
-and the `for` loops carry only heap objects and `Nat` counters. And exact
-integer sums re-associate freely, which is what makes per-partition folds
-independent. (Two things that did *not* help: unrolling the dot product
-with four accumulator chains — the per-tap `Nat` index arithmetic costs
-more than the shortened dependency chain saves — and splitting it into two
-chains, which measured neutral. The generated inner loop is already
-`ldr`/`ldr`/`fmul`/`fadd` with `Float.floor` inlined to a single
-`frintm`.)
+Two Lean codegen facts drove the tuning, and both cost real time to find.
+`Float`-typed `let mut` variables carried across a `for` loop are **boxed
+once per iteration** — an order-8 residual fold went 84 ms → 255 ms when
+its accumulators moved from tail-recursion parameters into ten mutable
+locals — so every accumulator here is a tail-recursion parameter. And
+`Prod`'s fields are polymorphic, so a returned tuple **boxes any scalar in
+it**: `BitWriter.flushGo` returned `ByteArray × UInt64 × Nat`, three heap
+allocations per *bit push*, which put about a quarter of all encode work in
+the allocator beneath it. Both dropped components were recoverable without
+the tuple.
 
-**A bit writer that does not allocate.** `BitWriter.flushGo` returned
-`ByteArray × UInt64 × Nat`: three heap allocations per call — two `Prod`
-cells plus a boxed `UInt64`, because `Prod`'s fields are polymorphic and
-so always boxed. `push` runs twice per residual sample, which made the
-bit writer the encoder's largest single allocator: the profile put about
-a quarter of all encode work in `mi_malloc_small`/`mi_free`/
-`lean_dec_ref_cold` beneath it, more than the LPC search itself. Both
-dropped components are recoverable without the tuple — the new pending
-count is `n % 8`, and `acc` needs no masking because `toUInt8` truncates
-on the way out and no bit at or above position `n` is ever read back — so
-`flushBytes` returns the buffer alone. The residual loop then threads
-`buf`/`acc`/`n` as three parameters through a tail recursion, building one
-`BitWriter` per partition instead of two per sample.
+**Frame-parallel serialization.** Turning decoded samples into interleaved
+PCM bytes was 46% of decode wall time and none of it was decoding:
+`recombineA` concatenated every frame's channel arrays into whole-file
+arrays (41 ms, serial) and `pcmBytesA` walked those again (61 ms — its task
+fan-out bought nothing, because marking the shared `Array Int` channels
+multi-threaded cost about what the parallelism saved). A frame covers a
+contiguous sample range, so a frame *is* a serialization window; each
+worker now emits its own frame's bytes, and a `ByteArray` is O(1) to mark
+where `Array Int` channels are O(samples). `Flac/Spec/PcmBytes.lean` proves
+it rather than asserting it.
 
-**Serializing PCM through the `UInt64` lane.** `Int → Int64 → UInt64`
-with unboxed shifts, instead of `Int` addition then `Int.toNat` then `Nat`
-masking: one runtime conversion per sample instead of three plus two
-`Nat` division-family calls, measured at 2.5× on a 4M-sample block
-(266 → 666 MB/s). Serializing decoded samples had been ~27% of decode.
-`pcmBytesA_eq` cancels only the array/list conversion, so this arithmetic
-carries no proof obligation at all.
+**MD5 off the critical path.** The STREAMINFO digest is chained and cannot
+be split across workers, but it does not have to be *first*: it was 62 ms
+of a 550 ms encode, computed before the first frame task started. Spawned
+alongside them, it overlaps work that was already saturating the cores.
 
-**Scanning for sync codes in parallel.** The scan was the decoder's
-largest serial phase — one pass over the whole compressed stream on the
-driver thread before any frame worker could start. It is a pure guess
-(every use is validated by the step's own `Step.ok`), so it may be
-computed any way at all: concatenating ascending windows stays ascending,
-which is all `findStep`'s binary search needs, and a sync code straddling
-a boundary is still found by the window owning its first byte.
-
-**Fusing the fixed-order search.** The order-`ord` fixed residual is the
-`ord`-th finite difference, so one traversal carrying the difference
-ladder produces all five residual streams: one array read per sample
-instead of five, and no block-sized difference array at any order. (An
-earlier session measured a fused *`Int`* fixed search as slower, because
-juggling five-element `Array` state per sample cost more than the
-allocations it saved. Unboxed float parameters are what make the fused
-shape win.)
+**Measured and discarded.** A libFLAC-style *windowed* bit reader — cached
+64-bit word plus a leading-zero count — was prototyped and came out **5.7×
+slower** (207 ms vs 36 ms on a 2M-sample Rice run): Lean boxes `UInt64`
+values carried across control flow, so refills and `clz` cost far more
+than the scalar `Nat` path they replace. What survives of that idea is the
+three-byte extraction window (1.35×). Also neutral or worse: unrolling the
+float dot product with four accumulator chains (155 ms vs 83 ms — the
+per-tap `Nat` index arithmetic costs more than the shortened dependency
+chain saves), splitting it into two chains, a sliding register window,
+`>>>3`/`&&&7` in place of `/8`/`%8` (identical), a constructor-level
+`unzigzag` (identical), and lowering the sync-scan window below 1 MB.
 
 ### Where the remaining encode gap is
 
-Two items, measured on the 32 MB probe at 4.09 CPU-seconds total:
+Encode is 3.23 CPU-seconds for the 32 MB probe against 0.434 s of wall
+time (7.3× parallel on 4 performance plus 4 efficiency cores). Two items:
 
-1. **The runtime certificate: 1.12 CPU-seconds, 27%.** The fast encoder
-   is unverified by design, so every call decodes its own output with the
-   verified decoder and compares against the input — which is exactly
-   what makes `decodePcm16_encodePcm16Fast` hypothesis-free. Retiring it
-   in favour of the statically verified emitter (M6b: `emitFast_eq_encode`
-   already exists; what blocks shipping it is that the heuristics it calls
-   still run on lists, so array-izing the searches with equality proofs is
-   the actual work) would take encode to roughly 1.6× on the probe,
-   trading nothing at all.
-2. **The candidate search, ~27%.** libFLAC's preset table
-   (`compression_levels_` in `src/libFLAC/stream_encoder.c`) sets
-   `do_exhaustive_model_search` to false at **every** level including
-   `-8`, and `process_subframe_` acts on that: it evaluates exactly one
-   LPC order per apodization window (`guess_lpc_order`) and exactly one
-   fixed order (`guess_fixed_order`), buying its ratio with several
-   *windows* instead (`subdivide_tukey(3)`, max order 12). Vinyl uses one
-   window and costs five or six LPC orders plus all five fixed orders
-   exactly. `Flac.Heuristics.lpcCandidates` now carries
-   the measured tradeoff curve: pruning buys 6–22% encode speed for
-   0.05–0.92 percentage points of ratio, and the two sets that beat the
-   current one on ratio both cost speed. Raising the order ceiling to 12
-   with `[1,2,4,8,12]` reaches 39.450% (0.33 points better than
-   `flac -8`) at 0.94× the speed, if ratio is what is wanted.
+1. **The runtime certificate: ~27% of encode wall.** Measured directly —
+   decoding the encoder's own output takes 0.119 s of encode's 0.434 s.
+   Retiring it in favour of the statically verified emitter would take
+   encode to about **0.96×**, past the target, trading nothing. That is
+   milestone M6b; `ARCHITECTURE.md` names its four stages, and the one
+   thing *not* in the way is the searches — a chooser's output carries a
+   decidable validity certificate by construction, so the round-trip
+   theorem already holds for every chooser, `Float` included.
+2. **The candidate search: ~31% of encode work** (`lpcDotFf` 18%,
+   `acorrGo` 8%, the partition folds the rest). libFLAC's `-8` evaluates
+   exactly one LPC order per apodization window and one fixed order
+   (`compression_levels_` and `process_subframe_` in
+   `src/libFLAC/stream_encoder.c` — `do_exhaustive_model_search` is false
+   at every level), buying its ratio with several *windows* instead. Vinyl
+   uses one window and costs three LPC orders plus all five fixed orders
+   exactly. `Flac.Heuristics.lpcCandidates` carries the measured curve.
 
-Beyond those, per-operation cost is at the floor pure Lean offers.
+Below those, per-operation cost is at the floor pure Lean offers.
 libFLAC's inner loops are `int32` SIMD; `Array Int64` would be *worse*
 than `Array Int` in Lean (boxed per element), and `FloatArray` — already
 used everywhere it is exact — is the only unboxed numeric array Lean has
@@ -215,17 +218,12 @@ besides `ByteArray`.
 
 ### Where the remaining decode gap is
 
-Decode is 1.02 CPU-seconds for the 32 MB probe against 0.25 s of wall
-time, so it is running about 4× parallel on 4 performance plus 4
-efficiency cores, and roughly 40% of the *critical path* is serial.
-Remaining work, by profile share: the Rice reader (~22%, and the one
-change that would move it is a libFLAC-style windowed bit reader with a
-cached word, which needs a simulation proof against `readRiceSeqScan`),
-`lean_byte_array_push`/`lean_array_push` (~26%, two pushes per sample —
-the floor of the `ByteArray` API), `lean_mark_mt` (~14%, marking decoded
-sample arrays as shared when they cross into serialization workers), and
-LPC/fixed restoration (~11%, `Int` multiply–accumulate that must stay
-`Int` because it is the proven path).
+There is none above 4 MB. Below it the residual is Lean's fixed process
+init, not decoding. Decode work now divides as: the Rice reader ~43%
+(`readRiceSeqScan3` 38%, `scanOne` 5%), predictor restoration ~29%
+(`Lpc.dotAGo` 23% — `Int` multiply-accumulate that must stay `Int`,
+because it is the proven path and `Int → Int64` conversion per tap would
+cost what it saves), `crc16` 6%, serialization ~9%, array pushes ~3%.
 
 Compare medians only *within the same run*; machine load and thermal
 state move absolute throughput, which is why the figure plots both codecs

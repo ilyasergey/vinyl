@@ -123,37 +123,63 @@ the certified heuristics choose well. Speed is therefore measured against
 
 | | Vinyl | libFLAC | gap |
 |---|---|---|---|
-| decode | 82.7 MB/s | 126.2 MB/s | **1.53×** |
-| encode | 38.8 MB/s | 75.1 MB/s (`flac -8`) | **1.94×** |
-| encode vs `flac -5` | 38.8 MB/s | 109.9 MB/s | 2.83× |
+| decode | 121.7 MB/s | 125.1 MB/s | **1.03×** |
+| encode | 55.4 MB/s | 74.6 MB/s (`flac -8`) | **1.35×** |
+| encode vs `flac -5` | 55.4 MB/s | 107.9 MB/s | 1.95× |
 
-These 1 MB files charge process startup to every measurement; on a 32 MB
-probe, where it is negligible, the gaps are 1.6× decode and 2.1× encode.
+These corpus files are 1 MB each, so **process startup is charged to every
+measurement** — 3.1 ms of Lean runtime init against libFLAC's 2.7 ms, on
+an 8–9 ms decode. Throughput against file size, same material, medians:
 
-Decoding is within about 1.5× of libFLAC because frames decode in
-parallel — and *provably* so: a worker decoding the frame at a given bit
-position runs literally the call the serial loop would run there, and
-returns the frame reader's own equation as a proof field, so nothing
-trusts either the thread or the sync-code scan that guessed the position
-(`readFramesFast_eq`).
+| PCM | Vinyl decode | libFLAC | gap | Vinyl encode | `flac -8` | gap |
+|---|---|---|---|---|---|---|
+| 1 MB | 104.8 MB/s | 121.8 MB/s | 1.16× | 52.1 MB/s | 71.1 MB/s | 1.37× |
+| 4 MB | 173.1 MB/s | 166.8 MB/s | **0.96×** | 64.5 MB/s | 85.6 MB/s | 1.33× |
+| 8 MB | 196.6 MB/s | 179.1 MB/s | **0.91×** | 68.0 MB/s | 89.2 MB/s | 1.31× |
+| 32 MB | 206.6 MB/s | 184.7 MB/s | **0.89×** | 70.3 MB/s | 91.9 MB/s | 1.31× |
 
-Encoding stays further behind for two reasons, both structural rather
-than a matter of tuning. First, roughly a quarter of encode is the
-**runtime certificate**: the fast encoder is unverified by design, so
-every call decodes its own output with the verified decoder and compares,
-which is what makes `decodePcm16_encodePcm16Fast` hypothesis-free.
-Second, the candidate search costs five or six LPC orders exactly, where
-libFLAC's `-8` costs exactly *one* order per apodization window — a more
-expensive search than libFLAC runs at any preset, and the reason the
-ratio comes out ahead. Both searches now run in exact `Float` arithmetic
-over unboxed `FloatArray`: every value they compute is an integer well
-inside 2^53, so doubles represent them exactly and the subframe chosen is
-bit-identical, at one hardware `fmul`/`fadd` per tap instead of
-`lean_int_mul`/`lean_int_add` on boxed `Array Int` (pinned by a
-differential test against the verified encoder).
+So **Vinyl's decoder overtakes libFLAC's at about 4 MB and runs ~11%
+faster from 8 MB up**; below that, Lean's fixed process init decides the
+comparison. Encoding is flat at ~1.3×.
 
-Every decoder fast path is proven equal to its bit-level specification;
-the frame-parallel encoder is certified per call by the verified decoder.
+Decoding gets there because frames decode *and serialize* in parallel —
+and provably so. A worker decoding the frame at a given bit position runs
+literally the call the serial loop would run there, and returns the frame
+reader's own equation as a proof field, so nothing trusts either the
+thread or the sync-code scan that guessed the position
+(`readFramesFast_eq`). Serialization moved into those same workers once
+`recombineA_model` established that **a frame is a serialization window**;
+`decodeBytes_spec` then says the bytes written are exactly
+`pcmBytesRange` of the decoded samples. That last step *narrowed* the
+trusted surface — the window concatenation the previous serializer
+performed was asserted in prose and unprovable, because it reasons through
+`Task`.
+
+Two things account for what remains of the encode gap.
+
+**The runtime certificate, ~27% of encode.** The fast encoder is
+unverified by design, so every call decodes its own output with the
+verified decoder and compares — which is what makes
+`decodePcm16_encodePcm16Fast` hypothesis-free. Retiring it in favour of
+the statically verified emitter (milestone M6b) would take encode to
+roughly **0.96×**, i.e. past parity; it is a proof project, not a tuning
+one, and [`ARCHITECTURE.md`](ARCHITECTURE.md) lays out the four stages.
+
+**The candidate search, ~31%.** libFLAC's `-8` evaluates exactly one LPC
+order per apodization window and one fixed order, buying its ratio with
+several *windows*; Vinyl uses one window and costs three LPC orders plus
+all five fixed orders exactly — a more expensive search than libFLAC runs
+at any preset, and the reason the ratio comes out ahead.
+`Flac.Heuristics.lpcCandidates` carries the whole measured tradeoff curve.
+
+Both searches run in exact `Float` arithmetic over unboxed `FloatArray`:
+every value they compute is an integer well inside 2^53, so doubles
+represent them exactly and the subframe chosen — and the residual emitted
+— is bit-identical to the `Int` form, at one hardware `fmul`/`fadd` per
+tap instead of `lean_int_mul` on a boxed `Array Int`. A differential test
+pins that against the verified encoder on every session.
+
+Every decoder fast path is proven equal to its bit-level specification.
 See [`bench/README.md`](bench/README.md) for the methodology, the
 per-stage history, and regeneration instructions.
 
