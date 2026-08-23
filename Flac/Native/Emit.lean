@@ -5,6 +5,7 @@ import Flac.Native.Lpc
 import Flac.Native.Frame
 import Flac.Native.Crc
 import Flac.Native.Utf8Num
+import Flac.Native.Stream
 
 /-!
 # The verified fast emitter — bit writer layer
@@ -176,7 +177,9 @@ def pushContent (b : Nat) (cfg : Subframe.SubframeCfg) (xs : Array Int)
 
 /-- One subframe (computes `Subframe.write`). -/
 def pushSubframe (b : Nat) (sc : Subframe.SubCfg) (xs : Array Int) (w : W) : W :=
-  pushContent (b - sc.wasted) sc.inner (xs.map (Flac.Bits.shiftDown sc.wasted))
+  let scaled := if sc.wasted = 0 then xs
+    else xs.map (Flac.Bits.shiftDown sc.wasted)
+  pushContent (b - sc.wasted) sc.inner scaled
     (if sc.wasted = 0 then ((w.push 1 0).push 6 sc.inner.typeCode).push 1 0
      else (((w.push 1 0).push 6 sc.inner.typeCode).push 1 1).pushUnary
        (sc.wasted - 1))
@@ -233,5 +236,47 @@ def pushFrame (b : Nat) (strat : Bool) (num : Nat) (asg : Frame.ChannelAsg)
   let w4 := w3.push ((8 - w3.n % 8) % 8) 0
   w4.push 16 (Crc.crc16 (w4.buf.extract start w4.buf.size)).toNat
 
+/-! ## Streams -/
+
+/-- The fixed-size STREAMINFO payload (computes `Stream.writeStreamInfo`). -/
+def pushStreamInfo (bs sr ch b total md5 : Nat) (w : W) : W :=
+  ((((((((w.push 16 bs).push 16 bs).push 24 0).push 24 0).push 20 sr).push 3
+    (ch - 1)).push 5 (b - 1)).pushBits 36 total).pushBits 128 md5
+
+/-- A sequence of already chunked frames. The model chooser stays on
+    lists; only the samples handed to the emitter are materialized as
+    arrays. -/
+def pushFrames (b : Nat) (varBlk : Bool) (blockSize : Nat)
+    (chooser : List (List Int) → Frame.ChannelAsg) :
+    Nat → List (List (List Int)) → W → W
+  | _, [], w => w
+  | i, fr :: frs, w =>
+    pushFrames b varBlk blockSize chooser (i + 1) frs
+      (pushFrame b varBlk (if varBlk then i * blockSize else i)
+        (chooser fr) (fr.map List.toArray) w)
+
+/-- The byte-aligned marker + STREAMINFO prefix. -/
+def pushStreamPrefix (cfg : Stream.EncoderCfg) (a : Stream.Audio) (w : W) : W :=
+  let md5 := Stream.md5Nat (Md5.md5 (Stream.pcmBytes a.bps a.channels))
+  let w1 := (((w.push 32 0x664C6143).push 1 1).push 7 0).push 24 34
+  pushStreamInfo cfg.blockSize a.sampleRate a.channels.length a.bps
+    a.numSamples md5 w1
+
+/-- Marker, STREAMINFO, and all frames (computes `Stream.writeStream`). -/
+def pushStream (cfg : Stream.EncoderCfg) (a : Stream.Audio) (w : W) : W :=
+  pushFrames a.bps cfg.variableBlocking cfg.blockSize (cfg.safeChooser a.bps) 0
+    (Stream.chunkChannels cfg.blockSize a.channels) (pushStreamPrefix cfg a w)
+
+/-- Byte output of the verified emitter. -/
+def encode (cfg : Stream.EncoderCfg) (a : Stream.Audio) : ByteArray :=
+  (pushStream cfg a
+    (empty (64 + 2 * a.channels.length * a.numSamples))).buf
+
 end W
+
+/-- Statically verified stream-emitter entry point. Its equality to the
+    reference encoder is `Flac.Emit.emitFast_eq_encode`. -/
+def emitFast (cfg : Stream.EncoderCfg) (a : Stream.Audio) : ByteArray :=
+  W.encode cfg a
+
 end Flac.Emit

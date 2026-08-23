@@ -2,6 +2,8 @@ import Flac.Native.Emit
 import Flac.Spec.Bits
 import Flac.Spec.Fixed
 import Flac.Spec.Lpc
+import Flac.Spec.Stereo
+import Flac.Spec.Stream
 
 /-!
 # Emitter simulation — the production↔model transfer, writer side
@@ -121,6 +123,116 @@ theorem bytesToBits_push (buf : ByteArray) (b : UInt8) :
   show (buf.data.toList ++ [b]).flatMap byteToBits = _
   rw [List.flatMap_append]
   rfl
+
+theorem bytesToBits_append (a b : ByteArray) :
+    bytesToBits (a ++ b) = bytesToBits a ++ bytesToBits b := by
+  simp [bytesToBits, byteListToBits, List.flatMap_append]
+
+private theorem byteToBits_injective : Function.Injective byteToBits := by
+  intro a b h
+  have ha : readBits 8 (byteToBits a) = some (a.toNat, []) := by
+    unfold byteToBits
+    exact readBits_writeBits 8 a.toNat [] (UInt8.toNat_lt_size a)
+  have hb : readBits 8 (byteToBits b) = some (b.toNat, []) := by
+    unfold byteToBits
+    exact readBits_writeBits 8 b.toNat [] (UInt8.toNat_lt_size b)
+  rw [h, hb] at ha
+  exact UInt8.toNat.inj (congrArg Prod.fst (Option.some.inj ha)).symm
+
+private theorem byteListToBits_injective : Function.Injective byteListToBits := by
+  intro a
+  induction a with
+  | nil =>
+    intro b h
+    match b with
+    | [] => rfl
+    | x :: xs =>
+      have hl := congrArg List.length h
+      simp only [byteListToBits, List.flatMap_nil, List.flatMap_cons,
+        List.length_nil, List.length_append, byteToBits, length_writeBits] at hl
+      omega
+  | cons x xs ih =>
+    intro b h
+    match b with
+    | [] =>
+      have hl := congrArg List.length h
+      simp only [byteListToBits, List.flatMap_nil, List.flatMap_cons,
+        List.length_nil, List.length_append, byteToBits, length_writeBits] at hl
+      omega
+    | y :: ys =>
+      simp only [byteListToBits, List.flatMap_cons] at h
+      have hh := congrArg (List.take 8) h
+      have ht := congrArg (List.drop 8) h
+      rw [List.take_left' (by simp [byteToBits]),
+        List.take_left' (by simp [byteToBits])] at hh
+      rw [List.drop_left' (by simp [byteToBits]),
+        List.drop_left' (by simp [byteToBits])] at ht
+      have hxy : x = y := byteToBits_injective hh
+      subst y
+      have hrest : xs = ys := ih ht
+      subst ys
+      rfl
+
+theorem bytesToBits_injective : Function.Injective bytesToBits := by
+  intro a b h
+  apply ByteArray.ext
+  apply Array.toList_inj.mp
+  exact byteListToBits_injective h
+
+@[simp] theorem length_byteListToBits (l : List UInt8) :
+    (byteListToBits l).length = 8 * l.length := by
+  induction l with
+  | nil => rfl
+  | cons b t ih =>
+    rw [byteListToBits_cons]
+    simp only [List.length_append, byteToBits, length_writeBits, ih,
+      List.length_cons]
+    omega
+
+@[simp] theorem length_bytesToBits (d : ByteArray) :
+    (bytesToBits d).length = 8 * d.size := by
+  show (byteListToBits d.data.toList).length = 8 * d.data.size
+  simp only [length_byteListToBits, Array.length_toList]
+
+@[simp] theorem length_W_bits (w : W) :
+    w.bits.length = 8 * w.buf.size + w.n := by
+  simp [W.bits]
+
+/-- An aligned emission materializes exactly the emitted model bits as a
+    byte-array suffix. This is the bridge used by the frame CRCs. -/
+theorem emits_aligned_buf {f : W → W} {bs : BitStream}
+    (hf : Emits f bs) (w : W) (hw : w.n = 0) (hbs : 8 ∣ bs.length) :
+    (f w).n = 0 ∧ (f w).buf = w.buf ++ bitsToBytes bs := by
+  obtain ⟨hbits, hn⟩ := hf w (by omega)
+  obtain ⟨k, hk⟩ := hbs
+  have hlen := congrArg List.length hbits
+  simp only [length_W_bits, List.length_append] at hlen
+  have hout : (f w).n = 0 := by omega
+  refine ⟨hout, ?_⟩
+  apply bytesToBits_injective
+  rw [bytesToBits_append, bytesToBits_bitsToBytes bs ⟨k, hk⟩]
+  simpa [W.bits, writeBits, hw, hout] using hbits
+
+/-- Pointwise form of `emits_aligned_buf`, useful for aligned emitters
+    whose padding depends on their concrete input state. -/
+theorem aligned_buf_of_bits {w out : W} {bs : BitStream}
+    (hw : w.n = 0) (hout : out.n = 0)
+    (hbits : out.bits = w.bits ++ bs) (hbs : 8 ∣ bs.length) :
+    out.buf = w.buf ++ bitsToBytes bs := by
+  obtain ⟨k, hk⟩ := hbs
+  apply bytesToBits_injective
+  rw [bytesToBits_append, bytesToBits_bitsToBytes bs ⟨k, hk⟩]
+  simpa [W.bits, writeBits, hw, hout] using hbits
+
+/-- From an aligned input, the pending-bit count is determined by the
+    emitted model length. -/
+theorem emits_pending_mod {f : W → W} {bs : BitStream}
+    (hf : Emits f bs) (w : W) (hw : w.n = 0) :
+    (f w).n = bs.length % 8 := by
+  obtain ⟨hbits, hn⟩ := hf w (by omega)
+  have hlen := congrArg List.length hbits
+  simp only [length_W_bits, List.length_append] at hlen
+  omega
 
 /-! ## Primitive emissions -/
 
@@ -577,13 +689,12 @@ theorem emits_pushSubframe (b : Nat) (sc : Subframe.SubCfg) (xs : Array Int) :
       (emits_comp
         (emits_comp (emits_comp (emits_push 1 0) (emits_push 6 sc.inner.typeCode))
           (emits_push 1 0))
-        (emits_pushContent (b - sc.wasted) sc.inner
-          (xs.map (Flac.Bits.shiftDown sc.wasted))))
+        (emits_pushContent (b - sc.wasted) sc.inner xs))
       (fun w => by
         show _ = W.pushSubframe b sc xs w
         unfold W.pushSubframe
-        rw [if_pos h])
-    rw [if_pos h, Array.toList_map]
+        simp only [h, if_true])
+    rw [if_pos h, h, map_shiftDown_zero]
   · apply emits_congr
       (emits_comp
         (emits_comp
@@ -595,8 +706,447 @@ theorem emits_pushSubframe (b : Nat) (sc : Subframe.SubCfg) (xs : Array Int) :
       (fun w => by
         show _ = W.pushSubframe b sc xs w
         unfold W.pushSubframe
-        rw [if_neg h])
+        simp only [h, if_false])
     rw [if_neg h, Array.toList_map]
     simp [List.append_assoc]
+
+/-! ## Coded numbers and frame headers -/
+
+private theorem pow_64_eq (k : Nat) : 64 ^ k = 2 ^ (6 * k) := by
+  rw [show (64 : Nat) = 2 ^ 6 from rfl, Nat.pow_mul]
+
+theorem emits_pushConts (v : Nat) : ∀ k,
+    Emits (fun w => W.pushConts v k w) (Utf8Num.writeConts k v) := by
+  intro k
+  induction k with
+  | zero =>
+    intro w hw
+    exact ⟨by simp [W.pushConts, W.bits, Utf8Num.writeConts], hw⟩
+  | succ k ih =>
+    apply emits_congr
+      (emits_comp
+        (emits_push 8 (0x80 + v / p2 (6 * k) % 64)) ih)
+      (fun w => rfl)
+    change writeBits 8 (0x80 + v / p2 (6 * k) % 64) ++
+        Utf8Num.writeConts k v =
+      Utf8Num.writeContByte (v / 64 ^ k) ++ Utf8Num.writeConts k v
+    unfold Utf8Num.writeContByte
+    rw [p2_eq, ← pow_64_eq]
+
+@[simp] theorem length_writeConts (k v : Nat) :
+    (Utf8Num.writeConts k v).length = 8 * k := by
+  induction k with
+  | zero => rfl
+  | succ k ih =>
+    simp only [Utf8Num.writeConts, Utf8Num.writeContByte, List.length_append,
+      length_writeBits, ih]
+    omega
+
+theorem utf8_write_length_dvd (v : Nat) : 8 ∣ (Utf8Num.write v).length := by
+  unfold Utf8Num.write
+  by_cases h7 : v < 2 ^ 7
+  · simp [h7]
+  · simp only [h7, if_false]
+    by_cases h11 : v < 2 ^ 11
+    · simp [h11]
+    · simp only [h11, if_false]
+      by_cases h16 : v < 2 ^ 16
+      · simp [h16]
+      · simp only [h16, if_false]
+        by_cases h21 : v < 2 ^ 21
+        · simp [h21]
+        · simp only [h21, if_false]
+          by_cases h26 : v < 2 ^ 26
+          · simp [h26]
+          · simp only [h26, if_false]
+            by_cases h31 : v < 2 ^ 31
+            · simp [h31]
+            · simp [h31]
+
+theorem emits_pushUtf8 (v : Nat) :
+    Emits (fun w => W.pushUtf8 v w) (Utf8Num.write v) := by
+  unfold W.pushUtf8 Utf8Num.write
+  simp only [p2_eq]
+  by_cases h7 : v < 2 ^ 7
+  · simp only [h7, if_true]
+    exact emits_push 8 v
+  · simp only [h7, if_false]
+    by_cases h11 : v < 2 ^ 11
+    · simp only [h11, if_true]
+      exact emits_congr
+        (emits_comp (emits_push 8 (0xC0 + v / 2 ^ 6)) (emits_pushConts v 1))
+        (fun w => rfl) rfl
+    · simp only [h11, if_false]
+      by_cases h16 : v < 2 ^ 16
+      · simp only [h16, if_true]
+        exact emits_congr
+          (emits_comp (emits_push 8 (0xE0 + v / 2 ^ 12)) (emits_pushConts v 2))
+          (fun w => rfl) rfl
+      · simp only [h16, if_false]
+        by_cases h21 : v < 2 ^ 21
+        · simp only [h21, if_true]
+          exact emits_congr
+            (emits_comp (emits_push 8 (0xF0 + v / 2 ^ 18)) (emits_pushConts v 3))
+            (fun w => rfl) rfl
+        · simp only [h21, if_false]
+          by_cases h26 : v < 2 ^ 26
+          · simp only [h26, if_true]
+            exact emits_congr
+              (emits_comp (emits_push 8 (0xF8 + v / 2 ^ 24)) (emits_pushConts v 4))
+              (fun w => rfl) rfl
+          · simp only [h26, if_false]
+            by_cases h31 : v < 2 ^ 31
+            · simp only [h31, if_true]
+              exact emits_congr
+                (emits_comp (emits_push 8 (0xFC + v / 2 ^ 30))
+                  (emits_pushConts v 5))
+                (fun w => rfl) rfl
+            · simp only [h31, if_false]
+              exact emits_congr
+                (emits_comp (emits_push 8 0xFE) (emits_pushConts v 6))
+                (fun w => rfl) rfl
+
+theorem emits_pushHeaderCore (b : Nat) (strat : Bool) (num bs chCode : Nat) :
+    Emits (fun w => W.pushHeaderCore b strat num bs chCode w)
+      (Frame.headerCore b strat num bs chCode) := by
+  let h0 := emits_push 14 0x3FFE
+  let h1 := emits_comp h0 (emits_push 1 0)
+  let h2 := emits_comp h1 (emits_push 1 (if strat then 1 else 0))
+  let h3 := emits_comp h2 (emits_push 4 7)
+  let h4 := emits_comp h3 (emits_push 4 0)
+  let h5 := emits_comp h4 (emits_push 4 chCode)
+  let h6 := emits_comp h5 (emits_push 3 (Frame.bpsCode b))
+  let h7 := emits_comp h6 (emits_push 1 0)
+  let h8 := emits_comp h7 (emits_pushUtf8 num)
+  let h9 := emits_comp h8 (emits_push 16 (bs - 1))
+  apply emits_congr h9 (fun w => rfl)
+  simp [Frame.headerCore, List.append_assoc]
+
+theorem headerCore_length_dvd (b : Nat) (strat : Bool) (num bs chCode : Nat) :
+    8 ∣ (Frame.headerCore b strat num bs chCode).length := by
+  obtain ⟨k, hk⟩ := utf8_write_length_dvd num
+  refine ⟨k + 6, ?_⟩
+  simp only [Frame.headerCore, List.length_append, length_writeBits]
+  omega
+
+/-! ## Frame subframe plans -/
+
+private def planToLists
+    (plan : List ((Nat × Subframe.SubCfg) × Array Int)) :
+    List ((Nat × Subframe.SubCfg) × List Int) :=
+  plan.map fun p => ((p.1.1, p.1.2), p.2.toList)
+
+theorem planA_toLists (b : Nat) (asg : Frame.ChannelAsg)
+    (chs : List (Array Int)) :
+    planToLists (W.planA b asg chs) =
+      Frame.subframePlan b asg (chs.map Array.toList) := by
+  match asg, chs with
+  | .independent cfgs, chs =>
+    induction cfgs generalizing chs with
+    | nil => simp [planToLists, W.planA, Frame.subframePlan]
+    | cons cfg cfgs ih =>
+      match chs with
+      | [] => rfl
+      | ch :: chs =>
+        simp [planToLists, W.planA, Frame.subframePlan]
+        exact ih chs
+  | .leftSide c0 c1, [] => rfl
+  | .leftSide c0 c1, [_] => rfl
+  | .leftSide c0 c1, [l, r] =>
+    simp [planToLists, W.planA, Frame.subframePlan]
+  | .leftSide c0 c1, _ :: _ :: _ :: _ => rfl
+  | .rightSide c0 c1, [] => rfl
+  | .rightSide c0 c1, [_] => rfl
+  | .rightSide c0 c1, [l, r] =>
+    simp [planToLists, W.planA, Frame.subframePlan]
+  | .rightSide c0 c1, _ :: _ :: _ :: _ => rfl
+  | .midSide c0 c1, [] => rfl
+  | .midSide c0 c1, [_] => rfl
+  | .midSide c0 c1, [l, r] =>
+    simp [planToLists, W.planA, Frame.subframePlan]
+  | .midSide c0 c1, _ :: _ :: _ :: _ => rfl
+
+theorem emits_pushPlan : ∀ plan : List ((Nat × Subframe.SubCfg) × Array Int),
+    Emits (fun w => W.pushPlan plan w)
+      (Frame.writeSubframes (planToLists plan)) := by
+  intro plan
+  induction plan with
+  | nil =>
+    intro w hw
+    exact ⟨by simp [W.pushPlan, W.bits, Frame.writeSubframes, planToLists], hw⟩
+  | cons p ps ih =>
+    apply emits_congr
+      (emits_comp (emits_pushSubframe p.1.1 p.1.2 p.2) ih)
+      (fun w => rfl)
+    rfl
+
+theorem emits_pushPlanA (b : Nat) (asg : Frame.ChannelAsg)
+    (chs : List (Array Int)) :
+    Emits (fun w => W.pushPlan (W.planA b asg chs) w)
+      (Frame.writeSubframes
+        (Frame.subframePlan b asg (chs.map Array.toList))) := by
+  apply emits_congr (emits_pushPlan (W.planA b asg chs)) (fun w => rfl)
+  rw [planA_toLists]
+
+/-! ## Complete frames -/
+
+/-- On a byte-aligned input, the native frame emitter appends exactly the
+    model frame and finishes byte-aligned. -/
+theorem pushFrame_spec (b : Nat) (strat : Bool) (num : Nat)
+    (asg : Frame.ChannelAsg) (chs : List (Array Int)) (w : W)
+    (hw : w.n = 0) :
+    (W.pushFrame b strat num asg chs w).bits =
+        w.bits ++ Frame.write b strat num asg (chs.map Array.toList) ∧
+      (W.pushFrame b strat num asg chs w).n = 0 := by
+  let bs := (chs.headD #[]).size
+  let code := asg.code chs.length
+  let core := Frame.headerCore b strat num bs code
+  let c8 := (Crc.crc8 (bitsToBytes core)).toNat
+  let header := Frame.writeHeader b strat num bs code
+  let subframes := Frame.writeSubframes
+    (Frame.subframePlan b asg (chs.map Array.toList))
+  let pre := header ++ subframes
+  let pad := padLen pre.length
+  let body := alignToByte pre
+
+  have hcoreEmit : Emits (fun x => W.pushHeaderCore b strat num bs code x) core := by
+    exact emits_pushHeaderCore b strat num bs code
+  have hcoreDiv : 8 ∣ core.length := by
+    exact headerCore_length_dvd b strat num bs code
+
+  let w1 := W.pushHeaderCore b strat num bs code w
+  have hw1 : w1.n = 0 ∧ w1.buf = w.buf ++ bitsToBytes core := by
+    exact emits_aligned_buf hcoreEmit w hw hcoreDiv
+  have hslice1 : w1.buf.extract w.buf.size w1.buf.size = bitsToBytes core := by
+    rw [hw1.2]
+    apply ByteArray.extract_append_eq_right
+    · rfl
+    · exact ByteArray.size_append
+
+  have hheaderEmit :
+      Emits (fun x => (W.pushHeaderCore b strat num bs code x).push 8 c8)
+        header := by
+    apply emits_congr (emits_comp hcoreEmit (emits_push 8 c8)) (fun _ => rfl)
+    rfl
+
+  have hpreEmit :
+      Emits (fun x => W.pushPlan (W.planA b asg chs)
+        ((W.pushHeaderCore b strat num bs code x).push 8 c8)) pre := by
+    apply emits_congr (emits_comp hheaderEmit (emits_pushPlanA b asg chs))
+      (fun _ => rfl)
+    rfl
+
+  let w3 := W.pushPlan (W.planA b asg chs) (w1.push 8 c8)
+  have hw3 : w3.n = pre.length % 8 := by
+    exact emits_pending_mod hpreEmit w hw
+  have hpad : (8 - w3.n % 8) % 8 = pad := by
+    rw [hw3]
+    rw [Nat.mod_mod]
+    rfl
+
+  have hbodyEmit :
+      Emits (fun x => (W.pushPlan (W.planA b asg chs)
+        ((W.pushHeaderCore b strat num bs code x).push 8 c8)).push pad 0)
+        body := by
+    apply emits_congr (emits_comp hpreEmit (emits_push pad 0)) (fun _ => rfl)
+    change pre ++ writeBits pad 0 = body
+    rw [writeBits_zero]
+    rfl
+
+  let w4 := w3.push pad 0
+  have hw4 : w4.n = 0 ∧ w4.buf = w.buf ++ bitsToBytes body := by
+    exact emits_aligned_buf hbodyEmit w hw (alignToByte_dvd pre)
+  have hslice4 : w4.buf.extract w.buf.size w4.buf.size = bitsToBytes body := by
+    rw [hw4.2]
+    apply ByteArray.extract_append_eq_right
+    · rfl
+    · exact ByteArray.size_append
+
+  let c16 := (Crc.crc16 (bitsToBytes body)).toNat
+  have hframeEmit := emits_comp hbodyEmit (emits_push 16 c16)
+
+  have hc8 : (Crc.crc8 (w1.buf.extract w.buf.size w1.buf.size)).toNat = c8 := by
+    rw [hslice1]
+  have hc16 : (Crc.crc16 (w4.buf.extract w.buf.size w4.buf.size)).toNat = c16 := by
+    rw [hslice4]
+
+  let a1 := W.pushHeaderCore b strat num bs code w
+  let a2 := a1.push 8 (Crc.crc8 (a1.buf.extract w.buf.size a1.buf.size)).toNat
+  let a3 := W.pushPlan (W.planA b asg chs) a2
+  let a4 := a3.push ((8 - a3.n % 8) % 8) 0
+  have hnative : W.pushFrame b strat num asg chs w =
+      a4.push 16 (Crc.crc16 (a4.buf.extract w.buf.size a4.buf.size)).toNat := by
+    rfl
+  have ha1 : a1 = w1 := rfl
+  have ha2 : a2 = w1.push 8 c8 := by
+    unfold a2
+    rw [ha1, hc8]
+  have ha3 : a3 = w3 := by
+    unfold a3 w3
+    rw [ha2]
+  have ha4 : a4 = w4 := by
+    unfold a4 w4
+    rw [ha3, hpad]
+  have hc16a : (Crc.crc16 (a4.buf.extract w.buf.size a4.buf.size)).toNat = c16 := by
+    rw [ha4]
+    exact hc16
+  have hout : W.pushFrame b strat num asg chs w = w4.push 16 c16 := by
+    calc
+      W.pushFrame b strat num asg chs w =
+          a4.push 16 (Crc.crc16 (a4.buf.extract w.buf.size a4.buf.size)).toNat := hnative
+      _ = a4.push 16 c16 := congrArg (fun v => a4.push 16 v) hc16a
+      _ = w4.push 16 c16 := congrArg (fun x => x.push 16 c16) ha4
+
+  have hhead : bs = ((chs.map Array.toList).headD []).length := by
+    cases chs <;> simp [bs]
+  have hbody : body = Frame.body b strat num asg (chs.map Array.toList) := by
+    unfold body pre header subframes Frame.body
+    rw [hhead]
+    simp only [List.length_map]
+    rfl
+  have hc16def : c16 = (Crc.crc16 (bitsToBytes body)).toNat := rfl
+  have hwrite : body ++ writeBits 16 c16 =
+      Frame.write b strat num asg (chs.map Array.toList) := by
+    unfold Frame.write
+    rw [← hbody, ← hc16def]
+
+  obtain ⟨hbits, _⟩ := hframeEmit w (by omega)
+  have hn : (w4.push 16 c16).n = 0 := by
+    have := emits_pending_mod (emits_push 16 c16) w4 hw4.1
+    simpa only [length_writeBits, Nat.reduceMod] using this
+  constructor
+  · rw [hout, ← hwrite]
+    exact hbits
+  · rw [hout]
+    exact hn
+
+/-! ## Streams -/
+
+theorem emits_pushStreamInfo (bs sr ch b total md5 : Nat) :
+    Emits (fun w => W.pushStreamInfo bs sr ch b total md5 w)
+      (Stream.writeStreamInfo bs sr ch b total md5) := by
+  let h0 := emits_push 16 bs
+  let h1 := emits_comp h0 (emits_push 16 bs)
+  let h2 := emits_comp h1 (emits_push 24 0)
+  let h3 := emits_comp h2 (emits_push 24 0)
+  let h4 := emits_comp h3 (emits_push 20 sr)
+  let h5 := emits_comp h4 (emits_push 3 (ch - 1))
+  let h6 := emits_comp h5 (emits_push 5 (b - 1))
+  let h7 := emits_comp h6 (emits_pushBits 36 total)
+  let h8 := emits_comp h7 (emits_pushBits 128 md5)
+  apply emits_congr h8 (fun _ => rfl)
+  simp only [Stream.writeStreamInfo, List.append_assoc]
+
+private def streamPrefixBits (cfg : Stream.EncoderCfg) (a : Stream.Audio) :
+    BitStream :=
+  writeBits 32 0x664C6143 ++ writeBits 1 1 ++ writeBits 7 0 ++
+    writeBits 24 34 ++
+    Stream.writeStreamInfo cfg.blockSize a.sampleRate a.channels.length a.bps
+      a.numSamples
+      (Stream.md5Nat (Md5.md5 (Stream.pcmBytes a.bps a.channels)))
+
+theorem emits_pushStreamPrefix (cfg : Stream.EncoderCfg) (a : Stream.Audio) :
+    Emits (fun w => W.pushStreamPrefix cfg a w) (streamPrefixBits cfg a) := by
+  let h0 := emits_push 32 0x664C6143
+  let h1 := emits_comp h0 (emits_push 1 1)
+  let h2 := emits_comp h1 (emits_push 7 0)
+  let h3 := emits_comp h2 (emits_push 24 34)
+  let h4 := emits_comp h3 (emits_pushStreamInfo cfg.blockSize a.sampleRate
+    a.channels.length a.bps a.numSamples
+    (Stream.md5Nat (Md5.md5 (Stream.pcmBytes a.bps a.channels))))
+  apply emits_congr h4 (fun _ => rfl)
+  simp only [streamPrefixBits, List.append_assoc]
+
+theorem streamPrefixBits_length_dvd (cfg : Stream.EncoderCfg) (a : Stream.Audio) :
+    8 ∣ (streamPrefixBits cfg a).length := by
+  refine ⟨42, ?_⟩
+  simp only [streamPrefixBits, Stream.writeStreamInfo, List.length_append,
+    length_writeBits]
+
+private theorem map_toList_map_toArray (fr : List (List Int)) :
+    (fr.map List.toArray).map Array.toList = fr := by
+  induction fr with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.map_cons, ih]
+
+/-- Sequential frame emission preserves byte alignment and matches the
+    model frame sequence exactly. -/
+theorem pushFrames_spec (b : Nat) (varBlk : Bool) (blockSize : Nat)
+    (chooser : List (List Int) → Frame.ChannelAsg) :
+    ∀ (frs : List (List (List Int))) (i : Nat) (w : W), w.n = 0 →
+      (W.pushFrames b varBlk blockSize chooser i frs w).bits =
+          w.bits ++ Stream.writeFrames b varBlk blockSize chooser i frs ∧
+        (W.pushFrames b varBlk blockSize chooser i frs w).n = 0 := by
+  intro frs
+  induction frs with
+  | nil =>
+    intro i w hw
+    exact ⟨by simp [W.pushFrames, Stream.writeFrames], by simpa [W.pushFrames] using hw⟩
+  | cons fr frs ih =>
+    intro i w hw
+    let num := if varBlk then i * blockSize else i
+    let arrs := fr.map List.toArray
+    let w' := W.pushFrame b varBlk num (chooser fr) arrs w
+    have hf0 := pushFrame_spec b varBlk num (chooser fr) arrs w hw
+    have harr : arrs.map Array.toList = fr := map_toList_map_toArray fr
+    rw [harr] at hf0
+    have hf : w'.bits = w.bits ++ Frame.write b varBlk num (chooser fr) fr ∧
+        w'.n = 0 := by
+      exact hf0
+    have hr := ih (i + 1) w' hf.2
+    change (W.pushFrames b varBlk blockSize chooser (i + 1) frs w').bits =
+        w.bits ++ (Frame.write b varBlk num (chooser fr) fr ++
+          Stream.writeFrames b varBlk blockSize chooser (i + 1) frs) ∧
+      (W.pushFrames b varBlk blockSize chooser (i + 1) frs w').n = 0
+    refine ⟨?_, hr.2⟩
+    rw [hr.1, hf.1, List.append_assoc]
+
+/-- Complete native stream emission matches `Stream.writeStream` and
+    finishes aligned. -/
+theorem pushStream_spec (cfg : Stream.EncoderCfg) (a : Stream.Audio)
+    (w : W) (hw : w.n = 0) :
+    (W.pushStream cfg a w).bits = w.bits ++ Stream.writeStream cfg a ∧
+      (W.pushStream cfg a w).n = 0 := by
+  let wp := W.pushStreamPrefix cfg a w
+  have hpEmit := emits_pushStreamPrefix cfg a
+  have hp := hpEmit w (by omega)
+  have hpa := emits_aligned_buf hpEmit w hw (streamPrefixBits_length_dvd cfg a)
+  have hframes := pushFrames_spec a.bps cfg.variableBlocking cfg.blockSize
+    (cfg.safeChooser a.bps) (Stream.chunkChannels cfg.blockSize a.channels) 0
+    wp hpa.1
+  change (W.pushFrames a.bps cfg.variableBlocking cfg.blockSize
+      (cfg.safeChooser a.bps) 0 (Stream.chunkChannels cfg.blockSize a.channels)
+      wp).bits = w.bits ++ Stream.writeStream cfg a ∧
+    (W.pushFrames a.bps cfg.variableBlocking cfg.blockSize
+      (cfg.safeChooser a.bps) 0 (Stream.chunkChannels cfg.blockSize a.channels)
+      wp).n = 0
+  refine ⟨?_, hframes.2⟩
+  rw [hframes.1, hp.1]
+  unfold Stream.writeStream streamPrefixBits
+  simp only [List.append_assoc]
+
+/-- The verified byte emitter computes the reference encoder exactly. -/
+theorem encode_eq (cfg : Stream.EncoderCfg) (a : Stream.Audio) :
+    W.encode cfg a = Stream.encode cfg a := by
+  let w := W.empty (64 + 2 * a.channels.length * a.numSamples)
+  have hs := pushStream_spec cfg a w (by rfl)
+  have hb := aligned_buf_of_bits (w := w) (out := W.pushStream cfg a w)
+    (by rfl) hs.2 hs.1 (Stream.writeStream_length_dvd cfg a)
+  unfold W.encode Stream.encode
+  rw [hb]
+  have hempty : ByteArray.emptyWithCapacity
+      (64 + 2 * a.channels.length * a.numSamples) = ByteArray.empty := by
+    apply ByteArray.ext
+    rfl
+  change ByteArray.emptyWithCapacity
+      (64 + 2 * a.channels.length * a.numSamples) ++ _ = _
+  rw [hempty, ByteArray.empty_append]
+
+/-- Public capstone for the fast emitter: byte-for-byte equality with
+    the verified reference encoder, without a runtime certificate. -/
+theorem emitFast_eq_encode (cfg : Stream.EncoderCfg) (a : Stream.Audio) :
+    emitFast cfg a = Stream.encode cfg a :=
+  encode_eq cfg a
 
 end Flac.Emit

@@ -4,6 +4,7 @@ import Flac.Native.Crc
 import Flac.Native.Decode
 import Flac.Native.Utf8Num
 import Flac.Native.Heuristics
+import Flac.Native.Emit
 import Flac.Native.Lpc
 import Flac.Native.Reader
 import Flac.Native.Md5
@@ -19,6 +20,7 @@ import Flac.Spec.Fixed
 import Flac.Spec.Frame
 import Flac.Spec.Lpc
 import Flac.Spec.Heuristics
+import Flac.Spec.Emit
 import Flac.Spec.Reader
 import Flac.Spec.Rice
 import Flac.Spec.Stereo
