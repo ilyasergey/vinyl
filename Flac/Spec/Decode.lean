@@ -1774,4 +1774,183 @@ theorem decode_encodeCheckedCfg {cfg : Stream.EncoderCfg}
     exact decode_encode_cfg cfg a hc.1 hc.2.1 hc.2.2
   case isFalse => cases h
 
+
+/-! ## Byte-level PCM round-trip -/
+
+private theorem byteListOfPcm16_pcm16OfByteList :
+    ∀ l : List UInt8, l.length % 2 = 0 →
+      byteListOfPcm16 (pcm16OfByteList l) = l
+  | [], _ => rfl
+  | [_], h => by simp at h
+  | lo :: hi :: rest, h => by
+    have hrest := byteListOfPcm16_pcm16OfByteList rest
+      (by simp only [List.length_cons] at h; omega)
+    have hlo : lo.toNat < 256 := UInt8.toNat_lt lo
+    have hhi : hi.toNat < 256 := UInt8.toNat_lt hi
+    have hval : (sInt16 lo hi % 65536).toNat = lo.toNat + 256 * hi.toNat := by
+      simp only [sInt16]
+      split <;> omega
+    simp only [pcm16OfByteList, byteListOfPcm16, hval, hrest]
+    rw [show (lo.toNat + 256 * hi.toNat) % 256 = lo.toNat from by omega,
+      show (lo.toNat + 256 * hi.toNat) / 256 = hi.toNat from by omega,
+      UInt8.ofNat_toNat, UInt8.ofNat_toNat]
+
+private theorem length_pcm16OfByteList :
+    ∀ l : List UInt8, (pcm16OfByteList l).length = l.length / 2
+  | [] => rfl
+  | [_] => by simp [pcm16OfByteList]
+  | lo :: hi :: rest => by
+    simp only [pcm16OfByteList, List.length_cons,
+      length_pcm16OfByteList rest]
+    omega
+
+private theorem map_headD_zipWith_cons :
+    ∀ (xs : List Int) (chs : List (List Int)), xs.length = chs.length →
+      (List.zipWith (· :: ·) xs chs).map (fun c => c.headD 0) = xs := by
+  intro xs
+  induction xs with
+  | nil => intro chs _; rfl
+  | cons x xs ih =>
+    intro chs hl
+    match chs with
+    | c :: chs =>
+      simp only [List.zipWith_cons_cons, List.map_cons, List.headD_cons]
+      rw [ih chs (by simpa using hl)]
+
+private theorem map_tail_zipWith_cons :
+    ∀ (xs : List Int) (chs : List (List Int)), xs.length = chs.length →
+      (List.zipWith (· :: ·) xs chs).map (·.tail) = chs := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro chs hl
+    match chs with
+    | [] => rfl
+  | cons x xs ih =>
+    intro chs hl
+    match chs with
+    | c :: chs =>
+      simp only [List.zipWith_cons_cons, List.map_cons, List.tail_cons]
+      rw [ih chs (by simpa using hl)]
+
+private theorem length_deinterleaveN (ch : Nat) :
+    ∀ (n : Nat) (l : List Int), n * ch ≤ l.length →
+      (deinterleaveN ch n l).length = ch := by
+  intro n
+  induction n with
+  | zero => intro l _; simp [deinterleaveN]
+  | succ n ih =>
+    intro l hl
+    have hstep : (n + 1) * ch = n * ch + ch := Nat.succ_mul ..
+    have := ih (l.drop ch) (by simp only [List.length_drop]; omega)
+    simp only [deinterleaveN, List.length_zipWith, List.length_take, this]
+    omega
+
+private theorem interleaveN_deinterleaveN (ch : Nat) :
+    ∀ (n : Nat) (l : List Int), l.length = n * ch →
+      interleaveN n (deinterleaveN ch n l) = l := by
+  intro n
+  induction n with
+  | zero =>
+    intro l hl
+    have : l = [] := List.eq_nil_of_length_eq_zero (by omega)
+    subst this
+    rfl
+  | succ n ih =>
+    intro l hl
+    have hstep : (n + 1) * ch = n * ch + ch := Nat.succ_mul ..
+    have htk : (l.take ch).length = ch := by
+      simp only [List.length_take]
+      omega
+    have hdl : (deinterleaveN ch n (l.drop ch)).length = ch :=
+      length_deinterleaveN ch n _ (by simp only [List.length_drop]; omega)
+    simp only [deinterleaveN, interleaveN]
+    rw [map_headD_zipWith_cons _ _ (by omega),
+      map_tail_zipWith_cons _ _ (by omega),
+      ih (l.drop ch) (by simp only [List.length_drop]; omega),
+      List.take_append_drop]
+
+private theorem headD_deinterleaveN {ch : Nat} (hch : 0 < ch) :
+    ∀ (n : Nat) (l : List Int), l.length = n * ch →
+      ((deinterleaveN ch n l).headD []).length = n := by
+  obtain ⟨k, rfl⟩ : ∃ k, ch = k + 1 := ⟨ch - 1, by omega⟩
+  intro n
+  induction n with
+  | zero =>
+    intro l _
+    simp [deinterleaveN, List.replicate_succ]
+  | succ n ih =>
+    intro l hl
+    have hstep : (n + 1) * (k + 1) = n * (k + 1) + (k + 1) := Nat.succ_mul ..
+    match l, hl with
+    | [], hl => simp only [List.length_nil] at hl; omega
+    | x :: l', hl =>
+      have hdl : (deinterleaveN (k + 1) n ((x :: l').drop (k + 1))).length
+          = k + 1 :=
+        length_deinterleaveN (k + 1) n _
+          (by simp only [List.length_drop]; omega)
+      have hih := ih ((x :: l').drop (k + 1))
+        (by simp only [List.length_drop]; omega)
+      match hd : deinterleaveN (k + 1) n ((x :: l').drop (k + 1)) with
+      | [] => rw [hd] at hdl; simp only [List.length_nil] at hdl; omega
+      | c :: cs =>
+        rw [hd] at hih
+        simp only [List.headD_cons] at hih
+        show ((List.zipWith (· :: ·) ((x :: l').take (k + 1))
+          (deinterleaveN (k + 1) n ((x :: l').drop (k + 1)))).headD
+            []).length = n + 1
+        rw [hd]
+        simp only [List.take_succ_cons, List.zipWith_cons_cons,
+          List.headD_cons, List.length_cons]
+        omega
+
+private theorem toByteArray_toList_data (b : ByteArray) :
+    b.data.toList.toByteArray = b := by
+  apply ByteArray.ext
+  apply Array.toList_inj.mp
+  rw [List.toList_data_toByteArray]
+
+/-- **The byte-level guarantee**: whenever `encodePcm16Cfg` produces a
+    FLAC file at all, decoding that file returns exactly the input PCM
+    bytes — no hypotheses. -/
+theorem decodePcm16_encodePcm16Cfg {cfg : Stream.EncoderCfg}
+    {ch sr : Nat} {bytes flac : ByteArray}
+    (h : encodePcm16Cfg cfg ch sr bytes = some flac) :
+    decodePcm16 flac = .ok bytes := by
+  unfold encodePcm16Cfg at h
+  split at h
+  case isFalse => cases h
+  case isTrue hc =>
+    obtain ⟨hch, hsz⟩ := hc
+    have hdec := decode_encodeCheckedCfg h
+    unfold decodePcm16
+    simp only [hdec]
+    rw [if_pos (by trivial)]
+    have hlist : bytes.data.toList.length = bytes.size := Array.length_toList
+    obtain ⟨m, hm⟩ : ∃ m, bytes.size = m * (2 * ch) :=
+      ⟨bytes.size / (2 * ch),
+        (Nat.div_mul_cancel (Nat.dvd_of_mod_eq_zero hsz)).symm⟩
+    have hplen : (pcm16OfByteList bytes.data.toList).length = ch * m := by
+      rw [length_pcm16OfByteList, hlist, hm, Nat.mul_left_comm,
+        Nat.mul_comm ch m]
+      omega
+    have hn : (pcm16OfByteList bytes.data.toList).length / ch = m := by
+      rw [hplen]
+      exact Nat.mul_div_cancel_left m hch
+    show Except.ok (byteListOfPcm16 (interleave (deinterleave ch
+      (pcm16OfByteList bytes.data.toList)))).toByteArray = Except.ok bytes
+    unfold deinterleave interleave
+    rw [hn,
+      headD_deinterleaveN hch m _ (by rw [hplen, Nat.mul_comm]),
+      interleaveN_deinterleaveN ch m _ (by rw [hplen, Nat.mul_comm]),
+      byteListOfPcm16_pcm16OfByteList _
+        (by rw [hlist, hm, Nat.mul_left_comm]; omega),
+      toByteArray_toList_data]
+
+/-- Byte-level guarantee for the default-configuration encoder. -/
+theorem decodePcm16_encodePcm16 {ch : Nat} {bytes flac : ByteArray}
+    (h : encodePcm16 ch bytes = some flac) :
+    decodePcm16 flac = .ok bytes :=
+  decodePcm16_encodePcm16Cfg h
+
 end Flac
