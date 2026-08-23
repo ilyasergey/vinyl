@@ -573,17 +573,54 @@ def stepAt (b0 : Nat) (d : ByteArray) (pos : Nat) : Option (Step b0 d) :=
   | none => none
   | some (chs, next) => some ⟨pos, chs, next, h⟩
 
-/-- Byte offsets carrying a frame sync code (RFC 9639 §9.1.1: fourteen one
-    bits, a zero, then the blocking-strategy bit). A guess, validated by
-    `Step.ok` at every use. -/
-def syncCandidates (d : ByteArray) (start : Nat) : Array Nat := Id.run do
-  let mut out : Array Nat := Array.emptyWithCapacity (d.size / 128 + 8)
-  if d.size = 0 then return out
-  for i in [start : d.size - 1] do
+/-- Byte offsets in `[lo, hi)` carrying a frame sync code (RFC 9639
+    §9.1.1: fourteen one bits, a zero, then the blocking-strategy bit).
+    Reads `d[i + 1]`, which may lie past `hi` — that is what makes windows
+    of this scan lossless at their boundaries. -/
+def syncScan (d : ByteArray) (lo hi : Nat) : Array Nat := Id.run do
+  let mut out : Array Nat := Array.emptyWithCapacity ((hi - lo) / 128 + 8)
+  for i in [lo : hi] do
     if (if h : i < d.size then d[i] else 0) == 0xFF then
       if (if h : i + 1 < d.size then d[i + 1] else 0) &&& 0xFC == 0xF8 then
         out := out.push i
   return out
+
+/-- Bytes per parallel scan window. -/
+def syncWindow : Nat := 1 <<< 20
+
+/-- Windows tiling `[lo, hi)`, ascending. -/
+def syncWindows (lo hi : Nat) : List (Nat × Nat) :=
+  go (hi - lo) lo
+where
+  go : Nat → Nat → List (Nat × Nat)
+    | 0, _ => []
+    | rem + 1, lo =>
+      let len := max 1 (min (rem + 1) syncWindow)
+      (lo, lo + len) :: go (rem + 1 - len) (lo + len)
+  termination_by rem => rem
+  decreasing_by omega
+
+/-- Byte offsets carrying a frame sync code. A *guess*: every use is
+    validated by the step's own `Step.ok`, so nothing here carries a proof
+    obligation and the scan may be computed any way at all — including in
+    parallel windows, since concatenating ascending windows stays
+    ascending (which is all `findStep`'s binary search needs) and a sync
+    code straddling a boundary is still found by the window that owns its
+    first byte.
+
+    The scan was the decoder's largest serial phase: one pass over the
+    whole compressed stream, on the driver thread, before any frame worker
+    could start. -/
+def syncCandidates (d : ByteArray) (start : Nat) : Array Nat :=
+  if d.size = 0 then #[]
+  else
+    let hi := d.size - 1
+    if hi - start ≤ syncWindow then syncScan d start hi
+    else
+      let tasks := (syncWindows start hi).map fun w =>
+        Task.spawn fun _ => syncScan d w.1 w.2
+      tasks.foldl (fun acc t => acc ++ t.get)
+        (Array.emptyWithCapacity ((hi - start) / 128 + 8))
 
 /-- Decode one chunk of candidate positions (the unit of parallel work). -/
 def stepChunk (b0 : Nat) (d : ByteArray) (cands : Array Nat) (lo hi : Nat) :

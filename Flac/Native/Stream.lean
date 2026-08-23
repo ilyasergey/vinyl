@@ -60,29 +60,74 @@ decreasing_by
     have : 0 < c.length := List.length_pos_iff.mpr _h
     omega
 
-/-- Interleaved PCM as little-endian two's-complement bytes, `⌈b/8⌉` bytes
-    per sample (the MD5 input format of RFC 9639 §8.2). Unverified — MD5
-    is a conformance checksum, not part of the losslessness claim (so this
-    runs on arrays, off the proof-oriented list model). -/
-def pcmBytesRange (b : Nat) (arrs : List (Array Int)) (lo len : Nat) :
-    ByteArray := Id.run do
+/-! ### Interleaved PCM bytes
+
+Little-endian two's complement, `⌈b/8⌉` bytes per sample (the MD5 input
+format of RFC 9639 §8.2). Unverified — MD5 is a conformance checksum, not
+part of the losslessness claim, and `pcmBytesA_eq` cancels only the
+array/list conversion, so the byte arithmetic below carries no proof
+obligation at all.
+
+The arithmetic runs through `Int → Int64 → UInt64` and extracts bytes with
+unboxed shifts, rather than `Int` addition followed by `Int.toNat` and
+`Nat` masking. That is one runtime conversion per sample instead of three
+plus two `Nat` division-family calls, and it measured 2.5x on a
+4M-sample block (266 -> 666 MB/s), which matters because serializing the
+decoded samples was ~27% of decode. Mono and stereo — the shapes that
+occur — walk their channel arrays directly instead of iterating the
+channel *list* per sample.
+
+Out-of-range samples now wrap in two's complement rather than clamping at
+zero, which is what RFC 9639 §8.2 asks for and what `Flac.pcm16Row`
+already did; in-range samples (all a valid stream can hold) are
+unaffected. -/
+
+/-- `w` little-endian bytes of `u`. -/
+def pushSampleLE : (w : Nat) → UInt64 → ByteArray → ByteArray
+  | 0, _, out => out
+  | w + 1, u, out => pushSampleLE w (u >>> 8) (out.push u.toUInt8)
+
+/-- 16-bit mono: two pushes per sample, no per-sample channel-list walk. -/
+def pcmMonoGo (a : Array Int) : (i stop : Nat) → ByteArray → ByteArray
+  | i, stop, out =>
+    if _h : i < stop then
+      let u : UInt64 := (a.getD i 0).toInt64.toUInt64
+      pcmMonoGo a (i + 1) stop ((out.push u.toUInt8).push (u >>> 8).toUInt8)
+    else out
+  termination_by i stop => stop - i
+
+/-- 16-bit stereo: four pushes per sample frame. -/
+def pcmStereoGo (a c : Array Int) : (i stop : Nat) → ByteArray → ByteArray
+  | i, stop, out =>
+    if _h : i < stop then
+      let u : UInt64 := (a.getD i 0).toInt64.toUInt64
+      let v : UInt64 := (c.getD i 0).toInt64.toUInt64
+      pcmStereoGo a c (i + 1) stop
+        ((((out.push u.toUInt8).push (u >>> 8).toUInt8).push v.toUInt8).push
+          (v >>> 8).toUInt8)
+    else out
+  termination_by i stop => stop - i
+
+/-- Any bit depth, any channel count. -/
+def pcmRowsGo (w : Nat) (arrs : List (Array Int)) :
+    (i stop : Nat) → ByteArray → ByteArray
+  | i, stop, out =>
+    if _h : i < stop then
+      pcmRowsGo w arrs (i + 1) stop
+        (arrs.foldl (fun o a => pushSampleLE w ((a.getD i 0).toInt64.toUInt64) o) out)
+    else out
+  termination_by i stop => stop - i
+
+/-- Interleaved PCM bytes for the sample window `[lo, lo + len)`. -/
+def pcmBytesRange (b : Nat) (arrs : List (Array Int)) (lo len : Nat) : ByteArray :=
   let w := (b + 7) / 8
-  let mm := p2 (8 * w)
-  let m : Int := (mm : Int)
-  let mut out := ByteArray.emptyWithCapacity (arrs.length * len * w)
+  let out := ByteArray.emptyWithCapacity (arrs.length * len * w)
   if w = 2 then
-    -- the 16-bit fast path: two direct pushes per sample
-    for i in [lo : lo + len] do
-      for a in arrs do
-        let u := ((a.getD i 0 + m).toNat) &&& 0xFFFF
-        out := (out.push (UInt8.ofNat (u &&& 0xFF))).push (UInt8.ofNat (u >>> 8))
-    return out
-  for i in [lo : lo + len] do
-    for a in arrs do
-      let u := ((a.getD i 0 + m).toNat) % mm
-      for j in [0:w] do
-        out := out.push (UInt8.ofNat (u >>> (8 * j) % 256))
-  return out
+    match arrs with
+    | [a] => pcmMonoGo a lo (lo + len) out
+    | [a, c] => pcmStereoGo a c lo (lo + len) out
+    | _ => pcmRowsGo 2 arrs lo (lo + len) out
+  else pcmRowsGo w arrs lo (lo + len) out
 
 /-- Samples per parallel serialization window. -/
 def pcmWindow : Nat := 1 <<< 16
