@@ -64,25 +64,53 @@ decreasing_by
     per sample (the MD5 input format of RFC 9639 §8.2). Unverified — MD5
     is a conformance checksum, not part of the losslessness claim (so this
     runs on arrays, off the proof-oriented list model). -/
-def pcmBytesA (b : Nat) (arrs : List (Array Int)) : ByteArray := Id.run do
+def pcmBytesRange (b : Nat) (arrs : List (Array Int)) (lo len : Nat) :
+    ByteArray := Id.run do
   let w := (b + 7) / 8
   let mm := p2 (8 * w)
   let m : Int := (mm : Int)
-  let n := (arrs.headD #[]).size
-  let mut out := ByteArray.emptyWithCapacity (arrs.length * n * w)
+  let mut out := ByteArray.emptyWithCapacity (arrs.length * len * w)
   if w = 2 then
     -- the 16-bit fast path: two direct pushes per sample
-    for i in [0:n] do
+    for i in [lo : lo + len] do
       for a in arrs do
         let u := ((a.getD i 0 + m).toNat) &&& 0xFFFF
         out := (out.push (UInt8.ofNat (u &&& 0xFF))).push (UInt8.ofNat (u >>> 8))
     return out
-  for i in [0:n] do
+  for i in [lo : lo + len] do
     for a in arrs do
       let u := ((a.getD i 0 + m).toNat) % mm
       for j in [0:w] do
         out := out.push (UInt8.ofNat (u >>> (8 * j) % 256))
   return out
+
+/-- Samples per parallel serialization window. -/
+def pcmWindow : Nat := 1 <<< 16
+
+/-- Sample windows tiling `[0, n)`, as `(lo, len)` pairs. -/
+def pcmWindows (n : Nat) : List (Nat × Nat) :=
+  go n 0
+where
+  go : Nat → Nat → List (Nat × Nat)
+    | 0, _ => []
+    | rem + 1, lo =>
+      let len := max 1 (min (rem + 1) pcmWindow)
+      (lo, len) :: go (rem + 1 - len) (lo + len)
+  termination_by rem => rem
+  decreasing_by omega
+
+/-- Interleaved PCM bytes. The interleaved layout is sample-major, so a
+    window of samples serializes independently and the windows concatenate
+    — which is what lets this run one task per window. Large outputs made
+    this the decoder's serial bottleneck once frames decoded in parallel. -/
+def pcmBytesA (b : Nat) (arrs : List (Array Int)) : ByteArray :=
+  let n := (arrs.headD #[]).size
+  if n ≤ pcmWindow then pcmBytesRange b arrs 0 n
+  else
+    let tasks := (pcmWindows n).map fun win =>
+      Task.spawn fun _ => pcmBytesRange b arrs win.1 win.2
+    tasks.foldl (fun acc t => acc ++ t.get)
+      (ByteArray.emptyWithCapacity (arrs.length * n * ((b + 7) / 8)))
 
 /-- Interleaved PCM bytes from list-typed channels: the array serializer
     after one conversion (`Flac.Spec.Stream.pcmBytesA_eq` transfers between
