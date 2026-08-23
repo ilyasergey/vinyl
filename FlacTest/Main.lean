@@ -155,6 +155,13 @@ def e2eTests : TestM Unit := do
     { blockSize := 16, sampleRate := 8000, bps := 8, chooser := Stream.verbatimChooser }
   let pcm8 : List Int := (List.range 30).map fun (i : Nat) => ((i : Int) % 100) - 50
   checkEq "e2e 8-bit" (Stream.decodeReference (Stream.encode cfg8 pcm8)) (some pcm8)
+  -- the certified default heuristic (M3)
+  checkEq "e2e defaultChooser"
+    (Stream.decodeReference (Stream.encode (mkCfg (Heuristics.defaultChooser 16)) pcm))
+    (some pcm)
+  checkEq "e2e defaultChooser constant blocks"
+    (Stream.decodeReference (Stream.encode (mkCfg (Heuristics.defaultChooser 16)) flat))
+    (some flat)
 
 /-! ## Bit-level spot checks -/
 
@@ -189,7 +196,22 @@ def emitSamples (dir : String) : IO Unit := do
     ((List.range 5000).map fun (i : Nat) => ((i * i * 2654435761 + i * 40503) % 65536 : Int) - 32768)
   mk "empty" cfg16 []
 
+/-- Parse raw signed 16-bit little-endian mono PCM. -/
+def pcm16OfBytes (b : ByteArray) : List Int :=
+  (List.range (b.size / 2)).map fun i =>
+    let u : Nat := b[2*i]!.toNat + 256 * b[2*i+1]!.toNat
+    if u < 32768 then (u : Int) else (u : Int) - 65536
+
 def main (args : List String) : IO UInt32 := do
+  if let ["--encode", inFile, outFile, bs] := args then
+    let bytes ← IO.FS.readBinFile inFile
+    let pcm := pcm16OfBytes bytes
+    let cfg : Stream.EncoderCfg :=
+      { blockSize := bs.toNat!, sampleRate := 44100, bps := 16,
+        chooser := Heuristics.defaultChooser 16 }
+    IO.FS.writeBinFile outFile (Stream.encode cfg pcm)
+    IO.println s!"encoded {pcm.length} samples"
+    return 0
   if let ["--decode", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
     match Stream.decodeReference bytes with
