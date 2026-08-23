@@ -63,22 +63,26 @@ decode (the shipped buffered decoder):
 
 ![Throughput vs libFLAC](performance.png)
 
-Current five-run medians (2026-08-23): Vinyl encode 18.8 MB/s and Vinyl
-decode 78.0 MB/s, versus 106.4 MB/s for `flac -5` encode, 73.9 MB/s for
-`flac -8` encode, and 123.3 MB/s for libFLAC decode. That is a
-**1.58× decode gap** and a 5.7× encode gap against `flac -5` — **3.9×
+Current five-run medians (2026-08-23): Vinyl encode 24.5 MB/s and Vinyl
+decode 79.2 MB/s, versus 108.7 MB/s for `flac -5` encode, 75.1 MB/s for
+`flac -8` encode, and 125.1 MB/s for libFLAC decode. That is a
+**1.58× decode gap** and a 4.4× encode gap against `flac -5` — **3.1×
 against `flac -8`, the level whose compression Vinyl matches**.
 
 Progress this session, all with the capstones unchanged and no proof debt:
 
-| stage | encode | decode | decode gap |
-|---|---|---|---|
-| corrected-timer baseline | 13.9 MB/s | 30.6 MB/s | 4.0× |
-| allocation-free CRC ranges | 13.9 MB/s | 30.6 MB/s | 4.0× |
-| array-typed decoder core | 15.3 MB/s | 40.3 MB/s | 3.1× |
-| frame-parallel decoding | 18.6 MB/s | 67.4 MB/s | 1.8× |
-| parallel PCM serialization | 18.5 MB/s | 73.9 MB/s | 1.68× |
-| task granularity 8 | 18.8 MB/s | 78.0 MB/s | **1.58×** |
+| stage | encode | decode | encode gap (`-8`) | decode gap |
+|---|---|---|---|---|
+| corrected-timer baseline | 13.9 MB/s | 30.6 MB/s | 5.2× | 4.0× |
+| allocation-free CRC ranges | 13.9 MB/s | 30.6 MB/s | 5.2× | 4.0× |
+| array-typed decoder core | 15.3 MB/s | 40.3 MB/s | 4.8× | 3.1× |
+| frame-parallel decoding | 18.6 MB/s | 67.4 MB/s | 4.0× | 1.8× |
+| parallel PCM serialization | 18.5 MB/s | 73.9 MB/s | 4.0× | 1.68× |
+| decode task granularity 8 | 18.8 MB/s | 78.0 MB/s | 3.9× | **1.58×** |
+| channel-major deinterleave | 21.4 MB/s | 78.6 MB/s | 3.5× | 1.59× |
+| unboxed `FloatArray` search | 21.9 MB/s | 78.3 MB/s | 3.4× | 1.60× |
+| deinterleave in the workers | 23.8 MB/s | 79.3 MB/s | 3.15× | 1.59× |
+| parallel certificate serialize | 24.5 MB/s | 79.2 MB/s | **3.06×** | 1.58× |
 
 Two structural changes did the work. First, the decoder used to convert
 every decoded sample from its `Array Int` into a `List Int` (the type the
@@ -103,17 +107,30 @@ Serialization then became the decoder's serial bottleneck (150 ms of a
 64Ki-sample window — the interleaved layout is sample-major, so windows
 serialize independently and concatenate.
 
-Encode improves with decode because the fast encoder is certified per
-call by decoding its own output with the verified decoder — now about a
-quarter of encode time; the encoder has emitted frames in parallel for a
-while. What remains of the encode gap is not algorithmic: profiling puts
-roughly a third of raw encode in exactly costing the five or six
-candidate LPC orders, and that cost is Lean `Int` multiply–accumulate
-against libFLAC's `int32` SIMD. Scoring fewer candidates closes part of
-the gap but gives up compression — measured on this corpus, keeping the
-best two candidates by Levinson estimate runs ~1.3× faster at 40.0%
-instead of 39.6%, which would forfeit the win over `flac -8`. The
-tradeoff is recorded rather than taken.
+On the encode side, four things landed. The fast encoder is certified per
+call by decoding its own output with the verified decoder, so it inherits
+every decoder gain directly. Deinterleaving moved from a per-sample
+`Array.modify` over the outer array of channels into the frame workers
+themselves, which read their own sample window out of the shared
+immutable PCM bytes — that removed a serial pass worth 17% of encode plus
+a second full copy per frame. The float search now holds block-sized data
+in an unboxed `FloatArray` rather than an `Array Float` that boxed every
+element. And the certificate's own re-serialization, which was 10% of
+encode and serial, now runs one task per sample window.
+
+What remains of the encode gap is not algorithmic. Profiling puts about
+three quarters of encode in the parallel frame workers, and roughly a
+third of that in exactly costing the five or six candidate LPC orders —
+Lean `Int` multiply–accumulate against libFLAC's `int32` SIMD, with
+`Array Int64` being *worse* in Lean (boxed per element), so the current
+representation is already the best available in pure Lean. Scoring fewer
+candidates closes part of the gap but gives up compression: measured on
+this corpus, keeping the best two candidates by Levinson estimate runs
+~1.3× faster at 40.0% instead of 39.6%, which would forfeit the win over
+`flac -8`. That tradeoff is recorded rather than taken. The one remaining
+change that would improve encode without trading compression or adding
+trusted code is retiring the runtime certificate (~20% of encode) in
+favour of the statically verified emitter — milestone M6b.
 
 The important correction is methodological: libFLAC did not suddenly get
 faster, and Vinyl also measures faster without the timestamp surcharge.

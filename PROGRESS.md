@@ -473,11 +473,13 @@ and indexing lints pass, and all 73 executable checks pass.
 throughput gap against libFLAC, keeping every capstone and all proofs
 sorry-free, benchmarking and republishing `bench/` after each stage.
 
-**Result:** decode reached **1.58×** of libFLAC (30.6 → 78.0 MB/s median,
-2.55× faster this session); encode reached **3.94×** of `flac -8`
-(13.9 → 18.8 MB/s, 1.35× faster). Compression is byte-for-byte unchanged
+**Result:** decode reached **1.58×** of libFLAC (30.6 → 79.2 MB/s median,
+2.59× faster this session); encode reached **3.06×** of `flac -8`
+(13.9 → 24.5 MB/s, 1.76× faster). Compression is byte-for-byte unchanged
 (39.58% overall, still ahead of `flac -8`'s 39.8%). `scripts/check.sh` is
-ALL GREEN throughout; no capstone statement changed.
+ALL GREEN throughout; no capstone statement changed. The decode target is
+met; the encode gap and why it is representational rather than
+algorithmic are analysed at the end of this entry.
 
 **Landed, green, committed and pushed:**
 
@@ -512,8 +514,34 @@ ALL GREEN throughout; no capstone statement changed.
   against libFLAC. Decode 67.4 → 73.9 MB/s.
 - `66dfbfb` — parallel-decode task granularity 24 → 8 candidates
   (measured 8/12/24/48). Decode 73.9 → 78.0 MB/s.
-- `9921c43`, `2ebc9f9`, `3e7a410` — benchmark dashboard refreshed after
-  each stage (five runs, plots, `bench/README.md` narrative).
+- `db5c65b` — **channel-major deinterleave.** The sample-major loop
+  updated the outer array of channels once per sample (`Array.modify`),
+  making deinterleaving 17% of encode and all of it serial. Corpus encode
+  2.12 → 1.87 s.
+- `28d9019` — **unboxed float search.** A generic `Array Float` boxes
+  every element, so windowing a block cost one heap allocation per sample
+  per subframe; `welchF`/`autocorrF` hold block-sized data in a
+  `FloatArray` and perform the same operations in the same order, so the
+  searches make identical choices. The boxed `welch`/`autocorr` are gone.
+  1.87 → 1.79 s.
+- `a9abf15` — **deinterleave inside the frame workers.** Each worker now
+  reads its own sample window out of the shared immutable PCM
+  `ByteArray`, which removes both the remaining serial deinterleave pass
+  and the per-frame `Array.extract` that copied every sample a second
+  time (`frameBytes`/`encodeArrays`/`pcm16Channels` deleted as dead).
+  1.79 → 1.64 s.
+- `34e4a22` — **parallel certificate serialization, with proof.** The
+  certificate re-serializes the decoded output to compare against the
+  input; that was 10% of encode and serial. `pcm16FastPar` runs one task
+  per sample window using the same self-certifying arrangement as the
+  frame decoder — a `PcmChunk` carries the equation for the window it
+  actually serialized, since `Task.spawn`/`Task.get` are opaque and a
+  worker therefore cannot be *assumed* to have done what was asked.
+  Proofs `pcm16Row_app`, `pcm16Go_app`, `pcm16Go_split`, `pcm16Chunks_eq`,
+  `pcm16FastPar_eq`. 1.64 → 1.57 s; 40 MB probe 1.97 → 1.63 s.
+- `9921c43`, `2ebc9f9`, `3e7a410`, and one refresh per stage after — the
+  benchmark dashboard was regenerated (five runs, plots,
+  `bench/README.md` narrative) after every committed stage.
 
 **Measured and discarded (working tree restored):**
 
@@ -559,6 +587,12 @@ ALL GREEN throughout; no capstone statement changed.
   rejected by the header CRC-8, so the residual overhead is Lean's
   cross-thread refcounting and allocator traffic, not wasted decoding.
 
+**Encode phase breakdown (40 MB probe, after this session).** Raw encode
+1255 ms (parallel frame workers, 77%), certificate decode 281 ms (17%),
+certificate re-serialize ~50 ms (3%, was 169 ms), MD5 75 ms (4.6%,
+inherently serial — the hash is chained). Before this session the same
+probe additionally spent 372 ms in a serial deinterleave.
+
 **Honest assessment of the remaining gap.** Decode is at the target.
 Encode is not, and the reason is representational rather than
 algorithmic: the hot loops are `Int` multiply–accumulate over `Array Int`
@@ -566,8 +600,8 @@ against libFLAC's `int32` SIMD, and `Array Int64` would be *worse* in
 Lean (boxed per element), so the current representation is already the
 best available in pure Lean. Three levers remain, in order of value:
 
-1. **Remove the runtime certificate** (~24% of encode, now that decode is
-   fast): the designed M6b path — array-side validity/sanitization bridge
+1. **Remove the runtime certificate** (~20% of encode, now that both its
+   decode and its serialization are parallel): the designed M6b path — array-side validity/sanitization bridge
    so the statically verified emitter can ship, instead of decoding every
    encode to certify it. Note the verified emitter already exists and is
    proven (`Flac.Emit.emitFast_eq_encode`); what blocks shipping it is
