@@ -23,9 +23,11 @@ structure BitReader where
 
 namespace BitReader
 
-/-- The `i`-th bit of the buffer, MSB-first within each byte. -/
+/-- The `i`-th bit of the buffer, MSB-first within each byte.
+    (Indexes the `ByteArray` directly — `.data` would copy.) -/
 def bit (d : ByteArray) (i : Nat) : Bool :=
-  decide ((d.data[i / 8]?.getD 0).toNat / 2 ^ (7 - i % 8) % 2 = 1)
+  decide ((if h : i / 8 < d.size then d[i / 8] else 0).toNat
+    / 2 ^ (7 - i % 8) % 2 = 1)
 
 /-- Read `n` bits starting at `pos` (callers check bounds). -/
 def extractBits (d : ByteArray) (pos : Nat) : Nat → Nat

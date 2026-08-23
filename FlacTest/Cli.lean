@@ -1,4 +1,5 @@
 import Flac
+import Flac.Native.Decode
 
 /-!
 # M0 unit tests
@@ -265,6 +266,16 @@ def cliMain (args : List String) : IO UInt32 := do
       (Stream.encode ⟨bs.toNat!, false, Heuristics.defaultAsgChooser 16⟩ a)
     IO.println s!"encoded {a.numSamples} samples x {chans.length} channels"
     return 0
+  if let ["--decode-fast", inFile, outFile] := args then
+    let bytes ← IO.FS.readBinFile inFile
+    let some si := Stream.peekInfo bytes
+      | IO.println "DECODE ERROR (bad stream header)"; return 1
+    match Flac.decode bytes with
+    | .error e => IO.println s!"DECODE ERROR: {e}"; return 1
+    | .ok chans =>
+      IO.FS.writeBinFile outFile (Stream.pcmBytes si.bps chans)
+      IO.println s!"decoded {(chans.headD []).length} samples x {chans.length} channels ({si.bps}-bit)"
+      return 0
   if let ["--decode", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
     let some si := Stream.peekInfo bytes

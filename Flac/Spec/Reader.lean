@@ -101,14 +101,21 @@ theorem byteListToBits_drop_cons (l : List UInt8) (i : Nat)
     starts with `bit data pos`. -/
 theorem toStream_cons (br : BitReader) (h : br.pos < br.size) :
     toStream br = bit br.data br.pos :: toStream ⟨br.data, br.pos + 1⟩ := by
+  have hk : br.pos / 8 < br.data.size := by
+    simp only [size] at h
+    omega
+  have hlist : br.data.data.toList[br.pos / 8]? = some (br.data[br.pos / 8]) := by
+    rw [Array.getElem?_toList]
+    exact Array.getElem?_eq_getElem hk
   show (byteListToBits br.data.data.toList).drop br.pos
     = _ :: (byteListToBits br.data.data.toList).drop (br.pos + 1)
   rw [byteListToBits_drop_cons br.data.data.toList br.pos (by
-    simp only [Array.length_toList]
-    simp only [size] at h
-    exact h)]
-  congr 3
-  rw [Array.getElem?_toList]
+      simp only [Array.length_toList]
+      simp only [size] at h
+      exact h),
+    hlist]
+  unfold bit
+  rw [dif_pos hk, Option.getD_some]
 
 /-! ## Primitive simulations -/
 
@@ -183,13 +190,7 @@ theorem readUnary_drop {s : BitStream} :
 theorem bit_oob (d : ByteArray) (i : Nat) (h : 8 * d.size ≤ i) :
     bit d i = false := by
   unfold bit
-  have hsz : d.data.size = d.size := rfl
-  have : d.data[i / 8]? = none := by
-    rw [← Array.getElem?_toList]
-    apply List.getElem?_eq_none
-    simp only [Array.length_toList]
-    omega
-  rw [this]
+  rw [dif_neg (by omega)]
   simp
 
 theorem readUnaryGo_sim (d : ByteArray) :
