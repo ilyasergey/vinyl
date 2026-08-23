@@ -262,4 +262,152 @@ theorem readSInt_sim (n : Nat) (br : BitReader) :
   | none => rfl
   | some (v, br') => rfl
 
+/-! ## Position tracking (for CRC byte-slice equalities) -/
+
+theorem readBits_spec {n : Nat} {br br' : BitReader} {v : Nat}
+    (h : br.readBits n = some (v, br')) :
+    br'.data = br.data ∧ br'.pos = br.pos + n
+      ∧ (br.pos ≤ br.size → br'.pos ≤ br.size) := by
+  unfold BitReader.readBits at h
+  split at h
+  · simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨-, hbr⟩ := h
+    subst hbr
+    refine ⟨rfl, by omega, fun hb => by omega⟩
+  · split at h
+    · rename_i hbound
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨-, hbr⟩ := h
+      subst hbr
+      exact ⟨rfl, rfl, fun _ => hbound⟩
+    · simp at h
+
+theorem readUnaryGo_spec (d : ByteArray) :
+    ∀ (fuel q pos q' pos' : Nat),
+      readUnaryGo d q pos fuel = some (q', pos') →
+      pos < pos' ∧ pos' ≤ 8 * d.size := by
+  intro fuel
+  induction fuel with
+  | zero => intro q pos q' pos' h; simp [readUnaryGo] at h
+  | succ fuel ih =>
+    intro q pos q' pos' h
+    unfold readUnaryGo at h
+    split at h
+    · rename_i hbit
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨-, hpos⟩ := h
+      subst hpos
+      by_cases hin : pos < 8 * d.size
+      · exact ⟨by omega, by omega⟩
+      · rw [bit_oob d pos (by omega)] at hbit
+        simp at hbit
+    · have := ih (q + 1) (pos + 1) q' pos' h
+      exact ⟨by omega, this.2⟩
+
+theorem readUnary_spec {br br' : BitReader} {q : Nat}
+    (h : br.readUnary = some (q, br')) :
+    br'.data = br.data ∧ br.pos < br'.pos ∧ br'.pos ≤ br.size := by
+  unfold BitReader.readUnary at h
+  match hg : readUnaryGo br.data 0 br.pos br.remaining with
+  | none => rw [hg] at h; simp at h
+  | some (q0, pos0) =>
+    rw [hg] at h
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨-, hbr⟩ := h
+    subst hbr
+    have := readUnaryGo_spec br.data br.remaining 0 br.pos q0 pos0 hg
+    exact ⟨rfl, this.1, this.2⟩
+
+theorem readSInt_spec {n : Nat} {br br' : BitReader} {v : Int}
+    (h : br.readSInt n = some (v, br')) :
+    br'.data = br.data ∧ br'.pos = br.pos + n
+      ∧ (br.pos ≤ br.size → br'.pos ≤ br.size) := by
+  unfold BitReader.readSInt at h
+  match hb : br.readBits n with
+  | none => rw [hb] at h; simp at h
+  | some (w, br1) =>
+    rw [hb] at h
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨-, hbr⟩ := h
+    subst hbr
+    exact readBits_spec hb
+
+theorem skip_spec {n : Nat} {br br' : BitReader} (h : br.skip n = some br') :
+    br'.data = br.data ∧ br'.pos = br.pos + n
+      ∧ (br.pos ≤ br.size → br'.pos ≤ br.size) := by
+  unfold BitReader.skip at h
+  split at h
+  · simp only [Option.some.injEq] at h
+    subst h
+    refine ⟨rfl, by omega, fun hb => by omega⟩
+  · split at h
+    · rename_i hbound
+      simp only [Option.some.injEq] at h
+      subst h
+      exact ⟨rfl, rfl, fun _ => hbound⟩
+    · simp at h
+
+/-! ## Byte packing inverses (for the CRC byte slices) -/
+
+/-- Taking whole bytes off the bit expansion. -/
+theorem take_byteListToBits (a : Nat) :
+    ∀ (l : List UInt8),
+      (byteListToBits l).take (8 * a) = byteListToBits (l.take a) := by
+  induction a with
+  | zero => intro l; rfl
+  | succ a ih =>
+    intro l
+    match l with
+    | [] => simp [byteListToBits]
+    | b :: t =>
+      rw [List.take_succ_cons, byteListToBits_cons, byteListToBits_cons,
+        show 8 * (a + 1) = 8 + 8 * a from by omega, List.take_append,
+        List.take_of_length_le (by simp [byteToBits]),
+        show 8 + 8 * a - (byteToBits b).length = 8 * a from by
+          simp [byteToBits],
+        ih]
+
+/-- Reassembling one expanded byte. -/
+private theorem head8 : ∀ b : UInt8,
+    bitsToByte (decide (b.toNat / 2 ^ 7 % 2 = 1)) (decide (b.toNat / 2 ^ 6 % 2 = 1))
+      (decide (b.toNat / 2 ^ 5 % 2 = 1)) (decide (b.toNat / 2 ^ 4 % 2 = 1))
+      (decide (b.toNat / 2 ^ 3 % 2 = 1)) (decide (b.toNat / 2 ^ 2 % 2 = 1))
+      (decide (b.toNat / 2 ^ 1 % 2 = 1)) (decide (b.toNat / 2 ^ 0 % 2 = 1)) = b := by
+  intro b
+  have hdec : ∀ y : Nat, (decide (y % 2 = 1) : Bool).toNat = y % 2 := by
+    intro y
+    rcases Nat.mod_two_eq_zero_or_one y with h | h <;> simp [h]
+  have hb : b.toNat < 256 := UInt8.toNat_lt_size b
+  unfold bitsToByte
+  have hX : 128 * (decide (b.toNat / 2 ^ 7 % 2 = 1) : Bool).toNat
+      + 64 * (decide (b.toNat / 2 ^ 6 % 2 = 1) : Bool).toNat
+      + 32 * (decide (b.toNat / 2 ^ 5 % 2 = 1) : Bool).toNat
+      + 16 * (decide (b.toNat / 2 ^ 4 % 2 = 1) : Bool).toNat
+      + 8 * (decide (b.toNat / 2 ^ 3 % 2 = 1) : Bool).toNat
+      + 4 * (decide (b.toNat / 2 ^ 2 % 2 = 1) : Bool).toNat
+      + 2 * (decide (b.toNat / 2 ^ 1 % 2 = 1) : Bool).toNat
+      + (decide (b.toNat / 2 ^ 0 % 2 = 1) : Bool).toNat = b.toNat := by
+    simp only [hdec]
+    omega
+  rw [hX, UInt8.ofNat_toNat]
+
+theorem bitsToByteList_byteToBits (b : UInt8) (X : BitStream) :
+    bitsToByteList (byteToBits b ++ X) = b :: bitsToByteList X := by
+  rw [show bitsToByteList (byteToBits b ++ X)
+      = bitsToByte (decide (b.toNat / 2 ^ 7 % 2 = 1)) (decide (b.toNat / 2 ^ 6 % 2 = 1))
+          (decide (b.toNat / 2 ^ 5 % 2 = 1)) (decide (b.toNat / 2 ^ 4 % 2 = 1))
+          (decide (b.toNat / 2 ^ 3 % 2 = 1)) (decide (b.toNat / 2 ^ 2 % 2 = 1))
+          (decide (b.toNat / 2 ^ 1 % 2 = 1)) (decide (b.toNat / 2 ^ 0 % 2 = 1))
+        :: bitsToByteList X from rfl,
+    head8 b]
+
+/-- Packing inverts expansion. -/
+theorem bitsToByteList_byteListToBits :
+    ∀ l : List UInt8, bitsToByteList (byteListToBits l) = l := by
+  intro l
+  induction l with
+  | nil => rfl
+  | cons b t ih =>
+    rw [byteListToBits_cons, bitsToByteList_byteToBits, ih]
+
 end Flac.Bits.BitReader
