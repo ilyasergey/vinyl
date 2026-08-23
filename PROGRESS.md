@@ -647,3 +647,171 @@ best available in pure Lean. Three levers remain, in order of value:
 **Next:** M6b item 1 above (certificate removal) is the only remaining
 change that improves encode without trading compression or adding trusted
 code.
+
+---
+
+## 2026-08-24 — Session 8: M6 fourth pass — exact float search, allocation-free bit writer
+
+**Attempted:** close the remaining decode and encode gaps against libFLAC
+1.5.0, target 1.1× on both, without giving up the compression win over
+`flac -8` (39.580% vs 39.784% on the 37-file corpus) and with the ratchet
+green throughout.
+
+**Landed** (32 MB mono probe, 4096-sample blocks; every stage kept the
+corpus ratio at 39.580% and the output byte-identical to the verified
+encoder's):
+
+| stage | encode | decode | encode gap (`-8`) | decode gap |
+|---|---|---|---|---|
+| session 7 end | 26.7 MB/s | 108.8 MB/s | 3.53× | 1.85× |
+| `a08d9d5` float candidate searches | 33.3 MB/s | — | 2.90× | — |
+| `c5bd00c` bit writer without tuples | 42.8 MB/s | — | 2.27× | — |
+| unboxed PCM serialization | 43.5 MB/s | 117.2 MB/s | 2.24× | 1.76× |
+| parallel sync-code scan | 44.6 MB/s | 126.5 MB/s | 2.18× | 1.65× |
+| `33bb86b` fused fixed-order search | 47.1 MB/s | 127.5 MB/s | **2.07×** | **1.59×** |
+
+Five-run corpus medians moved 24.5 → 38.8 MB/s encode (gap 3.06× → 1.94×)
+and 79.2 → 82.7 MB/s decode (gap 1.58× → 1.53×); the corpus files are 1 MB
+each, so process startup damps both the absolute figures and the deltas.
+
+1. **Exact float arithmetic in the candidate searches**
+   (`Flac/Native/Encode.lean`). A search only *chooses* a subframe; the
+   bytes always come from the exact `Int` path. Every value a search
+   computes is an integer well inside 2^53 (16-bit samples < 2^17,
+   quantized coefficients < 2^11, order ≤ 8 ⇒ prediction sums < 2^32,
+   residuals < 2^19, 4096-sample partition sums < 2^32), so doubles
+   represent them exactly and the subframe chosen is bit-identical, at one
+   hardware `fmul`/`fadd` per tap instead of `lean_int_mul`/`lean_int_add`
+   on a boxed `Array Int`. `Flac/Native/Heuristics.lean` keeps its `Int`
+   list search for the verified encoder, and a new differential test
+   (`fastMirrorTests` in `FlacTest/Cli.lean`) pins the two to
+   byte-identical output on LPC/FIXED/noise/wasted-bit/constant/stereo
+   material. No theorem touched — `Flac/Native/Encode.lean` carries no
+   proof obligation, and `Flac/Spec/Heuristics.lean` never mentions the
+   search internals.
+2. **The bit writer stopped allocating per bit push.**
+   `BitWriter.flushGo` returned `ByteArray × UInt64 × Nat` — three heap
+   allocations per call (two `Prod` cells plus a boxed `UInt64`, `Prod`'s
+   fields being polymorphic) — and `push` runs twice per residual sample.
+   The profile attributed ~25% of *all* encode work to
+   `mi_malloc_small`/`mi_free`/`lean_dec_ref_cold` beneath it, more than
+   the LPC search. `flushBytes` now returns the buffer alone: the new
+   pending count is `n % 8`, and `acc` needs no masking because `toUInt8`
+   truncates and no bit at or above position `n` is read back. The
+   residual loop (`pushRiceRange`) threads `buf`/`acc`/`n` as three
+   parameters, one `BitWriter` per partition rather than two per sample.
+   This was the single largest win of the session.
+3. **PCM serialization through the `UInt64` lane**
+   (`Stream.pcmBytesRange`, with mono/stereo specializations). `Int →
+   Int64 → UInt64` plus unboxed shifts instead of `Int` addition,
+   `Int.toNat` and `Nat` masking: 2.5× on a 4M-sample block
+   (266 → 666 MB/s). `pcmBytesA_eq` cancels only the array/list
+   conversion, so this arithmetic carries no proof obligation. Out-of-range
+   samples now wrap in two's complement instead of clamping at zero, which
+   is what RFC 9639 §8.2 asks for and what `Flac.pcm16Row` already did.
+4. **The sync-code scan runs in parallel windows** (`Decode.syncCandidates`)
+   — it was the decoder's largest serial phase, one pass over the whole
+   compressed stream on the driver thread before any frame worker could
+   start. It is a pure guess validated by `Step.ok` at every use, so it
+   carries no proof obligation; ascending windows concatenate ascending
+   (all `findStep` needs), and a sync code straddling a boundary is still
+   found by the window owning its first byte.
+5. **The fixed-order search is one fused pass** (`fixedPartitionSums`).
+   The order-`ord` residual is the `ord`-th finite difference, so one
+   traversal carrying the ladder yields all five streams: one array read
+   per sample instead of five, no block-sized difference array at any
+   order.
+6. **`riceParam` carries `n · 2^k` and doubles it** instead of a `p2`
+   lookup plus a multiply per step (it is called 127 times per candidate).
+7. **`lpcMaxOrder`/`lpcCandidates` factored into one place** that both the
+   verified chooser and the fast encoder read — which is what keeps them
+   byte-identical when either is tuned — with the measured tradeoff curve
+   in the docstring.
+
+**Two shapes worth remembering** (both cost real time before they were
+found):
+
+- A `Float`-typed `let mut` carried across a `for` loop is **boxed once
+  per iteration**. An order-8 residual fold went 84 ms → 255 ms when its
+  accumulators moved from tail-recursion parameters into ten mutable
+  locals. Every float accumulator in `Flac/Native/Encode.lean` is
+  therefore a tail-recursion parameter, and the `for` loops carry only
+  heap objects and `Nat` counters.
+- `Prod` fields are polymorphic, so a returned tuple boxes any scalar in
+  it. Returning `ByteArray × UInt64 × Nat` from a per-sample helper is
+  three allocations; unpacking the state into parameters is zero.
+
+**Measured and discarded (working tree restored):**
+
+- **Unrolling the float dot product.** Four accumulator chains with
+  explicit `xs[n-1-j]` loads: 155 ms vs 83 ms — the per-tap `Nat` index
+  arithmetic costs more than the shortened dependency chain saves. A
+  sliding register window (one load per sample, nine mutable locals):
+  255 ms, the boxing effect above. Two accumulator chains via
+  pattern-matching two taps at a time: neutral to 2% *slower*
+  (47.1 → 46.0 MB/s). Disassembly explains why there is nothing left: the
+  inner loop is `ldr`/`ldr`/`fmul`/`fadd` plus loop control, with
+  `Float.floor` inlined to a single `frintm` and `foldF` branchless
+  (`fcmp`/`fcsel`).
+- **Pruning the LPC candidate set.** Full curve now recorded in
+  `Heuristics.lpcCandidates`. Corpus ratio / probe encode speed:
+  `[1,2,4,6,8]` max 8 = 39.580% / 1.00×; `[2,4,8]` 39.634% / 1.06×;
+  `[4,8]` 39.876% / 1.11×; `[8]` 40.072% / 1.16×; estimate-only (libFLAC's
+  own rule) 40.504% / 1.22×. At max order 12: `[2,4,12]` 39.571% / 1.00×,
+  `[2,12]` 39.701% / 1.04×, `[1,2,4,8,12]` 39.450% / 0.94×. Pruning buys
+  little speed for real ratio, and the two sets that beat the current one
+  on ratio both cost speed — so the set is unchanged.
+- **Serial vs parallel PCM serialization.** Now that serialization is
+  2.5× faster, the task fan-out's `lean_mark_mt` of the decoded sample
+  arrays costs about what the parallelism saves: 128 MB probe, serial
+  1.00 s wall / 3.93 CPU-s versus parallel 0.99 s / 4.11 CPU-s. Kept
+  parallel (better wall time), but it is no longer load-bearing.
+- **`LEAN_NUM_THREADS`** at 8/12/16: no effect on either direction.
+
+**Profiling notes (macOS `sample`, 128 MB probes).** Encode, of 4.09
+CPU-seconds for the 32 MB probe: runtime certificate 1.12 s (27%, measured
+directly as `--decode-pcm16` on the encoder's own output), LPC candidate
+search ~27% (`lpcDotFf` 15%, `acorrGo` 5%, `lpcFoldRange` 3%, `riceParam`
+2%), emission ~11%, fixed search ~5%, `lean_mark_mt` 5%. Decode, 1.02
+CPU-seconds against 0.25 s wall (≈4× parallel on 4 P + 4 E cores, ~40% of
+the critical path serial): Rice reader ~22% (`readRiceSeqScan` 14%,
+`accBytes` 6%, `scanOne` 2%), `lean_byte_array_push` +
+`lean_array_push` ~26%, `lean_mark_mt` ~14%, LPC/fixed restoration ~11%,
+serialization arithmetic ~9%, `crc16` 3%.
+
+**Honest assessment of the remaining gap.** Neither direction is at 1.1×
+and neither will get there by tuning; what is left is two structural items
+and a hard floor.
+
+1. **Retire the runtime certificate — encode 2.07× → ≈1.6×, trading
+   nothing.** Measured, not estimated: the certificate is 1.12 of encode's
+   4.09 CPU-seconds. This is milestone M6b as designed. The verified
+   emitter already exists and is proven (`Flac.Emit.emitFast_eq_encode`);
+   what blocks shipping it is that the heuristics it calls still run on
+   lists, so array-izing the searches *with equality proofs* is the actual
+   work — the array-side validity/sanitization bridge.
+2. **A windowed bit reader — decode ~22% of work.** libFLAC-style cached
+   word plus a leading-zero count, replacing the per-bit `bitFast` walk in
+   `scanOne` and the per-sample `Nat` `accBytes` chain in
+   `extractBitsFast`. Needs a simulation proof against `readRiceSeqScan`
+   with an invariant relating `(word, avail, bytePos)` to `pos` — the
+   largest single proof obligation left on the perf path, and the reason
+   it was not attempted this session alongside the rest.
+3. **Below that is a floor, not a backlog.** Two `ByteArray`/`Array`
+   pushes per sample (~26% of decode) is what the API costs; `lean_mark_mt`
+   (~14% of decode) is what sharing `Array Int` across threads costs and
+   would only go away if the decoder produced bytes rather than samples,
+   which the CLI/capstone pinning deliberately prevents; and the proven
+   LPC/fixed restoration must stay `Int` multiply–accumulate against
+   libFLAC's `int32` SIMD. `Array Int64` is *worse* than `Array Int` in
+   Lean (boxed per element), and `FloatArray` — now used everywhere it is
+   exact — is the only other unboxed numeric array Lean has. Per-operation
+   cost in the proven decode path is therefore at its pure-Lean minimum.
+
+**Blocked:** nothing.
+
+**Next:** M6b item 1 above — array-izing the heuristics with equality
+proofs so the statically verified emitter can ship and the runtime
+certificate can be retired. That is the only remaining change that
+improves encode without trading compression, adding trusted code, or
+taking on a bit-level simulation proof.

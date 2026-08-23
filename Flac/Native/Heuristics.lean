@@ -59,11 +59,12 @@ and partitioning are then costed *exactly*. Both the verified chooser
 (`lpcSearch`) and the fast encoder (`Flac.Encode.lpcChoiceF`) read them
 from here, which is what keeps the two byte-identical.
 
-libFLAC's `-8` costs exactly **one** order per apodization window (its
-`do_exhaustive_model_search` is false at every level) and buys its ratio
-with several windows instead. Vinyl does the opposite — one Welch window,
-several orders — so the candidate list is where its
-compression-per-unit-work is decided. -/
+libFLAC's `-8` costs exactly **one** order per apodization window — its
+`do_exhaustive_model_search` is false at every level (`compression_levels_`
+in `src/libFLAC/stream_encoder.c`), so `process_subframe_` evaluates only
+`guess_lpc_order` — and buys its ratio with several windows instead. Vinyl
+does the opposite: one Welch window, several orders. The candidate list is
+therefore where Vinyl's compression-per-unit-work is decided. -/
 
 /-- Highest LPC order considered (= autocorrelation lags). -/
 def lpcMaxOrder : Nat := 8

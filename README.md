@@ -123,23 +123,39 @@ the certified heuristics choose well. Speed is therefore measured against
 
 | | Vinyl | libFLAC | gap |
 |---|---|---|---|
-| decode | 79.2 MB/s | 125.1 MB/s | **1.58×** |
-| encode | 24.5 MB/s | 75.1 MB/s (`flac -8`) | **3.06×** |
-| encode vs `flac -5` | 24.5 MB/s | 108.7 MB/s | 4.43× |
+| decode | 82.7 MB/s | 126.2 MB/s | **1.53×** |
+| encode | 38.8 MB/s | 75.1 MB/s (`flac -8`) | **1.94×** |
+| encode vs `flac -5` | 38.8 MB/s | 109.9 MB/s | 2.83× |
 
-Decoding is within about 1.6× of libFLAC because frames decode in
+These 1 MB files charge process startup to every measurement; on a 32 MB
+probe, where it is negligible, the gaps are 1.6× decode and 2.1× encode.
+
+Decoding is within about 1.5× of libFLAC because frames decode in
 parallel — and *provably* so: a worker decoding the frame at a given bit
 position runs literally the call the serial loop would run there, and
 returns the frame reader's own equation as a proof field, so nothing
 trusts either the thread or the sync-code scan that guessed the position
-(`readFramesFast_eq`). Encoding stays further behind: about three
-quarters of it is the parallel frame workers, and roughly a third of that
-is exactly costing five or six candidate LPC orders in Lean `Int`
-arithmetic — a *more expensive search* than libFLAC runs at any preset,
-not the same search more slowly. Every decoder fast path is proven equal
-to its bit-level specification; the frame-parallel encoder is certified
-per call by the verified decoder. See [`bench/README.md`](bench/README.md)
-for the methodology, the per-stage history, and regeneration instructions.
+(`readFramesFast_eq`).
+
+Encoding stays further behind for two reasons, both structural rather
+than a matter of tuning. First, roughly a quarter of encode is the
+**runtime certificate**: the fast encoder is unverified by design, so
+every call decodes its own output with the verified decoder and compares,
+which is what makes `decodePcm16_encodePcm16Fast` hypothesis-free.
+Second, the candidate search costs five or six LPC orders exactly, where
+libFLAC's `-8` costs exactly *one* order per apodization window — a more
+expensive search than libFLAC runs at any preset, and the reason the
+ratio comes out ahead. Both searches now run in exact `Float` arithmetic
+over unboxed `FloatArray`: every value they compute is an integer well
+inside 2^53, so doubles represent them exactly and the subframe chosen is
+bit-identical, at one hardware `fmul`/`fadd` per tap instead of
+`lean_int_mul`/`lean_int_add` on boxed `Array Int` (pinned by a
+differential test against the verified encoder).
+
+Every decoder fast path is proven equal to its bit-level specification;
+the frame-parallel encoder is certified per call by the verified decoder.
+See [`bench/README.md`](bench/README.md) for the methodology, the
+per-stage history, and regeneration instructions.
 
 Compression, per file (sorted; lower is better) and aggregated per
 content category:
