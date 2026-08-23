@@ -57,6 +57,40 @@ vectors).
   Rationale: keeps every proof by clean structural induction; performance is
   post-capstone territory (PLAN.md §7, §8/M6).
 
-**Blocked:** nothing yet.
+- **M2 complete.** Fixed predictors as iterated finite differences
+  (`Flac/Native/Fixed.lean`) with the L3-fixed keystone
+  `Fixed.restore_residual`. Subframes (CONSTANT/VERBATIM/FIXED, RFC 9639
+  §9.2) with `Subframe.read_write`. Frames (mono, fixed-blocksize
+  numbering) with CRC-8/CRC-16 recomputed by the decoder over consumed
+  bits via the `Bits.withConsumed` combinator — CRC checks discharge
+  definitionally in `Frame.read_write`. Stream layer (STREAMINFO,
+  metadata skipping, fuel-bounded frame loop) with the M2 keystone
+  **`Stream.decodeReference_encode`**: kernel-checked decode∘encode = id
+  for mono, bps 1–32, block size 16–65535, quantified over every valid
+  subframe heuristic.
+- **M3 started.** `Heuristics.defaultChooser` (constant detection,
+  fixed-order 0–4 search by exact Rice bit cost, mean-based Rice
+  parameter, verbatim fallback). `fixedCfg` clamps order/parameter so
+  `defaultChooser_valid` never reasons about the search. Corollary
+  **`Stream.decodeReference_encode_default`** — the keystone with no
+  chooser hypothesis.
+- **Conformance (early Rigs 1–2 smoke, `conformance/smoke.sh`):** all
+  emitted streams pass `flac -t` (CRCs + STREAMINFO MD5 verified by
+  libFLAC 1.5.0) and `flac -d` output is byte-identical; a libFLAC
+  `-l 0` stream decodes byte-identically with `decodeReference`.
+  Wasted-bits streams are correctly rejected until M4 (that was the one
+  gap found by differential testing — libFLAC emits the wasted-bits flag
+  whenever a block's samples share low zero bits).
+- **Bench (`bench/run.sh`, cactus plot in README):** overall ratio 47.1%
+  of raw vs flac -0's 43.7% / -8's 37.7%; beats -0 on tonal/trivial
+  content, loses where LPC matters. Speed 0.42 MB/s vs ~14 (List-based
+  bit model; M6 territory).
+- 63 unit checks green. Project renamed **Vinyl** mid-session (package +
+  docs; the on-disk folder is still `soundproof`).
 
-**Next:** M1 (zigzag/Rice/escape + partition certificates).
+**Blocked:** nothing.
+
+**Next (M3 continuation):** LPC over ℤ (`Native/Lpc.lean` +
+`restoreLpc_residualLpc` — note PLAN.md §5.2's arithmetic-shift bridging
+lemmas); Levinson–Durbin + windowing in Heuristics; then M4 (stereo,
+wasted bits, multichannel frames, variable blocksize numbering).

@@ -15,3 +15,4 @@ lake-manifest.json.lock
 # Bench / conformance scratch outputs (corpora are vendored explicitly)
 bench/out/
 conformance/out/
+bench/corpus/

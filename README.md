@@ -22,21 +22,51 @@ libFLAC/ffmpeg for interoperability.
 
 ## Status
 
-Early days — milestone **M0 of 7** is complete (see `PLAN.md §8` for the
-roadmap and `PROGRESS.md` for the session log):
+Milestones M0–M2 are complete, M3 is underway (see `PLAN.md §8` for the
+roadmap and `PROGRESS.md` for the session log). The first end-to-end
+theorem is in: for mono streams (any bit depth 1–32, any block size
+16–65535, any valid heuristic) the kernel certifies
+
+```lean
+theorem Flac.Stream.decodeReference_encode_default ... :
+    Stream.decodeReference (Stream.encode ⟨blockSize, sr, b, defaultChooser b⟩ pcm)
+      = some pcm
+```
+
+and the emitted streams pass `flac -t` (CRCs + MD5) and decode
+byte-identically with libFLAC (`conformance/smoke.sh`).
 
 - [x] **M0** — bit-level I/O with round-trip proofs, CRC-8/CRC-16,
       extended-UTF-8 coded numbers with round-trip proof, pure-Lean MD5
       (RFC 1321 suite green)
-- [ ] **M1** — Rice/zigzag/escape coding + partition proofs
-- [ ] **M2** — CONSTANT/VERBATIM/FIXED subframes; first `decode ∘ encode`
-      theorem on a restricted profile
-- [ ] **M3** — LPC + its restore proof; first heuristics
+- [x] **M1** — Rice/zigzag/escape coding + partitioned-residual proofs
+      with divisibility certificates
+- [x] **M2** — CONSTANT/VERBATIM/FIXED subframes, CRC-verified frames,
+      stream layer; `decodeReference ∘ encode = id` on the mono profile;
+      first libFLAC interop (both directions)
+- [~] **M3** — certified default heuristic (fixed-order search + Rice
+      estimate) done; LPC + its restore proof next
 - [ ] **M4** — stereo modes, wasted bits, frames/stream; **reference
       capstone** over the full option space
 - [ ] **M5** — production decoder + accept-set transfer; **shipped capstone**
 - [ ] **M6** — performance work under the ratchet
 - [ ] **M7** — (stretch) two-sided verification against RFC 9639
+
+## Benchmarks
+
+Cactus plots (per-encoder sorted curves, SAT-solver style) on the
+synthetic mono 16-bit corpus of `bench/gen_corpus.py`, against libFLAC
+1.5.0 — regenerate with `./bench/run.sh`:
+
+![Compression and speed vs libFLAC](bench/cactus.png)
+
+Honest reading at M3: overall ratio **47.1%** of raw vs libFLAC's 43.7%
+(`-0`) and 37.7% (`-8`) — Vinyl already beats `flac -0` on half the corpus
+(tonal and trivial content) and loses where LPC matters (sweeps, sawtooth),
+which is exactly the next milestone. Encode speed is ~0.4 MB/s vs libFLAC's
+~14 MB/s: the encoder still runs on the proof-oriented bit model;
+performance work is deliberately deferred to M6, *after* the capstone makes
+optimization safe (PLAN.md §7).
 
 ## Building
 
