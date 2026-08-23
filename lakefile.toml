@@ -1,0 +1,13 @@
+name = "soundproof"
+version = "0.1.0"
+defaultTargets = ["Flac", "FlacTest", "flactest"]
+
+[[lean_lib]]
+name = "Flac"
+
+[[lean_lib]]
+name = "FlacTest"
+
+[[lean_exe]]
+name = "flactest"
+root = "FlacTest.Main"

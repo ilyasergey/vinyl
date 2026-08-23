@@ -1,0 +1,17 @@
+# Lake build artifacts
+/.lake/
+lake-manifest.json.lock
+*.olean
+*.ilean
+*.c
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+*.swp
+
+# Bench / conformance scratch outputs (corpora are vendored explicitly)
+bench/out/
+conformance/out/
