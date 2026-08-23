@@ -1,5 +1,6 @@
 import Flac.Native.Emit
 import Flac.Spec.Bits
+import Flac.Spec.Crc
 import Flac.Spec.Fixed
 import Flac.Spec.Lpc
 import Flac.Spec.Stereo
@@ -965,17 +966,17 @@ theorem pushFrame_spec (b : Nat) (strat : Bool) (num : Nat)
   let c16 := (Crc.crc16 (bitsToBytes body)).toNat
   have hframeEmit := emits_comp hbodyEmit (emits_push 16 c16)
 
-  have hc8 : (Crc.crc8 (w1.buf.extract w.buf.size w1.buf.size)).toNat = c8 := by
-    rw [hslice1]
-  have hc16 : (Crc.crc16 (w4.buf.extract w.buf.size w4.buf.size)).toNat = c16 := by
-    rw [hslice4]
+  have hc8 : (Crc.crc8Range w1.buf w.buf.size w1.buf.size).toNat = c8 := by
+    rw [Crc.crc8Range_eq_extract, hslice1]
+  have hc16 : (Crc.crc16Range w4.buf w.buf.size w4.buf.size).toNat = c16 := by
+    rw [Crc.crc16Range_eq_extract, hslice4]
 
   let a1 := W.pushHeaderCore b strat num bs code w
-  let a2 := a1.push 8 (Crc.crc8 (a1.buf.extract w.buf.size a1.buf.size)).toNat
+  let a2 := a1.push 8 (Crc.crc8Range a1.buf w.buf.size a1.buf.size).toNat
   let a3 := W.pushPlan (W.planA b asg chs) a2
   let a4 := a3.push ((8 - a3.n % 8) % 8) 0
   have hnative : W.pushFrame b strat num asg chs w =
-      a4.push 16 (Crc.crc16 (a4.buf.extract w.buf.size a4.buf.size)).toNat := by
+      a4.push 16 (Crc.crc16Range a4.buf w.buf.size a4.buf.size).toNat := by
     rfl
   have ha1 : a1 = w1 := rfl
   have ha2 : a2 = w1.push 8 c8 := by
@@ -987,13 +988,13 @@ theorem pushFrame_spec (b : Nat) (strat : Bool) (num : Nat)
   have ha4 : a4 = w4 := by
     unfold a4 w4
     rw [ha3, hpad]
-  have hc16a : (Crc.crc16 (a4.buf.extract w.buf.size a4.buf.size)).toNat = c16 := by
+  have hc16a : (Crc.crc16Range a4.buf w.buf.size a4.buf.size).toNat = c16 := by
     rw [ha4]
     exact hc16
   have hout : W.pushFrame b strat num asg chs w = w4.push 16 c16 := by
     calc
       W.pushFrame b strat num asg chs w =
-          a4.push 16 (Crc.crc16 (a4.buf.extract w.buf.size a4.buf.size)).toNat := hnative
+          a4.push 16 (Crc.crc16Range a4.buf w.buf.size a4.buf.size).toNat := hnative
       _ = a4.push 16 c16 := congrArg (fun v => a4.push 16 v) hc16a
       _ = w4.push 16 c16 := congrArg (fun x => x.push 16 c16) ha4
 

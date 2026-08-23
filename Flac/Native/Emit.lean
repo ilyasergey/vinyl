@@ -231,10 +231,10 @@ def pushFrame (b : Nat) (strat : Bool) (num : Nat) (asg : Frame.ChannelAsg)
   let start := w.buf.size
   let w1 := pushHeaderCore b strat num (chs.headD #[]).size
     (asg.code chs.length) w
-  let w2 := w1.push 8 (Crc.crc8 (w1.buf.extract start w1.buf.size)).toNat
+  let w2 := w1.push 8 (Crc.crc8Range w1.buf start w1.buf.size).toNat
   let w3 := pushPlan (planA b asg chs) w2
   let w4 := w3.push ((8 - w3.n % 8) % 8) 0
-  w4.push 16 (Crc.crc16 (w4.buf.extract start w4.buf.size)).toNat
+  w4.push 16 (Crc.crc16Range w4.buf start w4.buf.size).toNat
 
 /-! ## Streams -/
 

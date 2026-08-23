@@ -422,11 +422,11 @@ def pushFrame (bw : BitWriter) (b : Nat) (strat : Bool) (num : Nat)
   w := ((w.push 4 0).push 4 chCode).push 3 (Frame.bpsCode b)
   w := (w.push 1 0).pushUtf8 num
   w := w.push 16 (bs - 1)
-  w := w.push 8 (Crc.crc8 (w.buf.extract start w.buf.size)).toNat
+  w := w.push 8 (Crc.crc8Range w.buf start w.buf.size).toNat
   for p in plan do
     w := pushSubframe w p.1 p.2
   w := w.align
-  return w.push 16 (Crc.crc16 (w.buf.extract start w.buf.size)).toNat
+  return w.push 16 (Crc.crc16Range w.buf start w.buf.size).toNat
 
 /-- One frame into its own buffer (frames are byte-aligned and
     self-contained, so they can be encoded independently). -/

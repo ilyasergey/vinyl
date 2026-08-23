@@ -1,5 +1,6 @@
 import Flac.Native.Codec
 import Flac.Native.Decode
+import Flac.Spec.Crc
 import Flac.Spec.Reader
 import Flac.Spec.Heuristics
 
@@ -1320,6 +1321,20 @@ theorem padLen_add (n : Nat) : (n + padLen n) % 8 = 0 := by
   unfold padLen
   omega
 
+/-- The allocation-free CRC-8 over a cursor slice equals CRC-8 of the
+    extracted slice. -/
+theorem crc8Slice_eq (br0 br1 : BitReader) :
+    crc8Slice br0 br1 = Crc.crc8 (sliceBytes br0 br1) := by
+  rw [crc8Slice, sliceBytes]
+  exact Crc.crc8Range_eq_extract _ _ _
+
+/-- The allocation-free CRC-16 over a cursor slice equals CRC-16 of the
+    extracted slice. -/
+theorem crc16Slice_eq (br0 br1 : BitReader) :
+    crc16Slice br0 br1 = Crc.crc16 (sliceBytes br0 br1) := by
+  rw [crc16Slice, sliceBytes]
+  exact Crc.crc16Range_eq_extract _ _ _
+
 /-- At byte-aligned cursor positions, the production byte slice equals the
     packed model take. -/
 theorem sliceBytes_eq (br0 br1 : BitReader) (_hd : br1.data = br0.data)
@@ -1372,7 +1387,7 @@ theorem readHeader_sim (b0 : Nat) (br : BitReader)
     have hlen : (toStream br).length - (toStream p.2).length = p.2.pos - br.pos :=
       length_sub_toStream d1 (by omega) (b1 hwf)
     rw [hlen, sliceBytes_eq br p.2 d1 (by omega) h8 (by omega),
-      readBits_sim 8 p.2]
+      readBits_sim 8 p.2, crc8Slice_eq]
     cases p.2.readBits 8 with
     | none => rfl
     | some q =>
@@ -1560,7 +1575,7 @@ theorem readFrame_sim (b0 : Nat) (br : BitReader)
     have hlen : (toStream br).length - (toStream p.2).length = p.2.pos - br.pos :=
       length_sub_toStream d1 (by omega) b1
     rw [hlen, sliceBytes_eq br p.2 d1 (by omega) h8 (by omega),
-      readBits_sim 16 p.2]
+      readBits_sim 16 p.2, crc16Slice_eq]
     cases p.2.readBits 16 with
     | none => rfl
     | some q =>

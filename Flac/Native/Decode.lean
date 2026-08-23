@@ -342,6 +342,16 @@ def readFields (b0 : Nat) (br : BitReader) : Option (Frame.Fields × BitReader) 
 def sliceBytes (br0 br1 : BitReader) : ByteArray :=
   br0.data.extract (br0.pos / 8) (br1.pos / 8)
 
+/-- CRC-8 of `sliceBytes br0 br1` without allocating the slice
+    (`Flac.Decode.crc8Slice_eq`). -/
+def crc8Slice (br0 br1 : BitReader) : UInt8 :=
+  Crc.crc8Range br0.data (br0.pos / 8) (br1.pos / 8)
+
+/-- CRC-16 of `sliceBytes br0 br1` without allocating the slice
+    (`Flac.Decode.crc16Slice_eq`). -/
+def crc16Slice (br0 br1 : BitReader) : UInt16 :=
+  Crc.crc16Range br0.data (br0.pos / 8) (br1.pos / 8)
+
 def readHeader (b0 : Nat) (br0 : BitReader) : Option (Frame.Fields × BitReader) :=
   match readFields b0 br0 with
   | none => none
@@ -349,7 +359,7 @@ def readHeader (b0 : Nat) (br0 : BitReader) : Option (Frame.Fields × BitReader)
     match br1.readBits 8 with
     | none => none
     | some (c8, br2) =>
-      if c8 = (Crc.crc8 (sliceBytes br0 br1)).toNat then some (f, br2)
+      if c8 = (crc8Slice br0 br1).toNat then some (f, br2)
       else none
 
 def readSubframes (bs b : Nat) : Nat → BitReader → Option (List (Array Int) × BitReader)
@@ -410,7 +420,7 @@ def readFrame (b0 : Nat) (br0 : BitReader) : Option (List (Array Int) × BitRead
     match br1.readBits 16 with
     | none => none
     | some (c16, br2) =>
-      if c16 = (Crc.crc16 (sliceBytes br0 br1)).toNat then some (chs, br2)
+      if c16 = (crc16Slice br0 br1).toNat then some (chs, br2)
       else none
 
 /-! ## Stream -/
