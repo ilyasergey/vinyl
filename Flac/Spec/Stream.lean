@@ -57,12 +57,12 @@ theorem chunkFixed_count (n : Nat) (xs : List Int) :
 
 /-! ## Frame sequence lengths -/
 
-theorem frame_write_length_pos (b idx : Nat) (cfg : Subframe.SubframeCfg)
+theorem frame_write_length_pos (b idx : Nat) (cfg : Subframe.SubCfg)
     (xs : List Int) : 0 < (Frame.write b idx cfg xs).length := by
   simp only [Frame.write, List.length_append, length_writeBits]
   omega
 
-theorem writeFrames_length_ge (b : Nat) (chooser : List Int → Subframe.SubframeCfg) :
+theorem writeFrames_length_ge (b : Nat) (chooser : List Int → Subframe.SubCfg) :
     ∀ (blks : List (List Int)) (idx : Nat),
       blks.length ≤ (writeFrames b chooser idx blks).length := by
   intro blks
@@ -75,7 +75,7 @@ theorem writeFrames_length_ge (b : Nat) (chooser : List Int → Subframe.Subfram
     simp only [writeFrames, List.length_append, List.length_cons]
     omega
 
-theorem writeFrames_length_dvd (b : Nat) (chooser : List Int → Subframe.SubframeCfg) :
+theorem writeFrames_length_dvd (b : Nat) (chooser : List Int → Subframe.SubCfg) :
     ∀ (blks : List (List Int)) (idx : Nat),
       8 ∣ (writeFrames b chooser idx blks).length := by
   intro blks
@@ -129,7 +129,7 @@ theorem readMeta_spec (fuel : Nat) (bs sr b total md5 : Nat) (tail : BitStream)
 /-! ## Frame loop -/
 
 theorem readFrames_writeFrames (b0 b : Nat)
-    (chooser : List Int → Subframe.SubframeCfg)
+    (chooser : List Int → Subframe.SubCfg)
     (hb : Frame.bpsOfCode (Frame.bpsCode b) b0 = some b) :
     ∀ (blks : List (List Int)) (idx fuel : Nat),
       blks.length ≤ fuel →

@@ -63,10 +63,10 @@ def writeHeader (b idx bs : Nat) : BitStream :=
 
 /-- Header + subframe, padded to byte alignment: everything the CRC-16
     covers. -/
-def body (b idx : Nat) (cfg : Subframe.SubframeCfg) (xs : List Int) : BitStream :=
+def body (b idx : Nat) (cfg : Subframe.SubCfg) (xs : List Int) : BitStream :=
   alignToByte (writeHeader b idx xs.length ++ Subframe.write b cfg xs)
 
-def write (b idx : Nat) (cfg : Subframe.SubframeCfg) (xs : List Int) : BitStream :=
+def write (b idx : Nat) (cfg : Subframe.SubCfg) (xs : List Int) : BitStream :=
   body b idx cfg xs ++
     writeBits 16 (Crc.crc16 (bitsToBytes (body b idx cfg xs))).toNat
 

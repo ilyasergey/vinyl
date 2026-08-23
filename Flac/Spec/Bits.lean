@@ -112,6 +112,51 @@ theorem withConsumed_spec {α : Type} (f : BitStream → Option (α × BitStream
   rw [h]
   simp only [take_sub_length]
 
+/-! ## Arithmetic shift and wasted bits -/
+
+@[simp] theorem sar_zero (x : Int) : sar x 0 = x := by
+  unfold sar
+  match x with
+  | .ofNat m => simp [Nat.shiftRight_zero]
+  | .negSucc m => simp [Nat.shiftRight_zero]
+
+/-- `2 · (x >>ₐ 1) + x % 2 = x`: the parity decomposition used by
+    mid/side stereo (PLAN.md §5.3). -/
+theorem two_mul_sar_one (x : Int) :
+    2 * sar x 1 + x % 2 = x := by
+  unfold sar
+  match x with
+  | .ofNat m =>
+    show 2 * ((m >>> 1 : Nat) : Int) + ((m : Int)) % 2 = (m : Int)
+    rw [Nat.shiftRight_eq_div_pow, Nat.pow_one]
+    omega
+  | .negSucc m =>
+    show 2 * (Int.negSucc (m >>> 1)) + (Int.negSucc m) % 2 = Int.negSucc m
+    rw [Nat.shiftRight_eq_div_pow, Nat.pow_one, Int.negSucc_eq]
+    show 2 * (-(((m / 2 : Nat) : Int) + 1)) + (-((m : Int) + 1)) % 2 = -((m : Int) + 1)
+    omega
+
+@[simp] theorem map_shiftDown_zero (xs : List Int) :
+    xs.map (shiftDown 0) = xs := by
+  induction xs with
+  | nil => rfl
+  | cons x t ih => simp [shiftDown, ih]
+
+/-- **Wasted-bits round-trip** (`wastedRestore_wastedShift` in PLAN.md §4):
+    scaling back up after an exact scale-down is the identity. -/
+theorem map_shiftUp_shiftDown (w : Nat) (xs : List Int)
+    (h : ∀ x ∈ xs, ((2 ^ w : Nat) : Int) ∣ x) :
+    (xs.map (shiftDown w)).map (shiftUp w) = xs := by
+  induction xs with
+  | nil => rfl
+  | cons x t ih =>
+    have hx : ((2 ^ w : Nat) : Int) ∣ x := h x (List.mem_cons_self ..)
+    simp only [List.map_cons]
+    rw [ih (fun y hy => h y (List.mem_cons_of_mem _ hy))]
+    show shiftUp w (shiftDown w x) :: t = x :: t
+    unfold shiftUp shiftDown
+    rw [Int.ediv_mul_cancel hx]
+
 /-! ## Signed integers -/
 
 /-- Two's-complement round-trip for `n`-bit signed integers. -/

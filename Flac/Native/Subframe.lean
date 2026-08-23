@@ -6,8 +6,9 @@ import Flac.Native.Lpc
 /-!
 # Subframes (RFC 9639 §9.2): CONSTANT, VERBATIM, FIXED
 
-All four subframe types; no wasted bits yet (the encoder never emits the
-flag; the decoder rejects it until M4).
+All four subframe types, with wasted-bits support (RFC 9639 §9.2.2): a
+subframe whose samples all share `w` low zero bits stores them scaled down
+at bit depth `b - w`, with `w` coded in the header (flag + unary `w-1`).
 
 The per-block choice of subframe type (and residual configuration) is a
 heuristic *input* (`SubframeCfg`), carrying a validity certificate
@@ -55,8 +56,21 @@ def SubframeCfg.Valid (cfg : SubframeCfg) (b : Nat) (xs : List Int) : Prop :=
       shift ≤ 15 ∧
       rcfg.Valid xs.length cs.length (Lpc.residual cs shift xs)
 
-def write (b : Nat) (cfg : SubframeCfg) (xs : List Int) : BitStream :=
-  writeBits 1 0 ++ writeBits 6 cfg.typeCode ++ writeBits 1 0 ++
+/-- A subframe configuration: wasted-bits count plus the inner choice.
+    The inner configuration describes the *scaled-down* samples. -/
+structure SubCfg where
+  wasted : Nat
+  inner : SubframeCfg
+
+/-- Validity: `w` in range, all samples divisible by `2^w`, and the inner
+    configuration valid for the scaled samples at the reduced depth —
+    the width bookkeeping of PLAN.md §5.6. -/
+def SubCfg.Valid (sc : SubCfg) (b : Nat) (xs : List Int) : Prop :=
+  sc.wasted < b ∧
+  (∀ x ∈ xs, ((2 ^ sc.wasted : Nat) : Int) ∣ x) ∧
+  sc.inner.Valid (b - sc.wasted) (xs.map (shiftDown sc.wasted))
+
+def writeContent (b : Nat) (cfg : SubframeCfg) (xs : List Int) : BitStream :=
   match cfg with
   | .constant => writeSInt b (xs.headD 0)
   | .verbatim => writeSIntSeq b xs
@@ -69,6 +83,51 @@ def write (b : Nat) (cfg : SubframeCfg) (xs : List Int) : BitStream :=
       writeSIntSeq prec cs ++
       Rice.writeResidual xs.length cs.length rcfg (Lpc.residual cs shift xs)
 
+def write (b : Nat) (sc : SubCfg) (xs : List Int) : BitStream :=
+  writeBits 1 0 ++ writeBits 6 sc.inner.typeCode ++
+  (if sc.wasted = 0 then writeBits 1 0
+   else writeBits 1 1 ++ writeUnary (sc.wasted - 1)) ++
+  writeContent (b - sc.wasted) sc.inner (xs.map (shiftDown sc.wasted))
+
+/-- Read the content of a subframe of type `ty`: `bs` samples at
+    (wasted-reduced) bit depth `b`. -/
+def readContent (bs b ty : Nat) (s : BitStream) : Option (List Int × BitStream) :=
+  if ty = 0 then
+              match readSInt b s with
+              | none => none
+              | some (v, s) => some (List.replicate bs v, s)
+  else if ty = 1 then
+    readSIntSeq b bs s
+  else if 8 ≤ ty ∧ ty ≤ 12 then
+    match readSIntSeq b (ty - 8) s with
+    | none => none
+    | some (warmup, s) =>
+      match Rice.readResidual bs (ty - 8) s with
+      | none => none
+      | some (res, s) => some (Fixed.restore (ty - 8) warmup res, s)
+  else if 32 ≤ ty then                   -- ty ≤ 63 always (6-bit field)
+    match readSIntSeq b (ty - 31) s with
+    | none => none
+    | some (warmup, s) =>
+      match readBits 4 s with
+      | none => none
+      | some (pm1, s) =>
+        if pm1 = 15 then none            -- forbidden precision code
+        else
+          match readSInt 5 s with
+          | none => none
+          | some (sh, s) =>
+            if 0 ≤ sh then               -- negative shift is forbidden
+              match readSIntSeq (pm1 + 1) (ty - 31) s with
+              | none => none
+              | some (cs, s) =>
+                match Rice.readResidual bs (ty - 31) s with
+                | none => none
+                | some (res, s) =>
+                  some (Lpc.restore cs sh.toNat warmup res, s)
+            else none
+  else none                              -- reserved / invalid
+
 /-- Read one subframe of `bs` samples at bit depth `b`. -/
 def read (bs b : Nat) (s : BitStream) : Option (List Int × BitStream) :=
   match readBits 1 s with
@@ -80,44 +139,16 @@ def read (bs b : Nat) (s : BitStream) : Option (List Int × BitStream) :=
       | some (ty, s) =>
         match readBits 1 s with
         | none => none
-        | some (w, s) =>
-          if w = 0 then
-            if ty = 0 then
-              match readSInt b s with
+        | some (wf, s) =>
+          if wf = 0 then
+            readContent bs b ty s
+          else
+            match readUnary s with
+            | none => none
+            | some (k, s) =>
+              match readContent bs (b - (k + 1)) ty s with
               | none => none
-              | some (v, s) => some (List.replicate bs v, s)
-            else if ty = 1 then
-              readSIntSeq b bs s
-            else if 8 ≤ ty ∧ ty ≤ 12 then
-              match readSIntSeq b (ty - 8) s with
-              | none => none
-              | some (warmup, s) =>
-                match Rice.readResidual bs (ty - 8) s with
-                | none => none
-                | some (res, s) => some (Fixed.restore (ty - 8) warmup res, s)
-            else if 32 ≤ ty then         -- ty ≤ 63 always (6-bit field)
-              match readSIntSeq b (ty - 31) s with
-              | none => none
-              | some (warmup, s) =>
-                match readBits 4 s with
-                | none => none
-                | some (pm1, s) =>
-                  if pm1 = 15 then none  -- forbidden precision code
-                  else
-                    match readSInt 5 s with
-                    | none => none
-                    | some (sh, s) =>
-                      if 0 ≤ sh then     -- negative shift is forbidden
-                        match readSIntSeq (pm1 + 1) (ty - 31) s with
-                        | none => none
-                        | some (cs, s) =>
-                          match Rice.readResidual bs (ty - 31) s with
-                          | none => none
-                          | some (res, s) =>
-                            some (Lpc.restore cs sh.toNat warmup res, s)
-                      else none
-            else none                    -- reserved / invalid
-          else none                      -- wasted bits: M4
+              | some (ys, s) => some (ys.map (shiftUp (k + 1)), s)
     else none                            -- reserved bit must be 0
 
 end Flac.Subframe

@@ -69,7 +69,7 @@ theorem readHeader_writeHeader (b0 b idx bs : Nat) (tail : BitStream)
   rw [if_pos (by trivial)]
 
 /-- Header + subframe. -/
-theorem readHeaderSub_spec (b0 b idx : Nat) (cfg : Subframe.SubframeCfg)
+theorem readHeaderSub_spec (b0 b idx : Nat) (cfg : Subframe.SubCfg)
     (xs : List Int) (tail : BitStream)
     (hb : bpsOfCode (bpsCode b) b0 = some b) (hidx : idx < 2 ^ 36)
     (h1 : 1 ≤ xs.length) (h2 : xs.length ≤ 65536)
@@ -82,7 +82,7 @@ theorem readHeaderSub_spec (b0 b idx : Nat) (cfg : Subframe.SubframeCfg)
   exact Subframe.read_write b cfg xs hv tail
 
 /-- Header + subframe + alignment padding. -/
-theorem readBody_spec (b0 b idx : Nat) (cfg : Subframe.SubframeCfg)
+theorem readBody_spec (b0 b idx : Nat) (cfg : Subframe.SubCfg)
     (xs : List Int) (tail : BitStream)
     (hb : bpsOfCode (bpsCode b) b0 = some b) (hidx : idx < 2 ^ 36)
     (h1 : 1 ≤ xs.length) (h2 : xs.length ≤ 65536)
@@ -97,7 +97,7 @@ theorem readBody_spec (b0 b idx : Nat) (cfg : Subframe.SubframeCfg)
   rw [if_pos (by trivial)]
 
 /-- **Frame round-trip** (M2 profile: mono, fixed-blocksize numbering). -/
-theorem read_write (b0 b idx : Nat) (cfg : Subframe.SubframeCfg)
+theorem read_write (b0 b idx : Nat) (cfg : Subframe.SubCfg)
     (xs : List Int) (rest : BitStream)
     (hb : bpsOfCode (bpsCode b) b0 = some b) (hidx : idx < 2 ^ 36)
     (h1 : 1 ≤ xs.length) (h2 : xs.length ≤ 65536)

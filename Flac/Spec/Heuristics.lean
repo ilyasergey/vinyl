@@ -120,9 +120,83 @@ theorem defaultChooser_valid (b : Nat) (blk : List Int)
         · exact fixedCfg_valid b blk _ _ hne hfit
         · exact hverb
 
+/-! ## Wasted-bits detection -/
+
+/-- Scaling down an exactly-divisible sample keeps it in the reduced
+    width: the pointwise width bookkeeping of PLAN.md §5.6. -/
+theorem fitsSInt_shiftDown (b w : Nat) (hw : w < b) (x : Int)
+    (hfit : FitsSInt b x) (hdvd : ((2 ^ w : Nat) : Int) ∣ x) :
+    FitsSInt (b - w) (shiftDown w x) := by
+  obtain ⟨q, hq⟩ := hdvd
+  have hP : (0 : Int) < ((2 ^ w : Nat) : Int) := by
+    have := Nat.two_pow_pos w
+    omega
+  have hqx : shiftDown w x = q := by
+    rw [shiftDown, hq, Int.mul_ediv_cancel_left _ (by omega)]
+  rw [hqx]
+  obtain ⟨h1, h2⟩ := hfit
+  have hsplit : (2 ^ b : Nat) = 2 ^ w * 2 ^ (b - w) := by
+    rw [← Nat.pow_add]
+    congr 1
+    omega
+  rw [hsplit] at h1 h2
+  constructor
+  · have h1' : ((2 ^ w : Nat) : Int) * -((2 ^ (b - w) : Nat) : Int)
+        ≤ ((2 ^ w : Nat) : Int) * (2 * q) := by
+      calc ((2 ^ w : Nat) : Int) * -((2 ^ (b - w) : Nat) : Int)
+          = -(((2 ^ w * 2 ^ (b - w) : Nat) : Int)) := by
+            rw [Int.natCast_mul]
+            rw [Int.mul_neg]
+        _ ≤ 2 * x := h1
+        _ = ((2 ^ w : Nat) : Int) * (2 * q) := by rw [hq]; ac_rfl
+    have := Int.le_of_mul_le_mul_left h1' hP
+    omega
+  · have h2' : ((2 ^ w : Nat) : Int) * (2 * q)
+        < ((2 ^ w : Nat) : Int) * ((2 ^ (b - w) : Nat) : Int) := by
+      calc ((2 ^ w : Nat) : Int) * (2 * q)
+          = 2 * x := by rw [hq]; ac_rfl
+        _ < ((2 ^ w * 2 ^ (b - w) : Nat) : Int) := h2
+        _ = ((2 ^ w : Nat) : Int) * ((2 ^ (b - w) : Nat) : Int) := by
+            rw [Int.natCast_mul]
+    exact Int.lt_of_mul_lt_mul_left h2' (by omega)
+
+theorem wastedDetect_lt (b : Nat) (hb : 1 ≤ b) (xs : List Int) :
+    wastedDetect b xs < b := by
+  unfold wastedDetect
+  split
+  · rename_i w hfind
+    have hmem := List.mem_of_find?_eq_some hfind
+    rw [List.mem_reverse] at hmem
+    exact List.mem_range.mp hmem
+  · omega
+
+theorem wastedDetect_dvd (b : Nat) (xs : List Int) :
+    ∀ x ∈ xs, ((2 ^ wastedDetect b xs : Nat) : Int) ∣ x := by
+  intro x hx
+  unfold wastedDetect
+  split
+  · rename_i w hfind
+    have hp := List.find?_some hfind
+    have := List.all_eq_true.mp hp x hx
+    exact Int.dvd_of_emod_eq_zero (by simpa using this)
+  · simp
+
+/-- The full chooser (wasted bits + subframe search) is always valid. -/
+theorem defaultSubCfg_valid (b : Nat) (blk : List Int) (hb : 1 ≤ b)
+    (hne : 1 ≤ blk.length) (hfit : ∀ x ∈ blk, FitsSInt b x) :
+    (defaultSubCfg b blk).Valid b blk := by
+  refine ⟨wastedDetect_lt b hb blk, wastedDetect_dvd b blk, ?_⟩
+  apply defaultChooser_valid
+  · simpa using hne
+  · intro y hy
+    obtain ⟨x, hxmem, hxy⟩ := List.mem_map.mp hy
+    rw [← hxy]
+    exact fitsSInt_shiftDown b _ (wastedDetect_lt b hb blk) x (hfit x hxmem)
+      (wastedDetect_dvd b blk x hxmem)
+
 /-- **Keystone corollary with the default heuristic**: no chooser
-    hypothesis left — encode with `defaultChooser`, decode, get the input
-    back, kernel-checked. -/
+    hypothesis left — encode with `defaultSubCfg` (wasted-bit detection,
+    LPC/fixed search), decode, get the input back, kernel-checked. -/
 theorem _root_.Flac.Stream.decodeReference_encode_default
     (blockSize sampleRate b : Nat) (pcm : List Int)
     (hbs1 : 16 ≤ blockSize) (hbs2 : blockSize ≤ 65535)
@@ -130,9 +204,9 @@ theorem _root_.Flac.Stream.decodeReference_encode_default
     (htot : pcm.length < 2 ^ 36)
     (hfit : ∀ x ∈ pcm, FitsSInt b x) :
     Stream.decodeReference (Stream.encode
-      ⟨blockSize, sampleRate, b, defaultChooser b⟩ pcm) = some pcm :=
+      ⟨blockSize, sampleRate, b, defaultSubCfg b⟩ pcm) = some pcm :=
   Stream.decodeReference_encode _ pcm hbs1 hbs2 hsr hb1 hb2 htot
-    (fun ys h1 _ hmem => defaultChooser_valid b ys h1
+    (fun ys h1 _ hmem => defaultSubCfg_valid b ys hb1 h1
       (fun x hx => hfit x (hmem x hx)))
 
 end Flac.Heuristics

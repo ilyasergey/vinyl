@@ -139,7 +139,7 @@ def readMeta (fuel : Nat) (s : BitStream) : Option (Info × BitStream) :=
 
 /-! ## Frame sequences -/
 
-def writeFrames (b : Nat) (chooser : List Int → Subframe.SubframeCfg) :
+def writeFrames (b : Nat) (chooser : List Int → Subframe.SubCfg) :
     Nat → List (List Int) → BitStream
   | _, [] => []
   | idx, blk :: blks =>
@@ -168,7 +168,7 @@ structure EncoderCfg where
   blockSize : Nat
   sampleRate : Nat
   bps : Nat
-  chooser : List Int → Subframe.SubframeCfg
+  chooser : List Int → Subframe.SubCfg
 
 def writeStream (cfg : EncoderCfg) (pcm : List Int) : BitStream :=
   writeBits 32 0x664C6143 ++
@@ -195,9 +195,8 @@ def decodeReference (bytes : ByteArray) : Option (List Int) :=
 
 /-! ## Default heuristic -/
 
-/-- The safe fallback chooser: VERBATIM everything. Valid whenever the
-    samples fit the bit depth. Real heuristics arrive with M3/M6; they can
-    only improve compression, never break the round-trip. -/
-def verbatimChooser : List Int → Subframe.SubframeCfg := fun _ => .verbatim
+/-- The safe fallback chooser: VERBATIM everything, no wasted bits.
+    Valid whenever the samples fit the bit depth. -/
+def verbatimChooser : List Int → Subframe.SubCfg := fun _ => ⟨0, .verbatim⟩
 
 end Flac.Stream

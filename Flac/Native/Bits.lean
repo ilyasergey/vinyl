@@ -64,6 +64,25 @@ def withConsumed (f : BitStream → Option (α × BitStream)) (s : BitStream) :
   | none => none
   | some (a, s') => some (a, s.take (s.length - s'.length), s')
 
+/-! ## Arithmetic shift -/
+
+/-- Arithmetic shift right on ℤ (floor division by `2^s`): the exact
+    semantics of a two's-complement `>>`, matching what production Int64
+    code will do at M5. -/
+def sar (x : Int) (s : Nat) : Int :=
+  match x with
+  | .ofNat m => .ofNat (m >>> s)
+  | .negSucc m => .negSucc (m >>> s)
+
+/-- Undo `w` wasted bits (RFC 9639 §9.2.2): scale back up. -/
+def shiftUp (w : Nat) (x : Int) : Int :=
+  x * ((2 ^ w : Nat) : Int)
+
+/-- Scale a sample down by `w` wasted bits (exact for valid inputs;
+    `/` on ℤ is Euclidean division = floor for positive divisors). -/
+def shiftDown (w : Nat) (x : Int) : Int :=
+  x / ((2 ^ w : Nat) : Int)
+
 /-! ## Signed integers (two's complement, MSB-first) -/
 
 /-- `x` is representable as an `n`-bit two's-complement integer.

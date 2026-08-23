@@ -176,4 +176,20 @@ def defaultChooser (b : Nat) (blk : List Int) : SubframeCfg :=
       else
         if cost < b * blk.length then fixedCfg blk ord k else .verbatim
 
+/-- Detect wasted bits: the largest `w < b` such that every sample is
+    divisible by `2^w`. Sound by construction (`find?` returns only
+    elements satisfying the predicate); 0 when nothing is found. -/
+def wastedDetect (b : Nat) (xs : List Int) : Nat :=
+  match (List.range b).reverse.find?
+      (fun w => xs.all (fun x => x % ((2 ^ w : Nat) : Int) == 0)) with
+  | some w => w
+  | none => 0
+
+/-- The full per-block chooser: detect wasted bits, then run the subframe
+    search on the scaled-down samples at the reduced depth. -/
+def defaultSubCfg (b : Nat) (blk : List Int) : Subframe.SubCfg :=
+  ⟨wastedDetect b blk,
+   defaultChooser (b - wastedDetect b blk)
+     (blk.map (Flac.Bits.shiftDown (wastedDetect b blk)))⟩
+
 end Flac.Heuristics

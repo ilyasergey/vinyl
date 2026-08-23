@@ -19,13 +19,7 @@ prediction function actually computes. Where the coefficients come from
 
 namespace Flac.Lpc
 
-/-- Arithmetic shift right on ℤ (floor division by `2^s`): the exact
-    semantics of a two's-complement `>>`, matching what production Int64
-    code will do at M5. -/
-def sar (x : Int) (s : Nat) : Int :=
-  match x with
-  | .ofNat m => .ofNat (m >>> s)
-  | .negSucc m => .negSucc (m >>> s)
+open Flac.Bits (sar)
 
 /-- Dot product of coefficients with the reversed history (most recent
     sample first), then the quantization shift. -/

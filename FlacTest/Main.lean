@@ -120,14 +120,14 @@ def riceTests : TestM Unit := do
 /-! ## End-to-end: encode → decodeReference -/
 
 /-- A test chooser exercising CONSTANT and FIXED subframes. -/
-def testChooser (blk : List Int) : Subframe.SubframeCfg :=
-  if blk.all (· == blk.headD 0) then .constant
+def testChooser (blk : List Int) : Subframe.SubCfg :=
+  if blk.all (· == blk.headD 0) then ⟨0, .constant⟩
   else if 2 < blk.length then
-    .fixed 2 { method := .rice4, po := 0, choices := [.rice 4] }
-  else .verbatim
+    ⟨0, .fixed 2 { method := .rice4, po := 0, choices := [.rice 4] }⟩
+  else ⟨0, .verbatim⟩
 
 def e2eTests : TestM Unit := do
-  let mkCfg (chooser : List Int → Subframe.SubframeCfg) : Stream.EncoderCfg :=
+  let mkCfg (chooser : List Int → Subframe.SubCfg) : Stream.EncoderCfg :=
     { blockSize := 16, sampleRate := 44100, bps := 16, chooser := chooser }
   -- 40 samples → frames of 16/16/8 (short last frame)
   let pcm : List Int := (List.range 40).map fun (i : Nat) =>
@@ -155,13 +155,19 @@ def e2eTests : TestM Unit := do
     { blockSize := 16, sampleRate := 8000, bps := 8, chooser := Stream.verbatimChooser }
   let pcm8 : List Int := (List.range 30).map fun (i : Nat) => ((i : Int) % 100) - 50
   checkEq "e2e 8-bit" (Stream.decodeReference (Stream.encode cfg8 pcm8)) (some pcm8)
-  -- the certified default heuristic (M3)
-  checkEq "e2e defaultChooser"
-    (Stream.decodeReference (Stream.encode (mkCfg (Heuristics.defaultChooser 16)) pcm))
+  -- the certified default heuristic (M3+M4: wasted bits, LPC, fixed)
+  checkEq "e2e defaultSubCfg"
+    (Stream.decodeReference (Stream.encode (mkCfg (Heuristics.defaultSubCfg 16)) pcm))
     (some pcm)
-  checkEq "e2e defaultChooser constant blocks"
-    (Stream.decodeReference (Stream.encode (mkCfg (Heuristics.defaultChooser 16)) flat))
+  checkEq "e2e defaultSubCfg constant blocks"
+    (Stream.decodeReference (Stream.encode (mkCfg (Heuristics.defaultSubCfg 16)) flat))
     (some flat)
+  -- wasted bits: all samples share 3 low zero bits
+  let wpcm : List Int := (List.range 40).map fun (i : Nat) => ((i : Int) - 20) * 8
+  checkEq "e2e wasted bits"
+    (Stream.decodeReference (Stream.encode (mkCfg (Heuristics.defaultSubCfg 16)) wpcm))
+    (some wpcm)
+  checkEq "wastedDetect finds 3" (Heuristics.wastedDetect 16 wpcm) 3
 
 /-! ## Bit-level spot checks -/
 
@@ -190,6 +196,8 @@ def emitSamples (dir : String) : IO Unit := do
       chooser := Stream.verbatimChooser }
   mk "sine-verbatim" cfg16 sine
   mk "sine-fixed" { cfg16 with chooser := testChooser } sine
+  mk "wasted-bits" { cfg16 with chooser := Heuristics.defaultSubCfg 16 }
+    ((List.range 3000).map fun (i : Nat) => (((i * i * 2654435761 + i * 40503) % 8192 : Nat) : Int) * 4 - 16384)
   mk "flat-constant" { cfg16 with chooser := testChooser }
     (List.replicate 10000 (1234 : Int))
   mk "noise-small-blocks" { cfg16 with blockSize := 256 }
@@ -208,7 +216,7 @@ def main (args : List String) : IO UInt32 := do
     let pcm := pcm16OfBytes bytes
     let cfg : Stream.EncoderCfg :=
       { blockSize := bs.toNat!, sampleRate := 44100, bps := 16,
-        chooser := Heuristics.defaultChooser 16 }
+        chooser := Heuristics.defaultSubCfg 16 }
     IO.FS.writeBinFile outFile (Stream.encode cfg pcm)
     IO.println s!"encoded {pcm.length} samples"
     return 0
