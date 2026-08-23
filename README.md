@@ -44,8 +44,9 @@ byte-identically with libFLAC (`conformance/smoke.sh`).
 - [x] **M2** — CONSTANT/VERBATIM/FIXED subframes, CRC-verified frames,
       stream layer; `decodeReference ∘ encode = id` on the mono profile;
       first libFLAC interop (both directions)
-- [~] **M3** — certified default heuristic (fixed-order search + Rice
-      estimate) done; LPC + its restore proof next
+- [x] **M3** — LPC subframes with the L3-LPC restore proof; certified
+      default heuristic (Welch-windowed Levinson–Durbin LPC + fixed-order
+      search, exact Rice bit costs)
 - [ ] **M4** — stereo modes, wasted bits, frames/stream; **reference
       capstone** over the full option space
 - [ ] **M5** — production decoder + accept-set transfer; **shipped capstone**
@@ -60,13 +61,13 @@ synthetic mono 16-bit corpus of `bench/gen_corpus.py`, against libFLAC
 
 ![Compression and speed vs libFLAC](bench/cactus.png)
 
-Honest reading at M3: overall ratio **47.1%** of raw vs libFLAC's 43.7%
-(`-0`) and 37.7% (`-8`) — Vinyl already beats `flac -0` on half the corpus
-(tonal and trivial content) and loses where LPC matters (sweeps, sawtooth),
-which is exactly the next milestone. Encode speed is ~0.4 MB/s vs libFLAC's
-~14 MB/s: the encoder still runs on the proof-oriented bit model;
-performance work is deliberately deferred to M6, *after* the capstone makes
-optimization safe (PLAN.md §7).
+Honest reading at M3 (with Levinson–Durbin LPC): overall ratio **42.5%**
+of raw — now *better* than libFLAC `-0` (43.7%), with `-8` at 37.7%. Vinyl
+matches or beats `-8` on tonal content (sine, chord, sweep); the remaining
+gap is adaptive Rice partitioning and block-size search (M6 territory).
+Encode speed is ~0.6 MB/s vs libFLAC's ~14 MB/s: the encoder still runs on
+the proof-oriented bit model; performance work is deliberately deferred to
+M6, *after* the capstone makes optimization safe (PLAN.md §7).
 
 ## Building
 
