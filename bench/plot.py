@@ -6,13 +6,16 @@
 - bench/summary.md      — the per-category ratio table (pasted into README)
 """
 import csv
+import math
 import os
+import statistics
 import sys
 from collections import defaultdict
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import NullFormatter
 
 results_csv = sys.argv[1] if len(sys.argv) > 1 else "bench/results.csv"
 out_dir = os.path.dirname(results_csv) or "bench"
@@ -82,29 +85,48 @@ fig.savefig(os.path.join(out_dir, "compression.png"))
 print("wrote compression.png")
 
 # ── performance: encode + decode throughput profiles ────────────────────
-fig2, (ax2, ax4) = plt.subplots(1, 2, figsize=(11, 4.6), dpi=150)
-for enc in STYLE:
-    if enc not in speed:
-        continue
-    ys = sorted(speed[enc])
-    ax2.plot(range(1, len(ys) + 1), ys, label=enc, ms=4, **STYLE[enc])
-ax2.set_xlabel("files (each encoder sorted slowest → fastest)")
-ax2.set_ylabel("encode throughput, raw MB/s (higher = faster)")
-ax2.set_yscale("log")
-ax2.set_title("Encode speed")
-ax2.grid(alpha=0.25, which="both")
-ax2.legend()
-for enc in DEC_STYLE:
-    if enc not in speed:
-        continue
-    ys = sorted(speed[enc])
-    ax4.plot(range(1, len(ys) + 1), ys, label=enc, ms=4, **DEC_STYLE[enc])
-ax4.set_xlabel("files (each decoder sorted slowest → fastest)")
-ax4.set_ylabel("decode throughput, raw MB/s (higher = faster)")
-ax4.set_yscale("log")
-ax4.set_title("Decode speed")
-ax4.grid(alpha=0.25, which="both")
-ax4.legend()
+def throughput_panel(ax, styles, kind, gap_pair):
+    """Log-scale profile with readable scalar ticks, medians in the legend,
+    and an arrow marking the median gap between the two encoders in
+    gap_pair (vinyl vs its libFLAC counterpart)."""
+    n = 0
+    for enc in styles:
+        if enc not in speed:
+            continue
+        ys = sorted(speed[enc])
+        n = max(n, len(ys))
+        med = statistics.median(ys)
+        ax.plot(range(1, len(ys) + 1), ys,
+                label=f"{enc} — median {med:.3g} MB/s", ms=4, **styles[enc])
+    ax.set_xlabel(f"files (each {kind}r sorted slowest → fastest)")
+    ax.set_ylabel(f"{kind} throughput, raw MB/s (higher = faster)")
+    ax.set_yscale("log")
+    allv = [v for e in styles if e in speed for v in speed[e]]
+    ticks = [t for t in (0.05, 0.1, 0.2, 0.5, 1, 2, 3, 5, 7, 10, 15, 20, 30, 50, 70,
+                         100, 200)
+             if min(allv) * 0.8 <= t <= max(allv) * 1.25]
+    ax.set_yticks(ticks)
+    ax.set_yticklabels([f"{t:g}" for t in ticks])
+    ax.yaxis.set_minor_formatter(NullFormatter())
+    lo, hi = gap_pair
+    if lo in speed and hi in speed:
+        lo_med = statistics.median(speed[lo])
+        hi_med = statistics.median(speed[hi])
+        for med, enc in ((lo_med, lo), (hi_med, hi)):
+            ax.axhline(med, color=styles[enc]["color"], ls="--", lw=1, alpha=0.6)
+        x = n * 0.3
+        ax.annotate("", xy=(x, hi_med), xytext=(x, lo_med),
+                    arrowprops=dict(arrowstyle="<->", color="#111827", lw=1.1))
+        ax.text(x + n * 0.03, math.sqrt(lo_med * hi_med),
+                f"×{hi_med / lo_med:.1f} median gap",
+                va="center", fontsize=9, color="#111827")
+    ax.set_title(f"{kind.capitalize()} speed")
+    ax.grid(alpha=0.25, which="both")
+    ax.legend(fontsize=8)
+
+fig2, (ax2, ax4) = plt.subplots(2, 1, figsize=(8.5, 9), dpi=150)
+throughput_panel(ax2, STYLE, "encode", ("vinyl", "flac -5"))
+throughput_panel(ax4, DEC_STYLE, "decode", ("vinyl decode", "flac decode"))
 fig2.suptitle("Throughput — Vinyl (verified) vs libFLAC")
 fig2.tight_layout()
 fig2.savefig(os.path.join(out_dir, "performance.png"))
