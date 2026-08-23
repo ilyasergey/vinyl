@@ -30,6 +30,8 @@ with open(results_csv) as f:
             continue
         ratio[enc].append(int(row["bytes"]) / raw)
         speed[enc].append(raw / 1e6 / float(row["seconds"]))
+        if "decode" in enc:
+            continue
         cb = catbytes[row["file"].split("-")[0]][enc]
         cb[0] += int(row["bytes"])
         cb[1] += raw
@@ -39,6 +41,10 @@ STYLE = {
     "flac -0": dict(color="#94a3b8", marker="s", lw=1.6),
     "flac -5": dict(color="#64748b", marker="^", lw=1.6),
     "flac -8": dict(color="#334155", marker="v", lw=1.6),
+}
+DEC_STYLE = {
+    "vinyl decode": dict(color="#7c3aed", marker="o", lw=2.2, zorder=5),
+    "flac decode":  dict(color="#334155", marker="v", lw=1.6),
 }
 
 # ── compression: cactus above, category bars below ──────────────────────
@@ -75,8 +81,8 @@ fig.tight_layout()
 fig.savefig(os.path.join(out_dir, "compression.png"))
 print("wrote compression.png")
 
-# ── performance: throughput profile ─────────────────────────────────────
-fig2, ax2 = plt.subplots(figsize=(7.5, 4.6), dpi=150)
+# ── performance: encode + decode throughput profiles ────────────────────
+fig2, (ax2, ax4) = plt.subplots(1, 2, figsize=(11, 4.6), dpi=150)
 for enc in STYLE:
     if enc not in speed:
         continue
@@ -85,9 +91,21 @@ for enc in STYLE:
 ax2.set_xlabel("files (each encoder sorted slowest → fastest)")
 ax2.set_ylabel("encode throughput, raw MB/s (higher = faster)")
 ax2.set_yscale("log")
-ax2.set_title("Encode speed — Vinyl (verified) vs libFLAC")
+ax2.set_title("Encode speed")
 ax2.grid(alpha=0.25, which="both")
 ax2.legend()
+for enc in DEC_STYLE:
+    if enc not in speed:
+        continue
+    ys = sorted(speed[enc])
+    ax4.plot(range(1, len(ys) + 1), ys, label=enc, ms=4, **DEC_STYLE[enc])
+ax4.set_xlabel("files (each decoder sorted slowest → fastest)")
+ax4.set_ylabel("decode throughput, raw MB/s (higher = faster)")
+ax4.set_yscale("log")
+ax4.set_title("Decode speed")
+ax4.grid(alpha=0.25, which="both")
+ax4.legend()
+fig2.suptitle("Throughput — Vinyl (verified) vs libFLAC")
 fig2.tight_layout()
 fig2.savefig(os.path.join(out_dir, "performance.png"))
 print("wrote performance.png")

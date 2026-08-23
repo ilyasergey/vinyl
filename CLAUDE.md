@@ -41,4 +41,4 @@ rules every session must follow.
 - `Flac/Spec/` — all theorems; no `sorry`, no axioms.
 - `FlacTest/` — unit + golden tests wired into `lake exe flactest`.
 - `conformance/`, `bench/` — separate packages, later milestones.
-- `PROGRESS.md` — per-session log (lean-zip convention).
+- `PROGRESS.md` — per-session log, one entry per session.

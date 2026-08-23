@@ -6,9 +6,10 @@ import Flac.Spec.Frame
 
 For every well-formed audio (1–8 equal-length channels, bit depth 1–32,
 in-range samples), every block size 16–65535, both numbering strategies,
-and *every* channel-assignment/subframe heuristic that returns valid
-configurations, decoding the encoded stream returns the original channels
-exactly: `decodeReference_encode` at the bottom of this file.
+and *every* channel-assignment/subframe heuristic — valid or not, thanks
+to the encoder's certificate check with VERBATIM fallback — decoding the
+encoded stream returns the original audio exactly:
+`decodeReference_encode` at the bottom of this file.
 -/
 
 namespace Flac.Stream

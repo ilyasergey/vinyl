@@ -161,3 +161,72 @@ bit reader) + overflow lemma family (PLAN.md §5.1) +
 `decode_ok_iff_reference` accept-set transfer ⇒ shipped capstone
 `Flac.decode_encode`; then Rigs 3–5 (fuzzing) and the M6 performance
 work (adaptive Rice partitions, block-size search, faster bit I/O).
+
+---
+
+## 2026-08-23 — Session 3: M5 complete (shipped capstone) + byte-level guarantee
+
+**Attempted:** M5 — buffered production decoder with the equivalence
+proof, accept-set transfer, shipped capstone; then, on review feedback,
+strengthening the theorem statement (no heuristic hypothesis, identity
+form, runtime-checkable premise, byte-level PCM round-trip); IETF
+conformance corpus; documentation + benchmarks refresh.
+
+**Landed:**
+
+- **M5 complete.** `Flac/Native/Reader.lean` (`BitReader`: MSB-first bit
+  cursor over `ByteArray`, indexing the array directly — `.data` copies!)
+  and `Flac/Native/Decode.lean` (production decoder mirroring the
+  reference function-for-function; CRCs recomputed over `sliceBytes` =
+  `ByteArray.extract`). `Flac/Spec/Reader.lean` proves every reader
+  primitive simulates the `List Bool` model
+  (`readBits_sim`/`readUnary_sim`/`readSInt_sim` + `_spec` position
+  lemmas); `Flac/Spec/Decode.lean` lifts this through every layer
+  (subframes, frames incl. CRC slices via `sliceBytes_eq`, metadata,
+  frame sequence) to `decodeOption_eq_reference` — the production decoder
+  computes *exactly* the reference function on every input — and
+  `decode_ok_iff_reference`.
+- **Theorem strengthening** (user review): (1) heuristic hypothesis
+  eliminated — all `Valid` certificates are now `Decidable`, and the
+  encoder (`EncoderCfg.safeChooser` / `ChannelAsg.orVerbatim`) checks
+  each heuristic choice at runtime, falling back to VERBATIM, so the
+  capstone quantifies over *arbitrary* choosers; (2) STREAMINFO bounds
+  folded into `Audio.WellFormed` (now `Decidable`); (3) both decoders
+  return the full `Audio`, making the capstone the literal identity
+  `Flac.decode_encode : decode (encode a) = .ok a`; (4) hypothesis-free
+  runtime-checked forms `decode_encodeChecked`/`decode_encodeCheckedCfg`;
+  (5) byte-level PCM pipeline `encodePcm16`/`decodePcm16` with
+  `decodePcm16_encodePcm16` — raw interleaved 16-bit LE PCM bytes round-trip
+  exactly, no hypotheses (verified interleave/deinterleave + PCM16
+  (de)serialization). CLI `--encode` runs the checked byte path;
+  `--decode-fast` is the shipped decoder (~2× the reference decoder).
+- **IETF conformance corpus** (`conformance/ietf.sh`, merge gate):
+  must-decode `subset/` 61/61 comparable files pass byte-identically
+  (3 skipped only because the `flac` CLI can't emit 12/20-bit raw);
+  `uncommon/` 4/5, failing only the headerless
+  "file starting at frame header" (out of scope by design).
+- Docs: README rewritten around the new capstones with an explicit
+  RFC 9639 coverage table (supported / not supported); ARCHITECTURE.md
+  updated for the new modules; benchmarks re-run with decode-speed
+  measurements added (see README).
+
+**Proof-engineering notes:**
+
+- `Decidable` instances for match-defined `Prop`s: tactic-mode
+  `unfold X.Valid; rcases ... <;> exact inferInstance` iota-reduces each
+  branch; structure-Props via `decidable_of_iff` with an ∧-chain.
+- Literal-struct projections (`(⟨bytes, 0⟩ : BitReader).pos`) are opaque
+  to `omega` — normalize with `have : br1.pos = 32 := p1` (defeq) first.
+- `ByteArray.toList` is a loop, NOT defeq to `.data.toList` — use
+  `.data.toList` in definitions meant for proofs.
+- Structure eta closes `some ⟨a.channels, a.bps, a.sampleRate⟩ = some a`
+  by `rfl` — returning the whole record costs nothing in proofs.
+- Two-at-a-time list recursion: state the theorem as a recursive
+  definition with `[]`/`[_]`/`a :: b :: rest` patterns rather than
+  fighting `fun_induction`'s wildcard case hypotheses.
+- `omega` cannot commute symbolic products: `ch * m` and `m * ch` are
+  different atoms — `rw [Nat.mul_comm]`/`Nat.mul_left_comm` first.
+
+**Next:** M6 performance under the ratchet (word-at-a-time `BitReader`
+under the same simulation lemmas; encoder off the `List Bool` model),
+Rigs 3–5 fuzz harnesses, uncommon-corpus completeness triage.

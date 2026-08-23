@@ -32,6 +32,18 @@ for pcm in "$CORPUS"/*.pcm; do
   sz=$(stat -f%z "$OUT/$name.vinyl.flac" 2>/dev/null || stat -c%s "$OUT/$name.vinyl.flac")
   echo "$name,vinyl,$(python3 -c "print($t1-$t0)"),$sz,$raw" >> "$RESULTS"
 
+  # decode timings on the vinyl-encoded file (outputs must round-trip)
+  t0=$(now)
+  .lake/build/bin/flactest --decode-fast "$OUT/$name.vinyl.flac" "$OUT/dec.raw" >/dev/null
+  t1=$(now)
+  cmp -s "$OUT/dec.raw" "$pcm"   # merge-gate: decoded bytes = input bytes
+  echo "$name,vinyl decode,$(python3 -c "print($t1-$t0)"),$sz,$raw" >> "$RESULTS"
+  t0=$(now)
+  flac -d -s --force-raw-format --sign=signed --endian=little \
+    -f -o "$OUT/dec2.raw" "$OUT/$name.vinyl.flac" 2>/dev/null
+  t1=$(now)
+  echo "$name,flac decode,$(python3 -c "print($t1-$t0)"),$sz,$raw" >> "$RESULTS"
+
   for lvl in 0 5 8; do
     t0=$(now)
     flac -$lvl --force-raw-format --sign=signed --endian=little --channels=$ch \
