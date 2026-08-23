@@ -2,6 +2,7 @@ import Flac.Native.Subframe
 import Flac.Spec.Bits
 import Flac.Spec.Rice
 import Flac.Spec.Fixed
+import Flac.Spec.Lpc
 
 /-!
 # L5 (part 1) — subframe round-trip
@@ -63,5 +64,34 @@ theorem read_write (b : Nat) (cfg : SubframeCfg) (xs : List Int)
     simp only [show 8 + ord - 8 = ord from by omega, hseq,
       readResidual_writeResidual xs.length ord rcfg (Fixed.residual ord xs) hrv,
       Fixed.restore_residual ord xs (by omega)]
+  | .lpc cs shift prec rcfg =>
+    obtain ⟨ho1, ho2, hwarm, hp1, hp2, hcs, hsh, hrv⟩ := hv
+    have hordlen : cs.length < xs.length := by
+      have h1 := hrv.ord_lt
+      have h2 : xs.length / 2 ^ rcfg.po ≤ xs.length := Nat.div_le_self _ _
+      omega
+    have hshfit : FitsSInt 5 (shift : Int) := by unfold FitsSInt; omega
+    have hseq : ∀ t, readSIntSeq b cs.length (writeSIntSeq b (xs.take cs.length) ++ t)
+        = some (xs.take cs.length, t) := by
+      intro t
+      have h := readSIntSeq_writeSIntSeq b (xs.take cs.length) t hwarm
+      rwa [show (xs.take cs.length).length = cs.length by
+        simp only [List.length_take]; omega] at h
+    have hcseq : ∀ t, readSIntSeq prec cs.length (writeSIntSeq prec cs ++ t)
+        = some (cs, t) := fun t => readSIntSeq_writeSIntSeq prec cs t hcs
+    simp only [write, SubframeCfg.typeCode, read, List.append_assoc,
+      readBits_writeBits _ _ _ (by omega : 0 < 2 ^ 1),
+      readBits_writeBits _ _ _ (by omega : 32 + (cs.length - 1) < 2 ^ 6)]
+    rw [if_pos trivial, if_pos trivial, if_neg (by omega), if_neg (by omega),
+      if_neg (by omega : ¬(8 ≤ 32 + (cs.length - 1) ∧ 32 + (cs.length - 1) ≤ 12)),
+      if_pos (by omega : 32 ≤ 32 + (cs.length - 1))]
+    simp only [show 32 + (cs.length - 1) - 31 = cs.length from by omega, hseq,
+      readBits_writeBits _ _ _ (by omega : prec - 1 < 2 ^ 4),
+      readSInt_writeSInt 5 (shift : Int) hshfit]
+    rw [if_neg (by omega : ¬(prec - 1 = 15)), if_pos (by omega : (0 : Int) ≤ (shift : Int))]
+    simp only [show prec - 1 + 1 = prec from by omega,
+      show ((shift : Int)).toNat = shift from by omega, hcseq,
+      readResidual_writeResidual xs.length cs.length rcfg (Lpc.residual cs shift xs) hrv,
+      Lpc.restore_residual cs shift xs]
 
 end Flac.Subframe

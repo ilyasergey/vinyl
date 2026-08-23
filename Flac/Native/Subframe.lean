@@ -1,13 +1,13 @@
 import Flac.Native.Bits
 import Flac.Native.Rice
 import Flac.Native.Fixed
+import Flac.Native.Lpc
 
 /-!
 # Subframes (RFC 9639 §9.2): CONSTANT, VERBATIM, FIXED
 
-M2 scope: the three non-LPC subframe types, no wasted bits (the encoder
-never emits the flag yet; the decoder rejects it until M4). LPC arrives
-with M3, wasted bits and the side-channel bit-depth bookkeeping with M4.
+All four subframe types; no wasted bits yet (the encoder never emits the
+flag; the decoder rejects it until M4).
 
 The per-block choice of subframe type (and residual configuration) is a
 heuristic *input* (`SubframeCfg`), carrying a validity certificate
@@ -27,12 +27,17 @@ inductive SubframeCfg where
   | verbatim
   /-- Fixed predictor of order `ord ≤ 4` with the given residual coding. -/
   | fixed (ord : Nat) (rcfg : Rice.ResidualCfg)
+  /-- Linear predictor: coefficients (most recent sample first, order
+      `cs.length ∈ 1..32`), coefficient precision `prec ∈ 1..15` bits,
+      non-negative quantization shift `≤ 15`. -/
+  | lpc (cs : List Int) (shift prec : Nat) (rcfg : Rice.ResidualCfg)
 
 /-- Subframe type code for the 6-bit header field (RFC 9639 Table 9). -/
 def SubframeCfg.typeCode : SubframeCfg → Nat
   | .constant => 0
   | .verbatim => 1
   | .fixed ord _ => 8 + ord
+  | .lpc cs _ _ _ => 32 + (cs.length - 1)
 
 /-- Validity certificate for a subframe choice on a concrete block `xs`
     at bit depth `b` (block size is `xs.length`, enforced upstream). -/
@@ -43,6 +48,12 @@ def SubframeCfg.Valid (cfg : SubframeCfg) (b : Nat) (xs : List Int) : Prop :=
   | .fixed ord rcfg =>
       ord ≤ 4 ∧ (∀ x ∈ xs.take ord, FitsSInt b x) ∧
       rcfg.Valid xs.length ord (Fixed.residual ord xs)
+  | .lpc cs shift prec rcfg =>
+      1 ≤ cs.length ∧ cs.length ≤ 32 ∧
+      (∀ x ∈ xs.take cs.length, FitsSInt b x) ∧
+      1 ≤ prec ∧ prec ≤ 15 ∧ (∀ c ∈ cs, FitsSInt prec c) ∧
+      shift ≤ 15 ∧
+      rcfg.Valid xs.length cs.length (Lpc.residual cs shift xs)
 
 def write (b : Nat) (cfg : SubframeCfg) (xs : List Int) : BitStream :=
   writeBits 1 0 ++ writeBits 6 cfg.typeCode ++ writeBits 1 0 ++
@@ -52,6 +63,11 @@ def write (b : Nat) (cfg : SubframeCfg) (xs : List Int) : BitStream :=
   | .fixed ord rcfg =>
       writeSIntSeq b (xs.take ord) ++
       Rice.writeResidual xs.length ord rcfg (Fixed.residual ord xs)
+  | .lpc cs shift prec rcfg =>
+      writeSIntSeq b (xs.take cs.length) ++
+      writeBits 4 (prec - 1) ++ writeSInt 5 (shift : Int) ++
+      writeSIntSeq prec cs ++
+      Rice.writeResidual xs.length cs.length rcfg (Lpc.residual cs shift xs)
 
 /-- Read one subframe of `bs` samples at bit depth `b`. -/
 def read (bs b : Nat) (s : BitStream) : Option (List Int × BitStream) :=
@@ -79,7 +95,28 @@ def read (bs b : Nat) (s : BitStream) : Option (List Int × BitStream) :=
                 match Rice.readResidual bs (ty - 8) s with
                 | none => none
                 | some (res, s) => some (Fixed.restore (ty - 8) warmup res, s)
-            else none                    -- reserved / LPC (M3) / invalid
+            else if 32 ≤ ty then         -- ty ≤ 63 always (6-bit field)
+              match readSIntSeq b (ty - 31) s with
+              | none => none
+              | some (warmup, s) =>
+                match readBits 4 s with
+                | none => none
+                | some (pm1, s) =>
+                  if pm1 = 15 then none  -- forbidden precision code
+                  else
+                    match readSInt 5 s with
+                    | none => none
+                    | some (sh, s) =>
+                      if 0 ≤ sh then     -- negative shift is forbidden
+                        match readSIntSeq (pm1 + 1) (ty - 31) s with
+                        | none => none
+                        | some (cs, s) =>
+                          match Rice.readResidual bs (ty - 31) s with
+                          | none => none
+                          | some (res, s) =>
+                            some (Lpc.restore cs sh.toNat warmup res, s)
+                      else none
+            else none                    -- reserved / invalid
           else none                      -- wasted bits: M4
     else none                            -- reserved bit must be 0
 
