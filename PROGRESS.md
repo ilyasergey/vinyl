@@ -607,8 +607,21 @@ best available in pure Lean. Three levers remain, in order of value:
    proven (`Flac.Emit.emitFast_eq_encode`); what blocks shipping it is
    that the *heuristics* it calls still run on lists, so array-izing the
    searches with equality proofs is the actual work.
-2. **The compression/speed tradeoff above** — a decision for the project
-   owner, worth ~1.3× encode.
+2. **Match libFLAC's search *shape*, not just its budget.** libFLAC's
+   preset table (`FLAC/stream_encoder.h`, installed with the CLI — no
+   implementation sources are available locally) sets `exhaustive model
+   search` to false at *every* level including `-8`: it estimate-picks a
+   single LPC order per apodization window, and `-8` earns its ratio with
+   several *windows* (`subdivide_tukey(3)`, max order 12) rather than by
+   exactly costing several orders. Vinyl does the opposite — one Welch
+   window, five or six orders costed exactly. So the pruning experiment
+   above (one order, one window, 40.016%) is not the right comparison:
+   the untested design point is *one order per window × two or three
+   windows*, which would cost roughly half of today's LPC work and might
+   compress as well or better. This is now the most promising encode
+   lever, ahead of the flat compression/speed tradeoff (~1.3×, 0.44 pp),
+   which remains a decision for the project owner rather than a
+   recommendation.
 3. A windowed bit reader (cached word + count, libFLAC-style) for the
    ~34% of decode in the Rice reader; would need a simulation proof
    against `readRiceSeqScan`, and decode is already at target.

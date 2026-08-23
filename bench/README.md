@@ -118,19 +118,32 @@ in an unboxed `FloatArray` rather than an `Array Float` that boxed every
 element. And the certificate's own re-serialization, which was 10% of
 encode and serial, now runs one task per sample window.
 
-What remains of the encode gap is not algorithmic. Profiling puts about
-three quarters of encode in the parallel frame workers, and roughly a
-third of that in exactly costing the five or six candidate LPC orders —
-Lean `Int` multiply–accumulate against libFLAC's `int32` SIMD, with
-`Array Int64` being *worse* in Lean (boxed per element), so the current
-representation is already the best available in pure Lean. Scoring fewer
-candidates closes part of the gap but gives up compression: measured on
-this corpus, keeping the best two candidates by Levinson estimate runs
-~1.3× faster at 40.0% instead of 39.6%, which would forfeit the win over
-`flac -8`. That tradeoff is recorded rather than taken. The one remaining
-change that would improve encode without trading compression or adding
-trusted code is retiring the runtime certificate (~20% of encode) in
-favour of the statically verified emitter — milestone M6b.
+Two things account for what remains of the encode gap, and only one of
+them is per-operation cost. Profiling puts about three quarters of encode
+in the parallel frame workers, and roughly a third of that in exactly
+costing the five or six candidate LPC orders — Lean `Int`
+multiply–accumulate against libFLAC's `int32` SIMD, with `Array Int64`
+being *worse* in Lean (boxed per element), so the current representation
+is already the best available in pure Lean.
+
+The other part is that Vinyl is running a *more expensive search* than
+libFLAC, not the same one more slowly. libFLAC's preset table
+(`FLAC/stream_encoder.h`) sets `exhaustive model search` to false at
+**every** level including `-8`: it estimate-picks a single LPC order per
+apodization window, and `-8` buys its ratio by trying several *windows*
+(`subdivide_tukey(3)`, max order 12) rather than by exactly costing
+several orders. Vinyl instead uses one window and exactly costs five or
+six orders.
+
+That reframes the tradeoff. Simply scoring fewer orders gives up
+compression — measured here, keeping the best two candidates by Levinson
+estimate runs ~1.3× faster at 40.0% instead of 39.6%, forfeiting the win
+over `flac -8` — so it is recorded rather than taken. But libFLAC's own
+shape (one order per window × a few windows) is untested here and is the
+more promising direction, since it could cost less *and* compress at
+least as well. The other remaining change, which trades nothing at all,
+is retiring the runtime certificate (~20% of encode) in favour of the
+statically verified emitter — milestone M6b.
 
 The important correction is methodological: libFLAC did not suddenly get
 faster, and Vinyl also measures faster without the timestamp surcharge.
