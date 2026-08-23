@@ -5,8 +5,10 @@ import Flac.Native.Md5
 import Flac.Native.Rice
 import Flac.Native.Fixed
 import Flac.Native.Subframe
+import Flac.Native.Frame
 import Flac.Spec.Bits
 import Flac.Spec.Fixed
+import Flac.Spec.Frame
 import Flac.Spec.Rice
 import Flac.Spec.Subframe
 import Flac.Spec.Utf8Num
