@@ -824,10 +824,11 @@ def readBytesSteps (b0 bps ch : Nat) (d : ByteArray)
       | some st => readBytesSteps b0 bps ch d steps fuel st.next (out ++ st.bytes)
 
 /-- **Decode straight to interleaved PCM bytes**, one worker per frame
-    chunk. A `some` result is exactly the serialization of what
-    `decodeArrays` returns (`Flac.Spec.Stream.decodeBytes_spec`); `none`
-    means the caller should use the sample path. -/
-def decodeBytes (bytes : ByteArray) : Option ByteArray :=
+    chunk, returning the bytes and the stream's bit depth. A `some` result
+    is exactly the serialization of what `decodeArrays` returns
+    (`Flac.Stream.decodeBytes_spec`); `none` means the caller should use
+    the sample path. -/
+def decodeBytes (bytes : ByteArray) : Option (ByteArray × Nat) :=
   let br : BitReader := ⟨bytes, 0⟩
   match br.readBits 32 with
   | none => none
@@ -836,12 +837,13 @@ def decodeBytes (bytes : ByteArray) : Option ByteArray :=
       match readMeta br.remaining br with
       | none => none
       | some (si, br) =>
-        readBytesSteps si.bps si.bps si.channels br.data
+        (readBytesSteps si.bps si.bps si.channels br.data
           (if br.data.size < parThreshold then #[]
            else byteStepsPar si.bps si.bps si.channels br.data
              (syncCandidates br.data (br.pos / 8)) stepChunkSize)
           (br.remaining + 1) br.pos
-          (ByteArray.emptyWithCapacity (2 * si.channels * si.totalSamples + 64))
+          (ByteArray.emptyWithCapacity (2 * si.channels * si.totalSamples + 64))).map
+          (fun out => (out, si.bps))
     else none
 
 /-- The production decoder body, **array-typed**: reassembled channels stay

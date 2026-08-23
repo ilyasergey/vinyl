@@ -265,7 +265,7 @@ def fusedDecodeTests : TestM Unit := do
   for (name, ch, chans) in cases do
     let flac := Stream.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ⟨chans, 16, 44100⟩
     match Flac.Decode.decodeBytes flac, Flac.Decode.decodeArrays flac with
-    | some pcm, some (arrs, bps, _) =>
+    | some (pcm, _), some (arrs, bps, _) =>
       checkEq s!"fused decode = sample path: {name}" pcm
         (Stream.pcmBytesRange bps arrs 0 (arrs.headD #[]).size)
       checkEq s!"fused decode = original PCM: {name}" pcm (Stream.pcmBytes 16 chans)
@@ -279,7 +279,7 @@ def fusedDecodeTests : TestM Unit := do
   check "fused decode crosses the parallel threshold"
     (Flac.Decode.parThreshold ≤ bigFlac.size)
   checkEq "fused decode = original PCM: 200k samples"
-    (Flac.Decode.decodeBytes bigFlac) (some (Stream.pcmBytes 16 [big]))
+    (Flac.Decode.decodeBytes bigFlac) (some (Stream.pcmBytes 16 [big], 16))
 
 /-! ## Interleaved PCM bytes at every bit depth
 
@@ -435,9 +435,9 @@ def cliMain (args : List String) : IO UInt32 := do
     -- returns — so the bytes are the decoded samples, proven, with no
     -- appeal to how the windows were scheduled
     match Flac.Decode.decodeBytes bytes with
-    | some pcm =>
+    | some (pcm, bps) =>
       IO.FS.writeBinFile outFile pcm
-      IO.println "decoded (frame-parallel serialization)"
+      IO.println s!"decoded ({bps}-bit, frame-parallel serialization)"
       return 0
     | none =>
       -- either the stream does not decode, or some frame is not the uniform

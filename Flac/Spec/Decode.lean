@@ -2695,32 +2695,4 @@ theorem decodePcm16A_eq (flac : ByteArray) :
     · rw [if_pos hb, if_pos hb, pcm16FastPar_eq, pcm16FastA_eq]
     · rw [if_neg hb, if_neg hb]
 
-/-- **Byte-level guarantee for the fast encoder** — no hypotheses, and no
-    trust in `Flac.Encode`: the wrapper certifies each call by running the
-    verified decoder on the produced bytes (falling back to the verified
-    encoder), so a `some` result is correct by construction whichever path
-    produced it. -/
-theorem pcm16Certified_ok {bytes out : ByteArray}
-    (h : pcm16Certified bytes out = true) :
-    decodePcm16 out = .ok bytes := by
-  unfold pcm16Certified at h
-  rw [← decodePcm16A_eq]
-  split at h
-  case h_1 back hdec => rw [hdec, of_decide_eq_true h]
-  case h_2 => cases h
-
-theorem decodePcm16_encodePcm16Fast {blockSize ch sr : Nat}
-    {bytes flac : ByteArray}
-    (h : encodePcm16Fast blockSize ch sr bytes = some flac) :
-    decodePcm16 flac = .ok bytes := by
-  unfold encodePcm16Fast encodePcm16FastGo at h
-  split at h
-  case isFalse => cases h
-  case isTrue =>
-    split at h
-    case isTrue hc =>
-      cases h
-      exact pcm16Certified_ok hc
-    case isFalse => exact decodePcm16_encodePcm16Cfg h
-
 end Flac

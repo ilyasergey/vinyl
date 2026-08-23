@@ -198,12 +198,28 @@ is certified at runtime instead: decode the produced bytes with the
 to the verified encoder. `Flac.decodePcm16_encodePcm16Fast` is therefore
 hypothesis-free — no unverified code is trusted. -/
 
-/-- The runtime certificate: do the produced bytes decode (under the
-    *verified* decoder) to exactly the input PCM? -/
-def pcm16Certified (bytes out : ByteArray) : Bool :=
+/-- The certificate via the sample path: decode to `Array Int` channels,
+    serialize, compare. The fallback. -/
+def pcm16CertifiedSlow (bytes out : ByteArray) : Bool :=
   match decodePcm16A out with
   | .ok back => decide (back = bytes)
   | .error _ => false
+
+/-- The runtime certificate: do the produced bytes decode (under the
+    *verified* decoder) to exactly the input PCM?
+
+    Runs `Flac.Decode.decodeBytes`, which serializes each frame in the
+    worker that decoded it — the certificate is ~27% of encode, and this
+    is the same 1.7x that frame-parallel serialization bought the shipped
+    decoder. `Flac.Stream.pcm16FastA_eq_range` is what lets its bytes
+    stand in for `decodePcm16`'s: the two serializers agree for *every*
+    `Int`, because `Int.toInt64` is reduction mod `2^64` and `2^16` divides
+    `2^64`. A stream the fused path declines takes the sample path. -/
+def pcm16Certified (bytes out : ByteArray) : Bool :=
+  match Decode.decodeBytes out with
+  | some (back, bps) =>
+    if bps = 16 then decide (back = bytes) else pcm16CertifiedSlow bytes out
+  | none => pcm16CertifiedSlow bytes out
 
 /-- Keep the fast output only with a valid certificate; otherwise encode
     with the verified encoder. -/

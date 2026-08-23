@@ -69,7 +69,7 @@ theorem pin_encode_fast :
     ∀ {blockSize ch sr : Nat} {bytes flac : ByteArray},
       Flac.encodePcm16Fast blockSize ch sr bytes = some flac →
         Flac.decodePcm16 flac = .ok bytes :=
-  @Flac.decodePcm16_encodePcm16Fast
+  @Flac.Stream.decodePcm16_encodePcm16Fast
 
 /-- The shipped decoder computes the verified reference decoder. -/
 theorem pin_reference :
@@ -109,8 +109,9 @@ theorem pin_parallel_serialize :
     decoder returns bytes, they are exactly the interleaved PCM
     serialization of the samples `decodeArrays` returns. -/
 theorem pin_decodeBytes :
-    ∀ (bytes out : ByteArray), Flac.Decode.decodeBytes bytes = some out →
-      ∃ chs bps sr, Flac.Decode.decodeArrays bytes = some (chs, bps, sr)
+    ∀ (bytes out : ByteArray) (bps : Nat),
+      Flac.Decode.decodeBytes bytes = some (out, bps) →
+      ∃ chs sr, Flac.Decode.decodeArrays bytes = some (chs, bps, sr)
         ∧ out = Flac.Stream.pcmBytesRange bps chs 0 (chs.headD #[]).size :=
   @Flac.Stream.decodeBytes_spec
 

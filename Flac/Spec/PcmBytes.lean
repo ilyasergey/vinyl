@@ -396,6 +396,131 @@ theorem recombineA_model (w ch : Nat) (frs : List (List (Array Int)))
       (fun f hf => hch f (by simp [hf])) (fun f hf => hunif f (by simp [hf]))]
     simp [framesModel]
 
+/-! ### The verified byte-level serializer computes the same model
+
+`Flac.pcm16Row` writes `(x % 65536).toNat` split into two bytes; the
+serialization loops write the low two bytes of the `UInt64` lane. Those
+agree for **every** `Int`, not just in-range samples: `Int.toInt64` is
+reduction mod `2^64`, and `2^16 ∣ 2^64`. That is what lets the encoder's
+runtime certificate run the frame-parallel byte decoder in place of a
+decode-then-serialize (`pcm16FastA_eq_range`). -/
+
+/-- The `UInt64` lane of `x` is `x` reduced mod `2^64`. -/
+theorem toUInt64_toNat (x : Int) :
+    (x.toInt64.toUInt64).toNat = (x % ((2 ^ 64 : Nat) : Int)).toNat := by
+  show (Int64.ofInt x).toBitVec.toNat = _
+  rw [Int64.toBitVec_ofInt, BitVec.toNat_ofInt]
+
+/-- Reducing mod `D` first does not change the value mod `d` when `d ∣ D`. -/
+theorem toNat_emod_emod (x : Int) (D d : Nat) (hD : 0 < D) (hd : 0 < d)
+    (hdvd : ((d : Nat) : Int) ∣ ((D : Nat) : Int)) :
+    (x % ((D : Nat) : Int)).toNat % d = (x % ((d : Nat) : Int)).toNat := by
+  have hnn : (0 : Int) ≤ x % ((D : Nat) : Int) := Int.emod_nonneg _ (by omega)
+  have hnn2 : (0 : Int) ≤ x % ((d : Nat) : Int) := Int.emod_nonneg _ (by omega)
+  have key : (((x % ((D : Nat) : Int)).toNat % d : Nat) : Int)
+      = ((x % ((d : Nat) : Int)).toNat : Int) := by
+    rw [Int.natCast_emod, Int.toNat_of_nonneg hnn, Int.toNat_of_nonneg hnn2,
+      Int.emod_emod_of_dvd _ hdvd]
+  omega
+
+private theorem d256_65536 : ((256 : Nat) : Int) ∣ ((65536 : Nat) : Int) := ⟨256, by decide⟩
+private theorem d256_pow64 : ((256 : Nat) : Int) ∣ ((2 ^ 64 : Nat) : Int) :=
+  ⟨2 ^ 56, by decide⟩
+private theorem d65536_pow64 : ((65536 : Nat) : Int) ∣ ((2 ^ 64 : Nat) : Int) :=
+  ⟨2 ^ 48, by decide⟩
+private theorem c65536 : ((65536 : Nat) : Int) = (65536 : Int) := rfl
+
+/-- The low byte of the `UInt64` lane is the byte `Flac.byteListOfPcm16`
+    writes. -/
+theorem lane_lo (x : Int) :
+    (x.toInt64.toUInt64).toUInt8 = UInt8.ofNat ((x % 65536).toNat % 256) := by
+  apply UInt8.toNat_inj.mp
+  have hl : (x.toInt64.toUInt64).toUInt8.toNat = (x % ((2 ^ 64 : Nat) : Int)).toNat % 256 := by
+    rw [show (x.toInt64.toUInt64).toUInt8.toNat = (x.toInt64.toUInt64).toNat % 256 from by simp,
+      toUInt64_toNat]
+  have hr : (UInt8.ofNat ((x % 65536).toNat % 256)).toNat = (x % 65536).toNat % 256 := by
+    rw [show (UInt8.ofNat ((x % 65536).toNat % 256)).toNat
+        = ((x % 65536).toNat % 256) % 256 from by simp]
+    omega
+  rw [hl, hr, ← c65536,
+    toNat_emod_emod x (2 ^ 64) 256 (by omega) (by omega) d256_pow64,
+    toNat_emod_emod x 65536 256 (by omega) (by omega) d256_65536]
+
+/-- The high byte of the `UInt64` lane, likewise. -/
+theorem lane_hi (x : Int) :
+    ((x.toInt64.toUInt64) >>> 8).toUInt8 = UInt8.ofNat ((x % 65536).toNat / 256) := by
+  apply UInt8.toNat_inj.mp
+  have hshift : ((x.toInt64.toUInt64) >>> 8).toUInt8.toNat
+      = ((x % ((2 ^ 64 : Nat) : Int)).toNat / 256) % 256 := by
+    rw [show ((x.toInt64.toUInt64) >>> 8).toUInt8.toNat
+        = ((x.toInt64.toUInt64) >>> 8).toNat % 256 from by simp,
+      show ((x.toInt64.toUInt64) >>> 8).toNat = (x.toInt64.toUInt64).toNat / 256 from by
+        simp [UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow],
+      toUInt64_toNat]
+  have hmd : ((x % ((2 ^ 64 : Nat) : Int)).toNat / 256) % 256
+      = ((x % ((2 ^ 64 : Nat) : Int)).toNat % 65536) / 256 :=
+    (Nat.mod_mul_right_div_self _ 256 256).symm
+  have hr : (UInt8.ofNat ((x % 65536).toNat / 256)).toNat = (x % 65536).toNat / 256 := by
+    rw [show (UInt8.ofNat ((x % 65536).toNat / 256)).toNat
+        = ((x % 65536).toNat / 256) % 256 from by simp]
+    have hlt : (x % 65536).toNat < 65536 := by
+      have h1 : x % (65536 : Int) < 65536 := Int.emod_lt_of_pos _ (by omega)
+      omega
+    omega
+  rw [hshift, hmd, hr, ← c65536,
+    toNat_emod_emod x (2 ^ 64) 65536 (by omega) (by omega) d65536_pow64]
+
+private theorem pcm16Row_model (i : Nat) : ∀ (arrs : List (Array Int)) (out : ByteArray),
+    Flac.pcm16Row arrs i out = out ++ (rowModel 2 arrs i).toByteArray := by
+  intro arrs
+  induction arrs with
+  | nil =>
+    intro out
+    show Flac.pcm16Row [] i out = _
+    apply bytes_ext
+    rw [append_toList, toByteArray_toList]
+    simp [rowModel, Flac.pcm16Row]
+  | cons a as ih =>
+    intro out
+    show Flac.pcm16Row as i
+        ((out.push (UInt8.ofNat ((a.getD i 0 % 65536).toNat % 256))).push
+          (UInt8.ofNat ((a.getD i 0 % 65536).toNat / 256))) = _
+    rw [ih, ← lane_lo (a.getD i 0), ← lane_hi (a.getD i 0)]
+    apply bytes_ext
+    rw [append_toList, append_toList, toByteArray_toList, toByteArray_toList,
+      data_toList_push, data_toList_push]
+    simp [rowModel, sampleLE, List.append_assoc]
+
+private theorem pcm16Go_model (arrs : List (Array Int)) :
+    ∀ (len i : Nat) (out : ByteArray),
+      Flac.pcm16Go arrs len i out = out ++ (pcmModel 2 arrs i len).toByteArray := by
+  intro len
+  induction len with
+  | zero =>
+    intro i out
+    show out = _
+    apply bytes_ext
+    rw [append_toList, toByteArray_toList]
+    simp [pcmModel]
+  | succ len ih =>
+    intro i out
+    show Flac.pcm16Go arrs len (i + 1) (Flac.pcm16Row arrs i out) = _
+    rw [pcm16Row_model, ih (i + 1)]
+    apply bytes_ext
+    rw [append_toList, append_toList, append_toList, toByteArray_toList,
+      toByteArray_toList, toByteArray_toList]
+    simp [pcmModel, List.append_assoc]
+
+/-- **The two serializers agree**: the verified byte-level serializer of
+    `Flac.decodePcm16` is `pcmBytesRange` at 16 bits. -/
+theorem pcm16FastA_eq_range (arrs : List (Array Int)) :
+    Flac.pcm16FastA arrs = pcmBytesRange 16 arrs 0 (arrs.headD #[]).size := by
+  show Flac.pcm16Go arrs (arrs.headD #[]).size 0 _ = _
+  rw [pcm16Go_model, pcmBytesRange_eq]
+  apply bytes_ext
+  rw [append_toList, toByteArray_toList]
+  simp [emptyCap_eq]
+
 /-! ### The fused byte path is sound -/
 
 open Flac.Decode
@@ -574,9 +699,9 @@ theorem readFramesFast_eq_At (b0 : Nat) (d : ByteArray) (fuel pos : Nat) :
 
 /-- **Capstone for the fused decoder**: a `some` result is exactly the
     interleaved PCM serialization of the samples `decodeArrays` returns. -/
-theorem decodeBytes_spec (bytes out : ByteArray) :
-    Flac.Decode.decodeBytes bytes = some out →
-      ∃ chs bps sr, Flac.Decode.decodeArrays bytes = some (chs, bps, sr)
+theorem decodeBytes_spec (bytes out : ByteArray) (bps : Nat) :
+    Flac.Decode.decodeBytes bytes = some (out, bps) →
+      ∃ chs sr, Flac.Decode.decodeArrays bytes = some (chs, bps, sr)
         ∧ out = pcmBytesRange bps chs 0 (chs.headD #[]).size := by
   intro h
   simp only [Flac.Decode.decodeBytes] at h
@@ -592,10 +717,15 @@ theorem decodeBytes_spec (bytes out : ByteArray) :
       | some (si, br2) =>
         rw [hme] at h
         dsimp only at h
+        rw [Option.map_eq_some_iff] at h
+        obtain ⟨raw, hraw, hpair⟩ := h
+        injection hpair with h1 h2
+        subst h1
+        subst h2
         obtain ⟨frames, hframes, hch, hunif, hr⟩ :=
           readBytesSteps_spec si.bps si.bps si.channels br2.data _
-            (br2.remaining + 1) br2.pos _ out h
-        refine ⟨Flac.Decode.recombineA si.channels frames, si.bps, si.sampleRate, ?_, ?_⟩
+            (br2.remaining + 1) br2.pos _ raw hraw
+        refine ⟨Flac.Decode.recombineA si.channels frames, si.sampleRate, ?_, ?_⟩
         · simp only [Flac.Decode.decodeArrays]
           rw [hm]
           dsimp only
@@ -609,5 +739,59 @@ theorem decodeBytes_spec (bytes out : ByteArray) :
           simp [emptyCap_eq]
     · rw [if_neg hmk] at h; exact absurd h (by simp)
 
+
+/-! ### The encoder's runtime certificate
+
+`pcm16Certified` now runs the frame-parallel byte decoder rather than a
+decode followed by a serial serialization, which is where ~27% of encode
+went. Its obligation is unchanged and one-directional: a `true` verdict
+must imply `decodePcm16 out = .ok bytes`. -/
+
+theorem pcm16CertifiedSlow_ok {bytes out : ByteArray}
+    (h : Flac.pcm16CertifiedSlow bytes out = true) :
+    Flac.decodePcm16 out = .ok bytes := by
+  unfold Flac.pcm16CertifiedSlow at h
+  rw [← Flac.decodePcm16A_eq]
+  split at h
+  case h_1 back hdec => rw [hdec, of_decide_eq_true h]
+  case h_2 => cases h
+
+/-- **Byte-level guarantee for the fast encoder** — no hypotheses, and no
+    trust in `Flac.Encode`: the wrapper certifies each call by running the
+    verified decoder on the produced bytes (falling back to the verified
+    encoder), so a `some` result is correct by construction whichever path
+    produced it. -/
+theorem pcm16Certified_ok {bytes out : ByteArray}
+    (h : Flac.pcm16Certified bytes out = true) :
+    Flac.decodePcm16 out = .ok bytes := by
+  unfold Flac.pcm16Certified at h
+  split at h
+  case h_2 => exact pcm16CertifiedSlow_ok h
+  case h_1 back bps hdec =>
+    split at h
+    case isFalse => exact pcm16CertifiedSlow_ok h
+    case isTrue hbps =>
+      subst hbps
+      obtain ⟨chs, sr, harr, hback⟩ := decodeBytes_spec out back 16 hdec
+      rw [← Flac.decodePcm16A_eq]
+      unfold Flac.decodePcm16A
+      rw [harr]
+      show (if (16 : Nat) = 16 then _ else _) = _
+      rw [if_pos rfl, Flac.pcm16FastPar_eq, pcm16FastA_eq_range, ← hback,
+        of_decide_eq_true h]
+
+theorem decodePcm16_encodePcm16Fast {blockSize ch sr : Nat}
+    {bytes flac : ByteArray}
+    (h : Flac.encodePcm16Fast blockSize ch sr bytes = some flac) :
+    Flac.decodePcm16 flac = .ok bytes := by
+  unfold Flac.encodePcm16Fast Flac.encodePcm16FastGo at h
+  split at h
+  case isFalse => cases h
+  case isTrue =>
+    split at h
+    case isTrue hc =>
+      cases h
+      exact pcm16Certified_ok hc
+    case isFalse => exact Flac.decodePcm16_encodePcm16Cfg h
 
 end Flac.Stream
