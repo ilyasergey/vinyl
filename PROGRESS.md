@@ -727,6 +727,18 @@ each, so process startup damps both the absolute figures and the deltas.
    verified chooser and the fast encoder read — which is what keeps them
    byte-identical when either is tuned — with the measured tradeoff curve
    in the docstring.
+8. **Two new test groups** (suite 73 → 88 checks). `fastMirrorTests` pins
+   the float searches to the verified encoder's `Int`/list searches,
+   byte-for-byte — the load-bearing invariant of item 1, and not a theorem
+   (the fast encoder is unverified by design). `pcmBytesTests` gives
+   `Stream.pcmBytesRange` golden vectors at 8/16/24 bits, across
+   mono/stereo/three-channel interleaving, and pins it against the
+   verified `Flac.pcm16Fast` on the same samples — it is deliberately
+   outside every theorem, so item 3 needed vectors rather than a proof.
+
+Conformance is green throughout: `conformance/smoke.sh` (both directions
+against libFLAC 1.5.0) and `conformance/fuzz.sh 150` (totality,
+bit-flip, compiled round-trip) after the serialization change.
 
 **Two shapes worth remembering** (both cost real time before they were
 found):
