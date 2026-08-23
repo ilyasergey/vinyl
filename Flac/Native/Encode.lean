@@ -719,7 +719,16 @@ def encodePcm16 (blockSize ch sr : Nat) (bytes : ByteArray) : ByteArray :=
   Id.run do
     if ch = 0 then return ByteArray.empty
     let n := bytes.size / (2 * ch)
-    let md5 := Md5.md5 bytes
+    -- MD5 is chained, so it cannot be split across workers — but it does
+    -- not have to sit on the critical path either. Spawned here and
+    -- collected below, it overlaps the frame workers instead: it was
+    -- 62 ms of a 550 ms 32 MB encode, all of it serial, because the
+    -- STREAMINFO digest was computed before the first frame task started.
+    let md5Task := Task.spawn fun _ => Md5.md5 bytes
+    let frameTasks := if blockSize = 0 then [] else
+      (List.range ((n + blockSize - 1) / blockSize)).map fun f =>
+        Task.spawn fun _ => frameBytesPcm blockSize ch 16 false bytes n f
+    let md5 := md5Task.get
     let mut w := BitWriter.empty 64
     w := w.push 32 0x664C6143
     w := ((w.push 1 1).push 7 0).push 24 34
@@ -730,10 +739,8 @@ def encodePcm16 (blockSize ch sr : Nat) (bytes : ByteArray) : ByteArray :=
     for byte in md5.toList do
       w := w.push 8 byte.toNat
     if blockSize = 0 then return w.buf
-    let tasks := (List.range ((n + blockSize - 1) / blockSize)).map fun f =>
-      Task.spawn fun _ => frameBytesPcm blockSize ch 16 false bytes n f
     let mut out := w.buf
-    for t in tasks do
+    for t in frameTasks do
       out := out ++ t.get
     return out
 
