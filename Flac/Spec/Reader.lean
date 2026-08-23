@@ -356,6 +356,52 @@ theorem readUnaryGo_sim (d : ByteArray) :
           (by simp only [length_bytesToBits]; omega)]
       rfl
 
+/-- The scalar unary scanner stays inside its searched interval. -/
+theorem scanOne_bounds (d : ByteArray) : ∀ (fuel pos : Nat),
+    pos ≤ scanOne d pos fuel ∧ scanOne d pos fuel ≤ pos + fuel := by
+  intro fuel
+  induction fuel with
+  | zero => intro pos; simp [scanOne]
+  | succ fuel ih =>
+    intro pos
+    unfold scanOne
+    by_cases h : bitFast d pos
+    · rw [if_pos h]
+      omega
+    · rw [if_neg h]
+      have hb := ih (pos + 1)
+      omega
+
+/-- `scanOne` is `readUnaryGo` with the quotient recovered from the
+    terminating-bit position.  Its right-hand side allocates only in this
+    specification; the production Rice loop consumes `scanOne`'s scalar
+    result directly. -/
+theorem scanOne_spec (d : ByteArray) : ∀ (fuel pos q : Nat),
+    readUnaryGo d q pos fuel =
+      let onePos := scanOne d pos fuel
+      if onePos < pos + fuel then
+        some (q + (onePos - pos), onePos + 1)
+      else none := by
+  intro fuel
+  induction fuel with
+  | zero => intro pos q; simp [readUnaryGo, scanOne]
+  | succ fuel ih =>
+    intro pos q
+    unfold readUnaryGo scanOne
+    by_cases h : bitFast d pos
+    · rw [if_pos h, if_pos h]
+      simp
+    · rw [if_neg h, if_neg h, ih]
+      obtain ⟨hlo, hhi⟩ := scanOne_bounds d fuel (pos + 1)
+      by_cases hs : scanOne d (pos + 1) fuel < pos + (fuel + 1)
+      · have hsub : scanOne d (pos + 1) fuel - pos =
+            (scanOne d (pos + 1) fuel - (pos + 1)) + 1 := by omega
+        simp only [show pos + 1 + fuel = pos + (fuel + 1) by omega, hs, if_true,
+          Option.some.injEq, Prod.mk.injEq]
+        rw [hsub]
+        simp [Nat.add_assoc, Nat.add_comm]
+      · simp only [show pos + 1 + fuel = pos + (fuel + 1) by omega, hs, if_false]
+
 theorem readUnary_sim (br : BitReader) :
     Bits.readUnary (toStream br)
       = (br.readUnary).map (fun p => (p.1, toStream p.2)) := by

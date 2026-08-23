@@ -31,7 +31,7 @@ so hot paths can use it under the unchanged theorems. -/
 def pow2Table : Array Nat := Array.ofFn (n := 64) fun i => 2 ^ i.val
 
 /-- `2 ^ n` without GMP traffic for `n < 64`. -/
-def p2 (n : Nat) : Nat :=
+@[inline] def p2 (n : Nat) : Nat :=
   if h : n < 64 then
     pow2Table[n]'(by simp only [pow2Table, Array.size_ofFn]; exact h)
   else 2 ^ n
@@ -86,7 +86,7 @@ def withConsumed (f : BitStream → Option (α × BitStream)) (s : BitStream) :
 /-- Arithmetic shift right on ℤ (floor division by `2^s`): the exact
     semantics of a two's-complement `>>`, matching what production Int64
     code will do at M5. -/
-def sar (x : Int) (s : Nat) : Int :=
+@[inline] def sar (x : Int) (s : Nat) : Int :=
   match x with
   | .ofNat m => .ofNat (m >>> s)
   | .negSucc m => .negSucc (m >>> s)

@@ -89,9 +89,45 @@ def readRiceSeqGo (d : ByteArray) (k : Nat) : (count : Nat) → (pos : Nat) →
           (acc.push (Rice.unzigzag (q * p2 k + extractBitsFast d pos1 k)))
       else none
 
+/-- Allocation-free unary scan inside a Rice run.  `total` and `pk = 2^k`
+    are loop invariants hoisted by the wrapper; `scanOne` returns the
+    terminating-bit position as a scalar instead of allocating an option/pair
+    per sample.  `Flac.Spec.Decode.readRiceSeqScan_eq` pins this to
+    `readRiceSeqGo`. -/
+def readRiceSeqScan (d : ByteArray) (k pk total : Nat) :
+    (count : Nat) → (pos : Nat) → Array Int → Option (Array Int × Nat)
+  | 0, pos, acc => some (acc, pos)
+  | count + 1, pos, acc =>
+    if pos < total then
+      if bitFast d pos then
+        let pos1 := pos + 1
+        if k = 0 then
+          readRiceSeqScan d k pk total count pos1
+            (acc.push 0)
+        else if pos1 + k ≤ total then
+          readRiceSeqScan d k pk total count (pos1 + k)
+            (acc.push (Rice.unzigzag (extractBitsFast d pos1 k)))
+        else none
+      else
+        let onePos := scanOne d (pos + 1) (total - (pos + 1))
+        if onePos < total then
+          let q := onePos - pos
+          let pos1 := onePos + 1
+          if k = 0 then
+            readRiceSeqScan d k pk total count pos1
+              (acc.push (Rice.unzigzag q))
+          else if pos1 + k ≤ total then
+            readRiceSeqScan d k pk total count (pos1 + k)
+              (acc.push (Rice.unzigzag (q * pk + extractBitsFast d pos1 k)))
+          else none
+        else none
+    else none
+
 @[inline] def readRiceSeqFast (k count : Nat) (br : BitReader) (acc : Array Int) :
     Option (Array Int × BitReader) :=
-  match readRiceSeqGo br.data k count br.pos acc with
+  let result :=
+    readRiceSeqScan br.data k (p2 k) (8 * br.data.size) count br.pos acc
+  match result with
   | none => none
   | some (a, pos) => some (a, ⟨br.data, pos⟩)
 

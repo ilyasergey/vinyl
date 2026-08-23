@@ -153,6 +153,68 @@ private theorem readSInt_pos (bits : Nat) (d : ByteArray) (pos : Nat) :
     · simp only [hb, if_true]
     · simp only [hb, if_false]
 
+/-- The allocation-free Rice state machine computes the original fused
+    position reader.  This is the only bridge needed by callers: the existing
+    sequence simulation and every decoder capstone keep their statements. -/
+theorem readRiceSeqScan_eq (d : ByteArray) (k : Nat) :
+    ∀ (count pos : Nat) (acc : Array Int),
+      readRiceSeqScan d k (p2 k) (8 * d.size) count pos acc =
+        readRiceSeqGo d k count pos acc := by
+  intro count
+  induction count with
+  | zero => intro pos acc; rfl
+  | succ count ih =>
+    intro pos acc
+    unfold readRiceSeqScan readRiceSeqGo
+    by_cases hp : pos < 8 * d.size
+    · rw [if_pos hp]
+      have hs := scanOne_spec d (8 * d.size - pos) pos 0
+      rw [show pos + (8 * d.size - pos) = 8 * d.size from by omega] at hs
+      rw [hs]
+      have hfuel : 8 * d.size - pos = (8 * d.size - (pos + 1)) + 1 := by omega
+      have hscan : scanOne d pos (8 * d.size - pos) =
+          (if bitFast d pos then pos
+           else scanOne d (pos + 1) (8 * d.size - (pos + 1))) := by
+        rw [hfuel]
+        rfl
+      rw [hscan]
+      by_cases hb : bitFast d pos
+      · simp only [hb, if_true, hp]
+        by_cases hk : k = 0
+        · simp only [hk, if_true, Rice.unzigzag]
+          simpa [hk] using ih (pos + 1) (acc.push 0)
+        · simp only [hk, if_false]
+          by_cases hr : pos + 1 + k ≤ 8 * d.size
+          · simp only [hr, if_true, Nat.zero_add]
+            simpa [hk] using ih (pos + 1 + k)
+              (acc.push (Rice.unzigzag (extractBitsFast d (pos + 1) k)))
+          · simp only [hr, if_false]
+      · simp only [hb, Bool.false_eq_true, if_false]
+        by_cases ho : scanOne d (pos + 1) (8 * d.size - (pos + 1)) < 8 * d.size
+        · simp only [ho, if_true, Nat.zero_add]
+          by_cases hk : k = 0
+          · simp only [hk, if_true]
+            simpa [hk] using ih
+              (scanOne d (pos + 1) (8 * d.size - (pos + 1)) + 1)
+              (acc.push (Rice.unzigzag
+                (scanOne d (pos + 1) (8 * d.size - (pos + 1)) - pos)))
+          · simp only [hk, if_false]
+            by_cases hr : scanOne d (pos + 1) (8 * d.size - (pos + 1)) + 1 + k ≤
+                8 * d.size
+            · simp only [hr, if_true]
+              simpa [hk] using ih
+                (scanOne d (pos + 1) (8 * d.size - (pos + 1)) + 1 + k)
+                (acc.push (Rice.unzigzag
+                  ((scanOne d (pos + 1) (8 * d.size - (pos + 1)) - pos) * p2 k +
+                    extractBitsFast d
+                      (scanOne d (pos + 1) (8 * d.size - (pos + 1)) + 1) k)))
+            · simp only [hr, if_false]
+        · simp only [ho, if_false]
+    · rw [if_neg hp]
+      have hz : 8 * d.size - pos = 0 := by omega
+      rw [hz]
+      rfl
+
 theorem readRiceSeqFast_eq (k : Nat) :
     ∀ (count : Nat) (br : BitReader) (acc : Array Int),
       readRiceSeqFast k count br acc = readRiceSeqA k count br acc := by
@@ -162,7 +224,9 @@ theorem readRiceSeqFast_eq (k : Nat) :
   | succ count ih =>
     intro br acc
     obtain ⟨d, pos⟩ := br
-    unfold readRiceSeqFast readRiceSeqGo readRiceSeqA
+    unfold readRiceSeqFast
+    rw [readRiceSeqScan_eq]
+    unfold readRiceSeqGo readRiceSeqA
     dsimp only
     rw [readRice_pos]
     cases readUnaryGo d 0 pos (8 * d.size - pos) with
@@ -173,6 +237,7 @@ theorem readRiceSeqFast_eq (k : Nat) :
       · rw [if_pos hk, if_pos hk]
         have h := ih ⟨d, p.2⟩ (acc.push (Rice.unzigzag p.1))
         unfold readRiceSeqFast at h
+        rw [readRiceSeqScan_eq] at h
         exact h
       · rw [if_neg hk, if_neg hk]
         by_cases hb : p.2 + k ≤ 8 * d.size
@@ -180,6 +245,7 @@ theorem readRiceSeqFast_eq (k : Nat) :
           have h := ih ⟨d, p.2 + k⟩
             (acc.push (Rice.unzigzag (p.1 * p2 k + extractBitsFast d p.2 k)))
           unfold readRiceSeqFast at h
+          rw [readRiceSeqScan_eq] at h
           exact h
         · simp only [hb, if_false]
 

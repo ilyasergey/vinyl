@@ -41,12 +41,12 @@ def extractBits (d : ByteArray) (pos : Nat) : Nat → Nat
 
 /-- The `i`-th bit by shift and mask — no `Nat.pow` in the hot path.
     Proven equal to `bit` (`Flac.Spec.Reader.bitFast_eq`). -/
-def bitFast (d : ByteArray) (i : Nat) : Bool :=
+@[inline] def bitFast (d : ByteArray) (i : Nat) : Bool :=
   decide ((if h : i / 8 < d.size then d[i / 8] else 0).toNat >>> (7 - i % 8) &&& 1 = 1)
 
 /-- Big-endian accumulation of the `k` bytes starting at index `i`
     (out-of-range bytes read as 0, matching `bit`). -/
-def accBytes (d : ByteArray) : (i k acc : Nat) → Nat
+@[inline] def accBytes (d : ByteArray) : (i k acc : Nat) → Nat
   | _, 0, acc => acc
   | i, k + 1, acc =>
     accBytes d (i + 1) k (acc * 256 + (if h : i < d.size then d[i] else 0).toNat)
@@ -54,7 +54,7 @@ def accBytes (d : ByteArray) : (i k acc : Nat) → Nat
 /-- Byte-at-a-time bit extraction: fetch the covering bytes, drop the
     trailing bits, mask to `n`. Proven equal to `extractBits`
     (`Flac.Spec.Reader.extractBitsFast_eq`). -/
-def extractBitsFast (d : ByteArray) (pos n : Nat) : Nat :=
+@[inline] def extractBitsFast (d : ByteArray) (pos n : Nat) : Nat :=
   accBytes d (pos / 8) ((pos + n + 7) / 8 - pos / 8) 0
     >>> ((8 - (pos + n) % 8) % 8) &&& (p2 n - 1)
 
@@ -76,6 +76,16 @@ def readUnaryGo (d : ByteArray) (q : Nat) (pos : Nat) : Nat → Option (Nat × N
   | fuel + 1 =>
     if bitFast d pos then some (q, pos + 1)
     else readUnaryGo d (q + 1) (pos + 1) fuel
+
+/-- Position of the next one bit, or `pos + fuel` when the searched range
+    contains only zeroes.  Unlike `readUnaryGo`, the successful hot path
+    returns one scalar `Nat`: Rice sequence readers recover the quotient as
+    `onePos - pos` and avoid allocating an `Option (Nat × Nat)` for every
+    sample.  Proven equivalent to `readUnaryGo` in `Flac.Spec.Reader`. -/
+@[inline] def scanOne (d : ByteArray) : (pos fuel : Nat) → Nat
+  | pos, 0 => pos
+  | pos, fuel + 1 =>
+    if bitFast d pos then pos else scanOne d (pos + 1) fuel
 
 def readUnary (br : BitReader) : Option (Nat × BitReader) :=
   match readUnaryGo br.data 0 br.pos br.remaining with

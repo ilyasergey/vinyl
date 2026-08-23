@@ -24,7 +24,7 @@ def zigzag (x : Int) : Nat :=
   if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1
 
 /-- Unfold: even `u ↦ u/2`, odd `u ↦ -(u/2) - 1`. -/
-def unzigzag (u : Nat) : Int :=
+@[inline] def unzigzag (u : Nat) : Int :=
   if u % 2 = 0 then ((u / 2 : Nat) : Int) else -(((u / 2 : Nat) : Int) + 1)
 
 /-! ## Rice code for a single residual -/
