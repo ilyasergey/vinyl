@@ -57,16 +57,20 @@ trailing slightly on noise, noisy mixes, and stereo.
 ## Speed
 
 Per-file throughput (log scale), sorted slowest→fastest per codec; a
-curve that sits higher is faster. Dashed lines mark each codec's median
-and the arrow labels the median gap. **Top** — encode. **Bottom** —
-decode (the shipped buffered decoder):
+curve that sits higher is faster. Dashed lines mark the two medians the
+arrow spans, and the arrow names the baseline it is drawn against: the
+encode panel is measured against **`flac -8`**, the preset whose
+compression ratio Vinyl matches, and the decode panel against libFLAC's
+decoder. All four encoder curves are plotted regardless, with medians in
+the legend, so the `-0`/`-5` presets stay visible for context.
+**Top** — encode. **Bottom** — decode (the shipped buffered decoder):
 
 ![Throughput vs libFLAC](performance.png)
 
 Current five-run medians (2026-08-23): Vinyl encode 24.5 MB/s and Vinyl
 decode 79.2 MB/s, versus 108.7 MB/s for `flac -5` encode, 75.1 MB/s for
 `flac -8` encode, and 125.1 MB/s for libFLAC decode. That is a
-**1.58× decode gap** and a 4.4× encode gap against `flac -5` — **3.1×
+**1.58× decode gap** and a 4.43× encode gap against `flac -5` — **3.06×
 against `flac -8`, the level whose compression Vinyl matches**.
 
 Progress this session, all with the capstones unchanged and no proof debt:
