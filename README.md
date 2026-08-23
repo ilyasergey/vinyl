@@ -64,13 +64,16 @@ current feature envelope decode byte-identically with `decodeReference`
 Measured on the 37-file synthetic 16-bit corpus of `bench/gen_corpus.py`
 — six content categories (tonal, waveforms, noise, tonal+noise mixes,
 degenerate signals, stereo pairs) — against libFLAC 1.5.0; regenerate
-with `./bench/run.sh`. **Top left** — compression cactus: each encoder's
-per-file ratios sorted ascending; a curve that stays lower compresses
-better. **Top right** — throughput profile: per-file encode throughput
-(log scale), each encoder's files sorted slowest→fastest; higher is
-faster. **Bottom** — aggregate compression per content category:
+with `./bench/run.sh`. All percentages are compression ratios: encoded
+size as a fraction of the raw PCM, lower is better.
 
-![Compression and speed vs libFLAC](bench/cactus.png)
+### Compression
+
+**Left** — per-file cactus: each encoder's ratios sorted ascending; a
+curve that stays lower compresses better. **Right** — aggregate ratio
+(total encoded bytes ÷ total raw bytes) per content category:
+
+![Compression vs libFLAC](bench/compression.png)
 
 | category | vinyl | flac -0 | flac -5 | flac -8 |
 |---|---|---|---|---|
@@ -86,10 +89,20 @@ With the M4 heuristics (Levinson–Durbin LPC, wasted-bit detection,
 stereo-mode decision, adaptive Rice partitioning), the verified encoder's
 overall ratio **beats `flac -8`** on this corpus (39.5% vs 39.8% of raw),
 winning tonal/waveform/degenerate content and trailing slightly on noisy
-mixes and stereo. Encode speed is ~0.2 MB/s vs libFLAC's ~30 MB/s: the
-encoder still runs on the proof-oriented bit model and does an exhaustive
-partition search; performance work is deliberately deferred to M6, *after*
-the capstone makes optimization safe (PLAN.md §7).
+mixes and stereo.
+
+### Encode speed
+
+Per-file throughput (log scale), each encoder's files sorted
+slowest→fastest; a curve that sits higher is faster:
+
+![Encode speed vs libFLAC](bench/performance.png)
+
+Honest reading: vinyl encodes at ~0.2 MB/s vs libFLAC's ~30 MB/s — about
+150× slower. The encoder still runs on the proof-oriented `List Bool` bit
+model and does an exhaustive partition search; performance work is
+deliberately deferred to M6, *after* the capstone makes optimization safe
+(PLAN.md §7).
 
 ## Building
 

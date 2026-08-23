@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Cactus plots from bench/results.csv: per-file compression ratio and
-encode throughput, each series sorted independently (SAT-solver style —
-curves lower/righter are better on ratio, higher/righter on speed)."""
+"""Render benchmark figures from bench/results.csv:
+
+- bench/compression.png — per-file ratio cactus + per-category aggregate bars
+- bench/performance.png — per-file encode-throughput profile
+- bench/summary.md      — the per-category ratio table (pasted into README)
+"""
 import csv
+import os
 import sys
 from collections import defaultdict
 
@@ -11,7 +15,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 results_csv = sys.argv[1] if len(sys.argv) > 1 else "bench/results.csv"
-out_png = sys.argv[2] if len(sys.argv) > 2 else "bench/cactus.png"
+out_dir = os.path.dirname(results_csv) or "bench"
+
+CATS = ["tonal", "wave", "noise", "mixed", "degen", "stereo"]
 
 ratio = defaultdict(list)      # encoder -> [encoded/raw]
 speed = defaultdict(list)      # encoder -> [raw MB/s per file]
@@ -35,15 +41,8 @@ STYLE = {
     "flac -8": dict(color="#334155", marker="v", lw=1.6),
 }
 
-CATS = ["tonal", "wave", "noise", "mixed", "degen", "stereo"]
-
-def category(name):
-    return name.split("-")[0]
-
-fig = plt.figure(figsize=(11, 8.2), dpi=150)
-ax1 = fig.add_subplot(2, 2, 1)
-ax2 = fig.add_subplot(2, 2, 2)
-ax3 = fig.add_subplot(2, 1, 2)
+# ── compression: cactus + category bars ─────────────────────────────────
+fig, (ax1, ax3) = plt.subplots(1, 2, figsize=(11, 4.6), dpi=150)
 
 for enc in STYLE:
     if enc not in ratio:
@@ -53,26 +52,10 @@ for enc in STYLE:
              label=enc, ms=4, **STYLE[enc])
 ax1.set_xlabel("files solved (sorted per encoder)")
 ax1.set_ylabel("compression ratio, % of raw (lower = better)")
-ax1.set_title("Compression ratio cactus")
+ax1.set_title("Per-file ratio cactus")
 ax1.grid(alpha=0.25)
 ax1.legend()
 
-# throughput profile: per-file encode throughput, each encoder's files
-# sorted ascending. Read a point (n, y) as "all but the n fastest files
-# encode at ≤ y MB/s"; a curve that sits higher is a faster encoder.
-for enc in STYLE:
-    if enc not in speed:
-        continue
-    ys = sorted(speed[enc])
-    ax2.plot(range(1, len(ys) + 1), ys, label=enc, ms=4, **STYLE[enc])
-ax2.set_xlabel("files (each encoder sorted slowest → fastest)")
-ax2.set_ylabel("encode throughput, raw MB/s (higher = faster)")
-ax2.set_yscale("log")
-ax2.set_title("Encode throughput profile")
-ax2.grid(alpha=0.25, which="both")
-ax2.legend()
-
-# per-category aggregate ratio, grouped bars
 cats = [c for c in CATS if c in catbytes]
 width = 0.2
 for k, enc in enumerate(STYLE):
@@ -83,17 +66,34 @@ for k, enc in enumerate(STYLE):
 ax3.set_xticks(range(len(cats)))
 ax3.set_xticklabels(cats)
 ax3.set_ylabel("aggregate ratio, % of raw (lower = better)")
-ax3.set_title("Compression by content category")
+ax3.set_title("Aggregate ratio by content category")
 ax3.grid(alpha=0.25, axis="y")
-ax3.legend(ncol=4)
+ax3.legend(ncol=2)
 
-fig.suptitle("Vinyl (verified) vs libFLAC — synthetic 16-bit corpus")
+fig.suptitle("Compression — Vinyl (verified) vs libFLAC, synthetic 16-bit corpus")
 fig.tight_layout()
-fig.savefig(out_png)
-print(f"wrote {out_png}")
+fig.savefig(os.path.join(out_dir, "compression.png"))
+print("wrote compression.png")
 
-# markdown summary for the README
-with open(out_png.replace("cactus.png", "summary.md"), "w") as f:
+# ── performance: throughput profile ─────────────────────────────────────
+fig2, ax2 = plt.subplots(figsize=(7.5, 4.6), dpi=150)
+for enc in STYLE:
+    if enc not in speed:
+        continue
+    ys = sorted(speed[enc])
+    ax2.plot(range(1, len(ys) + 1), ys, label=enc, ms=4, **STYLE[enc])
+ax2.set_xlabel("files (each encoder sorted slowest → fastest)")
+ax2.set_ylabel("encode throughput, raw MB/s (higher = faster)")
+ax2.set_yscale("log")
+ax2.set_title("Encode speed — Vinyl (verified) vs libFLAC")
+ax2.grid(alpha=0.25, which="both")
+ax2.legend()
+fig2.tight_layout()
+fig2.savefig(os.path.join(out_dir, "performance.png"))
+print("wrote performance.png")
+
+# ── markdown summary table ───────────────────────────────────────────────
+with open(os.path.join(out_dir, "summary.md"), "w") as f:
     f.write("| category | vinyl | flac -0 | flac -5 | flac -8 |\n")
     f.write("|---|---|---|---|---|\n")
     for c in cats + ["TOTAL"]:

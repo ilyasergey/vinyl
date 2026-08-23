@@ -43,5 +43,5 @@ for pcm in "$CORPUS"/*.pcm; do
   echo "done: $name"
 done
 
-python3 $BENCH/plot.py "$RESULTS" $BENCH/cactus.png
-echo "wrote $RESULTS and $BENCH/cactus.png"
+python3 $BENCH/plot.py "$RESULTS"
+echo "wrote $RESULTS, compression.png, performance.png"
