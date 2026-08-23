@@ -51,9 +51,11 @@ decode (the shipped buffered decoder):
 
 ![Throughput vs libFLAC](performance.png)
 
-Honest reading: Vinyl encodes at ~7.3 MB/s and decodes at ~14 MB/s
-(medians), against libFLAC's ~25–29 MB/s measured in the same run —
-roughly 4× off on encode, 2× on decode. Compare medians *within* one
+Honest reading: Vinyl encodes at ~8 MB/s and decodes at ~15.5 MB/s
+(medians), against libFLAC's ~31–37 MB/s measured in the same run —
+roughly 4.4× off on encode, 2.4× on decode (down from ×200 / ×25
+before the M6 work; a 10 MB file does better than the 1 MB-file
+medians: 12 MB/s encode, 25 MB/s decode). Compare medians *within* one
 run only; absolute throughput moves ±20% between runs with machine
 load, which is why the figure plots both codecs together. Both fast
 paths carry zero new proof debt: the decoder's landed under unchanged

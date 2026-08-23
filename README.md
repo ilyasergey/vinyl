@@ -75,9 +75,12 @@ separately by differential testing against libFLAC (below).
 
 ## Status
 
-Milestones M0–M5 are complete; M6 (performance under the theorem
-ratchet) is next, M7 (two-sided verification against RFC 9639) is a
-stretch goal. See [`PLAN.md`](PLAN.md) §8 for the milestone-by-milestone
+Milestones M0–M5 are complete and M6 (performance under the theorem
+ratchet) has largely landed: every decoder fast path is proven equal to
+its bit-level specification, and the frame-parallel encoder is certified
+per call by the verified decoder — the remaining step is a statically
+verified fast emitter to retire that runtime certificate. M7 (two-sided
+verification against RFC 9639) is a stretch goal. See [`PLAN.md`](PLAN.md) §8 for the milestone-by-milestone
 roadmap and [`PROGRESS.md`](PROGRESS.md) for the session log. In short:
 bit-level I/O, CRCs, MD5, Rice coding, all subframe types (CONSTANT /
 VERBATIM / FIXED / LPC), 1–8 channels with stereo decorrelation, wasted
@@ -110,13 +113,15 @@ suite. To run the cross-check yourself on one file, see
 
 ## Benchmarks
 
-On the 37-file synthetic corpus of `bench/gen_corpus.py`, the verified
-encoder's overall compression ratio **beats `flac -8`** (39.5% vs 39.8%
-of raw) — the certified heuristics choose well. Speed is honestly slow
-for now (~0.16 MB/s encode, ~1.5 MB/s decode vs libFLAC's ~30–37 MB/s):
-the encoder still runs on the proof-oriented `List Bool` bit model, and
-performance work is deliberately deferred to M6, *after* the capstone
-makes optimization safe.
+On the 37-file synthetic corpus of `bench/gen_corpus.py`, the encoder's
+overall compression ratio **beats `flac -8`** (39.6% vs 39.8% of raw) —
+the certified heuristics choose well. Throughput after the M6 work:
+~8 MB/s encode and ~15.5 MB/s decode (medians; 12 and 25 MB/s on a
+10 MB file) against libFLAC's ~31–37 MB/s in the same run — a
+×4.4 / ×2.4 gap, down from ×200 / ×25. Every decoder fast path is
+proven equal to its bit-level specification; the frame-parallel encoder
+is certified per call by the verified decoder (details and regeneration:
+`bench/README.md`).
 
 Compression, per file (sorted; lower is better) and aggregated per
 content category:
