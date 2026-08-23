@@ -205,6 +205,42 @@ def e2eTests : TestM Unit := do
     ((Stream.decodeReference (Stream.encode ⟨16, true, Heuristics.defaultAsgChooser 16⟩
       ⟨[pcm], 16, 44100⟩)).map (·.channels)) (some [pcm])
 
+/-! ## The fast encoder mirrors the verified one, byte for byte
+
+`Flac.Encode` runs its candidate searches in exact `Float` arithmetic over
+unboxed `FloatArray`, `Flac.Heuristics` runs them in `Int` over lists.
+Every value involved is an integer well inside `2^53`, so the two must
+*choose the same subframes* and emit identical bytes. That is not a
+theorem (the fast encoder is unverified by design — each call is certified
+by the verified decoder instead), so it is pinned here as a test. -/
+
+def fastMirrorTests : TestM Unit := do
+  let mkPcm (f : Nat → Int) (n : Nat) : ByteArray :=
+    Stream.pcmBytes 16 [(List.range n).map f]
+  let mkPcm2 (f g : Nat → Int) (n : Nat) : ByteArray :=
+    Stream.pcmBytes 16 [(List.range n).map f, (List.range n).map g]
+  let cmp (name : String) (ch : Nat) (bytes : ByteArray) : TestM Unit := do
+    let fast := Flac.Encode.encodePcm16 4096 ch 44100 bytes
+    let slow := Flac.encodePcm16Cfg ⟨4096, false, Heuristics.defaultAsgChooser 16⟩
+      ch 44100 bytes
+    checkEq s!"fast mirrors verified encoder: {name}" (some fast) slow
+  -- LPC territory (smooth, high order pays), FIXED territory (ramps),
+  -- noise (verbatim/high Rice parameters), wasted bits, constant blocks
+  cmp "sine" 1 (mkPcm (fun i => (9000.0 * Float.sin (Float.ofNat i * 0.01)).toInt64.toInt) 9000)
+  cmp "chord" 1 (mkPcm (fun i =>
+    (4000.0 * Float.sin (Float.ofNat i * 0.037)
+      + 3000.0 * Float.sin (Float.ofNat i * 0.0047)).toInt64.toInt) 9000)
+  cmp "ramp" 1 (mkPcm (fun i => ((i % 512 : Nat) : Int) * 60 - 15000) 9000)
+  cmp "noise" 1 (mkPcm (fun i =>
+    (((i * i * 2654435761 + i * 40503) % 65536 : Nat) : Int) - 32768) 9000)
+  cmp "wasted3" 1 (mkPcm (fun i =>
+    ((((i * 2654435761) % 8192 : Nat) : Int) - 4096) * 8) 9000)
+  cmp "constant" 1 (mkPcm (fun _ => 4321) 9000)
+  cmp "quiet" 1 (mkPcm (fun i => ((i % 7 : Nat) : Int) - 3) 9000)
+  cmp "stereo" 2 (mkPcm2
+    (fun i => (9000.0 * Float.sin (Float.ofNat i * 0.01)).toInt64.toInt)
+    (fun i => (9000.0 * Float.sin (Float.ofNat i * 0.01)).toInt64.toInt / 8 + 77) 9000)
+
 /-! ## Bit-level spot checks -/
 
 def bitsTests : TestM Unit := do
@@ -343,7 +379,7 @@ def cliMain (args : List String) : IO UInt32 := do
     IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
     IO.eprintln usage
     return 2
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; e2eTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; e2eTests; fastMirrorTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0
