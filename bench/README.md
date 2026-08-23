@@ -63,12 +63,12 @@ decode (the shipped buffered decoder):
 
 ![Throughput vs libFLAC](performance.png)
 
-The first corrected-timer smoke pass measured median throughput of
-approximately 12.0 MB/s for Vinyl encode and 30.6 MB/s for Vinyl decode,
-versus 106.3 MB/s for `flac -5` encode and 121.3 MB/s for libFLAC decode.
-That is an approximately 8.9× encode gap and 4.0× decode gap. This smoke
-pass used one measured sample per case; the published comparison should be
-regenerated with the default five samples after optimization work settles.
+Current five-run medians (2026-08-23, after the allocation-free CRC
+ranges landed): Vinyl encode 13.9 MB/s and Vinyl decode 30.6 MB/s,
+versus 106.5 MB/s for `flac -5` encode, 72.5 MB/s for `flac -8` encode,
+and 123.7 MB/s for libFLAC decode. That is a 7.7× encode gap against
+`flac -5` — **4.9× against `flac -8`, the level whose compression Vinyl
+matches** — and a 4.0× decode gap.
 
 The important correction is methodological: libFLAC did not suddenly get
 faster, and Vinyl also measures faster without the timestamp surcharge.
