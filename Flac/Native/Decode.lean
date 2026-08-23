@@ -657,8 +657,9 @@ def readFramesSteps (b0 : Nat) (d : ByteArray) (steps : Array (Step b0 d)) :
         | some rest => some (chs :: rest)
 
 /-- Candidates per parallel task: enough that task setup is negligible,
-    small enough to keep every core fed. -/
-def stepChunkSize : Nat := 24
+    small enough to keep every core fed (measured best of 8/12/24/48 on an
+    8-core M2). -/
+def stepChunkSize : Nat := 8
 
 /-- Streams below this many bytes decode serially — the scan and task
     setup would dominate. -/
