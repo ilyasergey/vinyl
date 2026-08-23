@@ -93,6 +93,22 @@ def ChannelAsg.Valid (asg : ChannelAsg) (b bs : Nat)
       c0.Valid b (Stereo.mid l r) ∧ c1.Valid (b + 1) (Stereo.side l r)
   | _, _ => False
 
+instance (asg : ChannelAsg) (b bs : Nat) (chs : List (List Int)) :
+    Decidable (asg.Valid b bs chs) := by
+  unfold ChannelAsg.Valid
+  rcases asg with cfgs | ⟨c0, c1⟩ | ⟨c0, c1⟩ | ⟨c0, c1⟩ <;>
+    rcases chs with _ | ⟨l, _ | ⟨r, _ | t⟩⟩ <;>
+    exact inferInstance
+
+/-- Sanitize a heuristic's output: keep it when it carries a valid
+    certificate, otherwise fall back to plain per-channel VERBATIM (always
+    valid on fitting audio). This is what makes *arbitrary* choosers —
+    even adversarial ones — correctness-irrelevant in the capstone. -/
+def ChannelAsg.orVerbatim (asg : ChannelAsg) (b bs : Nat)
+    (chs : List (List Int)) : ChannelAsg :=
+  if asg.Valid b bs chs then asg
+  else .independent (chs.map fun _ => ⟨0, .verbatim⟩)
+
 /-- Frame-header fields the decoder needs downstream. -/
 structure Fields where
   blockSize : Nat

@@ -134,7 +134,8 @@ def indep (f : List Int → Subframe.SubCfg) : List (List Int) → Frame.Channel
 def e2eTests : TestM Unit := do
   let mono (bs : Nat) (chooser : List (List Int) → Frame.ChannelAsg)
       (pcm : List Int) : Option (List (List Int)) :=
-    Stream.decodeReference (Stream.encode ⟨bs, false, chooser⟩ ⟨[pcm], 16, 44100⟩)
+    (Stream.decodeReference
+      (Stream.encode ⟨bs, false, chooser⟩ ⟨[pcm], 16, 44100⟩)).map (·.channels)
   -- 40 samples → frames of 16/16/8 (short last frame)
   let pcm : List Int := (List.range 40).map fun (i : Nat) =>
     (100 * (i : Int)) - 2000 + (if i % 3 == 0 then 7 else -5)
@@ -155,8 +156,8 @@ def e2eTests : TestM Unit := do
   -- 8-bit depth
   let pcm8 : List Int := (List.range 30).map fun (i : Nat) => ((i : Int) % 100) - 50
   checkEq "e2e 8-bit"
-    (Stream.decodeReference (Stream.encode ⟨16, false, Stream.verbatimChooser⟩
-      ⟨[pcm8], 8, 8000⟩)) (some [pcm8])
+    ((Stream.decodeReference (Stream.encode ⟨16, false, Stream.verbatimChooser⟩
+      ⟨[pcm8], 8, 8000⟩)).map (·.channels)) (some [pcm8])
   -- the certified default heuristics (wasted bits, LPC, fixed, stereo)
   checkEq "e2e defaultAsgChooser mono"
     (mono 16 (Heuristics.defaultAsgChooser 16) pcm) (some [pcm])
@@ -171,8 +172,8 @@ def e2eTests : TestM Unit := do
   let left : List Int := (List.range 40).map fun (i : Nat) => 500 * (i : Int) - 9000
   let right : List Int := left.map (· + 37)
   let stereo (chooser : List (List Int) → Frame.ChannelAsg) :=
-    Stream.decodeReference (Stream.encode ⟨16, false, chooser⟩
-      ⟨[left, right], 16, 44100⟩)
+    (Stream.decodeReference (Stream.encode ⟨16, false, chooser⟩
+      ⟨[left, right], 16, 44100⟩)).map (·.channels)
   checkEq "e2e stereo default" (stereo (Heuristics.defaultAsgChooser 16))
     (some [left, right])
   checkEq "e2e stereo leftSide"
@@ -185,12 +186,12 @@ def e2eTests : TestM Unit := do
   let chans : List (List Int) := (List.range 5).map fun (c : Nat) =>
     (List.range 33).map fun (i : Nat) => ((c : Int) + 1) * ((i : Int) - 16)
   checkEq "e2e 5 channels"
-    (Stream.decodeReference (Stream.encode ⟨16, false, Heuristics.defaultAsgChooser 16⟩
-      ⟨chans, 16, 44100⟩)) (some chans)
+    ((Stream.decodeReference (Stream.encode ⟨16, false, Heuristics.defaultAsgChooser 16⟩
+      ⟨chans, 16, 44100⟩)).map (·.channels)) (some chans)
   -- variable-blocksize numbering strategy
   checkEq "e2e variable numbering"
-    (Stream.decodeReference (Stream.encode ⟨16, true, Heuristics.defaultAsgChooser 16⟩
-      ⟨[pcm], 16, 44100⟩)) (some [pcm])
+    ((Stream.decodeReference (Stream.encode ⟨16, true, Heuristics.defaultAsgChooser 16⟩
+      ⟨[pcm], 16, 44100⟩)).map (·.channels)) (some [pcm])
 
 /-! ## Bit-level spot checks -/
 
@@ -262,29 +263,31 @@ def cliMain (args : List String) : IO UInt32 := do
     let bytes ← IO.FS.readBinFile inFile
     let chans := deinterleave ch.toNat! (pcm16OfBytes bytes)
     let a : Stream.Audio := ⟨chans, 16, 44100⟩
-    IO.FS.writeBinFile outFile
-      (Stream.encode ⟨bs.toNat!, false, Heuristics.defaultAsgChooser 16⟩ a)
-    IO.println s!"encoded {a.numSamples} samples x {chans.length} channels"
-    return 0
+    -- the checked encoder: if this returns bytes, `Flac.decode_encodeCheckedCfg`
+    -- guarantees the round-trip for this very input — no hypotheses
+    match Flac.encodeCheckedCfg ⟨bs.toNat!, false, Heuristics.defaultAsgChooser 16⟩ a with
+    | some bytes =>
+      IO.FS.writeBinFile outFile bytes
+      IO.println s!"encoded {a.numSamples} samples x {chans.length} channels (checked: round-trip guaranteed by Flac.decode_encodeCheckedCfg)"
+      return 0
+    | none =>
+      IO.println "ENCODE ERROR: input not well-formed FLAC-representable audio (channels/bit-depth/blockSize out of range)"
+      return 1
   if let ["--decode-fast", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
-    let some si := Stream.peekInfo bytes
-      | IO.println "DECODE ERROR (bad stream header)"; return 1
     match Flac.decode bytes with
     | .error e => IO.println s!"DECODE ERROR: {e}"; return 1
-    | .ok chans =>
-      IO.FS.writeBinFile outFile (Stream.pcmBytes si.bps chans)
-      IO.println s!"decoded {(chans.headD []).length} samples x {chans.length} channels ({si.bps}-bit)"
+    | .ok a =>
+      IO.FS.writeBinFile outFile (Stream.pcmBytes a.bps a.channels)
+      IO.println s!"decoded {a.numSamples} samples x {a.channels.length} channels ({a.bps}-bit)"
       return 0
   if let ["--decode", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
-    let some si := Stream.peekInfo bytes
-      | IO.println "DECODE ERROR (bad stream header)"; return 1
     match Stream.decodeReference bytes with
     | none => IO.println "DECODE ERROR"; return 1
-    | some chans =>
-      IO.FS.writeBinFile outFile (Stream.pcmBytes si.bps chans)
-      IO.println s!"decoded {(chans.headD []).length} samples x {chans.length} channels ({si.bps}-bit)"
+    | some a =>
+      IO.FS.writeBinFile outFile (Stream.pcmBytes a.bps a.channels)
+      IO.println s!"decoded {a.numSamples} samples x {a.channels.length} channels ({a.bps}-bit)"
       return 0
   if let ["--samples", dir] := args then
     emitSamples dir

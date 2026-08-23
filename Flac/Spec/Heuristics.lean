@@ -341,13 +341,9 @@ theorem defaultAsgChooser_valid (b : Nat) (fr : List (List Int))
 theorem _root_.Flac.Stream.decodeReference_encode_default
     (blockSize : Nat) (varBlk : Bool) (a : Stream.Audio)
     (hwf : a.WellFormed)
-    (hbs1 : 16 ≤ blockSize) (hbs2 : blockSize ≤ 65535)
-    (hsr : a.sampleRate < 2 ^ 20) (htot : a.numSamples < 2 ^ 36) :
+    (hbs1 : 16 ≤ blockSize) (hbs2 : blockSize ≤ 65535) :
     Stream.decodeReference (Stream.encode
-      ⟨blockSize, varBlk, defaultAsgChooser a.bps⟩ a) = some a.channels :=
-  Stream.decodeReference_encode _ a hwf hbs1 hbs2 hsr htot
-    (fun fr hlen heqfr h1 _ hfit =>
-      defaultAsgChooser_valid a.bps fr hwf.2.2.1 (hlen ▸ hwf.1)
-        (hlen ▸ hwf.2.1) heqfr h1 hfit)
+      ⟨blockSize, varBlk, defaultAsgChooser a.bps⟩ a) = some a :=
+  Stream.decodeReference_encode _ a hwf hbs1 hbs2
 
 end Flac.Heuristics

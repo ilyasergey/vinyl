@@ -70,6 +70,15 @@ def SubCfg.Valid (sc : SubCfg) (b : Nat) (xs : List Int) : Prop :=
   (∀ x ∈ xs, ((2 ^ sc.wasted : Nat) : Int) ∣ x) ∧
   sc.inner.Valid (b - sc.wasted) (xs.map (shiftDown sc.wasted))
 
+instance (cfg : SubframeCfg) (b : Nat) (xs : List Int) :
+    Decidable (cfg.Valid b xs) := by
+  unfold SubframeCfg.Valid
+  rcases cfg <;> exact inferInstance
+
+instance (sc : SubCfg) (b : Nat) (xs : List Int) : Decidable (sc.Valid b xs) := by
+  unfold SubCfg.Valid
+  exact inferInstance
+
 def writeContent (b : Nat) (cfg : SubframeCfg) (xs : List Int) : BitStream :=
   match cfg with
   | .constant => writeSInt b (xs.headD 0)

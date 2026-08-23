@@ -1,4 +1,5 @@
 import Flac.Native.Bits
+import Flac.Native.Codec
 import Flac.Native.Crc
 import Flac.Native.Decode
 import Flac.Native.Utf8Num

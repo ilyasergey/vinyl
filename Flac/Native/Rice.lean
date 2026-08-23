@@ -118,6 +118,11 @@ def Partition.Valid (m : Method) : Partition → List Int → Prop
   | .rice k, _ => k < m.escapeCode
   | .escape bits, xs => bits < 32 ∧ ∀ x ∈ xs, FitsSInt bits x
 
+instance (m : Method) (p : Partition) (xs : List Int) :
+    Decidable (Partition.Valid m p xs) := by
+  unfold Partition.Valid
+  rcases p with k | bits <;> exact inferInstance
+
 def writePart (m : Method) (p : Partition) (xs : List Int) : BitStream :=
   match p with
   | .rice k => writeBits m.paramBits k ++ writeRiceSeq k xs
@@ -181,6 +186,16 @@ structure ResidualCfg.Valid (cfg : ResidualCfg) (bs ord : Nat)
   choices_len : cfg.choices.length = 2 ^ cfg.po
   parts_valid : ∀ p ∈ cfg.choices.zip (chunkBySizes (partSizes bs cfg.po ord) res),
     Partition.Valid cfg.method p.1 p.2
+
+instance (cfg : ResidualCfg) (bs ord : Nat) (res : List Int) :
+    Decidable (cfg.Valid bs ord res) :=
+  decidable_of_iff
+    (cfg.po < 16 ∧ 2 ^ cfg.po ∣ bs ∧ ord < bs / 2 ^ cfg.po ∧
+      res.length = bs - ord ∧ cfg.choices.length = 2 ^ cfg.po ∧
+      ∀ p ∈ cfg.choices.zip (chunkBySizes (partSizes bs cfg.po ord) res),
+        Partition.Valid cfg.method p.1 p.2)
+    ⟨fun ⟨a, b, c, d, e, f⟩ => ⟨a, b, c, d, e, f⟩,
+     fun ⟨a, b, c, d, e, f⟩ => ⟨a, b, c, d, e, f⟩⟩
 
 /-- Write a coded residual: 2-bit method, 4-bit partition order, partitions. -/
 def writeResidual (bs ord : Nat) (cfg : ResidualCfg) (res : List Int) : BitStream :=

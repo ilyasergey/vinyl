@@ -202,13 +202,21 @@ structure Audio where
 
 def Audio.numSamples (a : Audio) : Nat := (a.channels.headD []).length
 
-/-- Well-formedness: 1–8 equal-length channels, samples in
-    range for the bit depth. -/
+/-- Well-formedness — exactly "this audio is representable as a FLAC
+    stream": 1–8 equal-length channels, bit depth 1–32, samples in range
+    for the bit depth, and the STREAMINFO field bounds on sample rate
+    (20 bits) and total sample count (36 bits). Decidable, so encoders can
+    check it at runtime (`Flac.encodeChecked`). -/
 def Audio.WellFormed (a : Audio) : Prop :=
   1 ≤ a.channels.length ∧ a.channels.length ≤ 8 ∧
   1 ≤ a.bps ∧ a.bps ≤ 32 ∧
   (∀ c ∈ a.channels, c.length = a.numSamples) ∧
-  (∀ c ∈ a.channels, ∀ x ∈ c, FitsSInt a.bps x)
+  (∀ c ∈ a.channels, ∀ x ∈ c, FitsSInt a.bps x) ∧
+  a.sampleRate < 2 ^ 20 ∧ a.numSamples < 2 ^ 36
+
+instance (a : Audio) : Decidable a.WellFormed := by
+  unfold Audio.WellFormed
+  exact inferInstance
 
 /-- Encoder options: block size, numbering
     strategy, and the per-frame channel-assignment/subframe heuristic —
@@ -218,12 +226,19 @@ structure EncoderCfg where
   variableBlocking : Bool
   chooser : List (List Int) → Frame.ChannelAsg
 
+/-- The chooser as the encoder actually consults it: the heuristic's
+    choice is kept only when its validity certificate checks out;
+    otherwise the frame falls back to VERBATIM. -/
+def EncoderCfg.safeChooser (cfg : EncoderCfg) (b : Nat)
+    (fr : List (List Int)) : Frame.ChannelAsg :=
+  (cfg.chooser fr).orVerbatim b (fr.headD []).length fr
+
 def writeStream (cfg : EncoderCfg) (a : Audio) : BitStream :=
   writeBits 32 0x664C6143 ++
   writeBits 1 1 ++ writeBits 7 0 ++ writeBits 24 34 ++
   writeStreamInfo cfg.blockSize a.sampleRate a.channels.length a.bps
     a.numSamples (md5Nat (Md5.md5 (pcmBytes a.bps a.channels))) ++
-  writeFrames a.bps cfg.variableBlocking cfg.blockSize cfg.chooser 0
+  writeFrames a.bps cfg.variableBlocking cfg.blockSize (cfg.safeChooser a.bps) 0
     (chunkChannels cfg.blockSize a.channels)
 
 /-- **The encoder.** -/
@@ -243,8 +258,9 @@ def peekInfo (bytes : ByteArray) : Option Info :=
       | some (si, _) => some si
     else none
 
-/-- **The verified reference decoder**: returns the decoded channels. -/
-def decodeReference (bytes : ByteArray) : Option (List (List Int)) :=
+/-- **The verified reference decoder**: returns the decoded audio —
+    channels, bit depth, and sample rate, as read from the stream. -/
+def decodeReference (bytes : ByteArray) : Option Audio :=
   let s := bytesToBits bytes
   match readBits 32 s with
   | none => none
@@ -255,7 +271,8 @@ def decodeReference (bytes : ByteArray) : Option (List (List Int)) :=
       | some (si, s) =>
         match readFrames si.bps (s.length + 1) s with
         | none => none
-        | some frames => some (recombine si.channels frames)
+        | some frames =>
+          some ⟨recombine si.channels frames, si.bps, si.sampleRate⟩
     else none
 
 /-! ## Default heuristics -/

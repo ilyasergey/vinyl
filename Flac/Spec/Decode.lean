@@ -1,3 +1,4 @@
+import Flac.Native.Codec
 import Flac.Native.Decode
 import Flac.Spec.Reader
 import Flac.Spec.Heuristics
@@ -1724,43 +1725,53 @@ namespace Flac
 
 /-- **Accept-set transfer**: the shipped decoder succeeds with a given
     result exactly when the verified reference decoder does. -/
-theorem decode_ok_iff_reference (bytes : ByteArray) (chs : List (List Int)) :
-    decode bytes = .ok chs ↔ Stream.decodeReference bytes = some chs := by
+theorem decode_ok_iff_reference (bytes : ByteArray) (a : Stream.Audio) :
+    decode bytes = .ok a ↔ Stream.decodeReference bytes = some a := by
   unfold decode
   rw [Decode.decodeOption_eq_reference]
   match Stream.decodeReference bytes with
   | none => simp
-  | some chs' => simp
+  | some a' => simp
 
-/-- **The shipped capstone**: encoding well-formed audio with any encoder
-    configuration whose heuristic choices are valid, then decoding with the
-    shipped production decoder, returns the original channels. -/
-theorem decode_encode (cfg : Stream.EncoderCfg) (a : Stream.Audio)
+/-- General form of the capstone: any encoder configuration — block size,
+    numbering strategy, and *arbitrary* channel-assignment heuristic. -/
+theorem decode_encode_cfg (cfg : Stream.EncoderCfg) (a : Stream.Audio)
     (hwf : a.WellFormed)
-    (hbs1 : 16 ≤ cfg.blockSize) (hbs2 : cfg.blockSize ≤ 65535)
-    (hsr : a.sampleRate < 2 ^ 20) (htot : a.numSamples < 2 ^ 36)
-    (hchooser : ∀ fr : List (List Int),
-      fr.length = a.channels.length →
-      (∀ c ∈ fr, c.length = (fr.headD []).length) →
-      1 ≤ (fr.headD []).length → (fr.headD []).length ≤ cfg.blockSize →
-      (∀ c ∈ fr, ∀ x ∈ c, Bits.FitsSInt a.bps x) →
-      (cfg.chooser fr).Valid a.bps (fr.headD []).length fr) :
-    decode (Stream.encode cfg a) = .ok a.channels :=
+    (hbs1 : 16 ≤ cfg.blockSize) (hbs2 : cfg.blockSize ≤ 65535) :
+    decode (Stream.encode cfg a) = .ok a :=
   (decode_ok_iff_reference _ _).mpr
-    (Stream.decodeReference_encode cfg a hwf hbs1 hbs2 hsr htot hchooser)
+    (Stream.decodeReference_encode cfg a hwf hbs1 hbs2)
 
-/-- **Shipped capstone, default heuristics**: no chooser hypothesis —
-    wasted-bit detection, fixed/LPC order search, Rice parameter search,
-    and stereo-mode decision are all covered by certificate construction. -/
-theorem decode_encode_default (blockSize : Nat) (varBlk : Bool)
-    (a : Stream.Audio) (hwf : a.WellFormed)
-    (hbs1 : 16 ≤ blockSize) (hbs2 : blockSize ≤ 65535)
-    (hsr : a.sampleRate < 2 ^ 20) (htot : a.numSamples < 2 ^ 36) :
-    decode (Stream.encode
-      ⟨blockSize, varBlk, Heuristics.defaultAsgChooser a.bps⟩ a)
-      = .ok a.channels :=
-  (decode_ok_iff_reference _ _).mpr
-    (Stream.decodeReference_encode_default blockSize varBlk a hwf
-      hbs1 hbs2 hsr htot)
+/-- **The capstone**: decoding an encoded stream recovers the samples,
+    for every well-formed audio. `Flac.encode` and `Flac.decode` are the
+    shipped production entry points; `Audio.WellFormed` says exactly
+    "representable as FLAC" (1–8 equal-length channels, bit depth 1–32,
+    samples in range, STREAMINFO field bounds) and is decidable. -/
+theorem decode_encode (a : Stream.Audio) (h : a.WellFormed) :
+    decode (encode a) = .ok a :=
+  decode_encode_cfg _ a h (by show 16 ≤ 4096; omega) (by show 4096 ≤ 65535; omega)
+
+/-- Hypothesis-free capstone for the runtime-checked encoder: whenever
+    `encodeChecked` returns bytes at all, decoding them recovers the
+    samples. The runner's test *is* the theorem's precondition. -/
+theorem decode_encodeChecked {a : Stream.Audio} {bytes : ByteArray}
+    (h : encodeChecked a = some bytes) : decode bytes = .ok a := by
+  unfold encodeChecked at h
+  split at h
+  · cases h
+    exact decode_encode a ‹_›
+  · cases h
+
+/-- Hypothesis-free capstone, arbitrary configuration. -/
+theorem decode_encodeCheckedCfg {cfg : Stream.EncoderCfg}
+    {a : Stream.Audio} {bytes : ByteArray}
+    (h : encodeCheckedCfg cfg a = some bytes) :
+    decode bytes = .ok a := by
+  unfold encodeCheckedCfg at h
+  split at h
+  case isTrue hc =>
+    cases h
+    exact decode_encode_cfg cfg a hc.1 hc.2.1 hc.2.2
+  case isFalse => cases h
 
 end Flac

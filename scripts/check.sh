@@ -16,7 +16,7 @@ else
 fi
 
 echo "== capstone theorems present (grep-pinned names)"
-for thm in "theorem decodeReference_encode " "theorem _root_.Flac.Stream.decodeReference_encode_default" "theorem decode_ok_iff_reference" "theorem decode_encode " "theorem decode_encode_default"; do
+for thm in "theorem decodeReference_encode " "theorem _root_.Flac.Stream.decodeReference_encode_default" "theorem decode_ok_iff_reference" "theorem decode_encode " "theorem decode_encode_cfg" "theorem decode_encodeChecked"; do
   if ! grep -rq "$thm" Flac/Spec/; then
     echo "FAIL: missing $thm"; fail=1
   fi

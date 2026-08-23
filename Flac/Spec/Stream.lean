@@ -183,7 +183,7 @@ theorem writeFrames_length_dvd (b : Nat) (varBlk : Bool) (blockSize : Nat)
 theorem writeStream_length_dvd (cfg : EncoderCfg) (a : Audio) :
     8 ∣ (writeStream cfg a).length := by
   have h := writeFrames_length_dvd a.bps cfg.variableBlocking cfg.blockSize
-    cfg.chooser (chunkChannels cfg.blockSize a.channels) 0
+    (cfg.safeChooser a.bps) (chunkChannels cfg.blockSize a.channels) 0
   simp only [writeStream, writeStreamInfo, List.length_append, length_writeBits]
   omega
 
@@ -268,34 +268,64 @@ theorem readFrames_writeFrames (b0 b : Nat) (varBlk : Bool) (blockSize : Nat)
           (chooser fr) fr _ hb hnum0 hl1 hl2 hval,
         hih]
 
+private theorem mem_zip_map_self {α β : Type} (f : α → β) :
+    ∀ (l : List α) (p : β × α), p ∈ (l.map f).zip l → p.1 = f p.2 ∧ p.2 ∈ l := by
+  intro l
+  induction l with
+  | nil => intro p hp; simp at hp
+  | cons a l ih =>
+    intro p hp
+    simp only [List.map_cons, List.zip_cons_cons, List.mem_cons] at hp
+    rcases hp with rfl | hp
+    · exact ⟨rfl, by simp⟩
+    · obtain ⟨h1, h2⟩ := ih p hp
+      exact ⟨h1, by simp [h2]⟩
+
+/-- Sanitized choices are valid outright: either the heuristic's own
+    certificate checks, or the VERBATIM fallback's certificate holds on
+    any fitting audio. -/
+theorem orVerbatim_valid {asg : Frame.ChannelAsg} {b bs : Nat}
+    {chs : List (List Int)}
+    (hb : 1 ≤ b) (hlen : ∀ c ∈ chs, c.length = bs)
+    (hch1 : 1 ≤ chs.length) (hch8 : chs.length ≤ 8)
+    (hfit : ∀ c ∈ chs, ∀ x ∈ c, FitsSInt b x) :
+    (asg.orVerbatim b bs chs).Valid b bs chs := by
+  unfold Frame.ChannelAsg.orVerbatim
+  split
+  case isTrue h => exact h
+  case isFalse =>
+    refine ⟨hlen, by simpa using hch1, by simpa using hch8, by simp, ?_⟩
+    intro p hp
+    obtain ⟨h1, h2⟩ := mem_zip_map_self _ _ p hp
+    rw [h1]
+    refine ⟨by show 0 < b; omega, fun x _ => ⟨x, (Int.one_mul x).symm⟩, ?_⟩
+    show ∀ x ∈ p.2.map (shiftDown 0), FitsSInt (b - 0) x
+    rw [map_shiftDown_zero, Nat.sub_zero]
+    exact hfit p.2 h2
+
 /-! ## The reference capstone -/
 
 /-- **`decodeReference ∘ encode = id` over the full option space**: every
     well-formed audio, every block size 16–65535, both numbering
-    strategies, and every valid channel-assignment heuristic. Heuristic
-    knobs are correctness-irrelevant by construction: they choose *which*
-    valid stream is emitted, never whether this theorem holds. -/
+    strategies, and *every* channel-assignment heuristic — the encoder
+    checks each heuristic choice's (decidable) certificate and falls back
+    to VERBATIM when it fails, so heuristics are correctness-irrelevant
+    outright: they choose *which* valid stream is emitted, never whether
+    this theorem holds. -/
 theorem decodeReference_encode (cfg : EncoderCfg) (a : Audio)
     (hwf : a.WellFormed)
-    (hbs1 : 16 ≤ cfg.blockSize) (hbs2 : cfg.blockSize ≤ 65535)
-    (hsr : a.sampleRate < 2 ^ 20) (htot : a.numSamples < 2 ^ 36)
-    (hchooser : ∀ fr : List (List Int),
-      fr.length = a.channels.length →
-      (∀ c ∈ fr, c.length = (fr.headD []).length) →
-      1 ≤ (fr.headD []).length → (fr.headD []).length ≤ cfg.blockSize →
-      (∀ c ∈ fr, ∀ x ∈ c, FitsSInt a.bps x) →
-      (cfg.chooser fr).Valid a.bps (fr.headD []).length fr) :
-    decodeReference (encode cfg a) = some a.channels := by
-  obtain ⟨hch1, hch8, hb1, hb2, heq, hfit⟩ := hwf
+    (hbs1 : 16 ≤ cfg.blockSize) (hbs2 : cfg.blockSize ≤ 65535) :
+    decodeReference (encode cfg a) = some a := by
+  obtain ⟨hch1, hch8, hb1, hb2, heq, hfit, hsr, htot⟩ := hwf
   have heq' : ∀ c ∈ a.channels, c.length = (a.channels.headD []).length := heq
   have hframes : ∀ fr ∈ chunkChannels cfg.blockSize a.channels,
       1 ≤ (fr.headD []).length ∧ (fr.headD []).length ≤ 65536 ∧
-      (cfg.chooser fr).Valid a.bps (fr.headD []).length fr := by
+      (cfg.safeChooser a.bps fr).Valid a.bps (fr.headD []).length fr := by
     intro fr hfr
     obtain ⟨h1, h2, h3, h4, h5⟩ :=
       chunkFrames_mem cfg.blockSize a.channels (by omega) heq' fr hfr
     refine ⟨h3, by omega, ?_⟩
-    apply hchooser fr h1 h2 h3 (by omega)
+    refine orVerbatim_valid (by omega) h2 (by omega) (by omega) ?_
     intro c hc x hx
     obtain ⟨corig, hcorig, hsub⟩ := h5 c hc
     exact hfit corig hcorig x (hsub x hx)
@@ -308,13 +338,14 @@ theorem decodeReference_encode (cfg : EncoderCfg) (a : Audio)
       a.numSamples _ _ (by omega) hsr hch1 hch8 hb1 hb2 htot]
   rw [if_pos (by trivial)]
   simp only [readFrames_writeFrames a.bps a.bps cfg.variableBlocking
-    cfg.blockSize cfg.chooser (Frame.bpsOfCode_bpsCode a.bps)
+    cfg.blockSize (cfg.safeChooser a.bps) (Frame.bpsOfCode_bpsCode a.bps)
     (chunkChannels cfg.blockSize a.channels) 0
-    ((writeFrames a.bps cfg.variableBlocking cfg.blockSize cfg.chooser 0
+    ((writeFrames a.bps cfg.variableBlocking cfg.blockSize
+      (cfg.safeChooser a.bps) 0
       (chunkChannels cfg.blockSize a.channels)).length + 1)
     (by
       have := writeFrames_length_ge a.bps cfg.variableBlocking cfg.blockSize
-        cfg.chooser (chunkChannels cfg.blockSize a.channels) 0
+        (cfg.safeChooser a.bps) (chunkChannels cfg.blockSize a.channels) 0
       omega)
     (by
       intro j hj

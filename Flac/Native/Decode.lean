@@ -413,7 +413,7 @@ def readFrames (b0 : Nat) : Nat → BitReader → Option (List (List (List Int))
         | some rest => some (chs :: rest)
 
 /-- The production decoder body (Option-typed, mirroring the reference). -/
-def decodeOption (bytes : ByteArray) : Option (List (List Int)) :=
+def decodeOption (bytes : ByteArray) : Option Stream.Audio :=
   let br : BitReader := ⟨bytes, 0⟩
   match br.readBits 32 with
   | none => none
@@ -424,7 +424,8 @@ def decodeOption (bytes : ByteArray) : Option (List (List Int)) :=
       | some (si, br) =>
         match readFrames si.bps (br.remaining + 1) br with
         | none => none
-        | some frames => some (Stream.recombine si.channels frames)
+        | some frames =>
+          some ⟨Stream.recombine si.channels frames, si.bps, si.sampleRate⟩
     else none
 
 end Flac.Decode
@@ -433,9 +434,9 @@ namespace Flac
 
 /-- **The shipped decoder** (PLAN.md §1's `Flac.decode`): total, buffered,
     diagnostic on failure. -/
-def decode (bytes : ByteArray) : Except String (List (List Int)) :=
+def decode (bytes : ByteArray) : Except String Stream.Audio :=
   match Decode.decodeOption bytes with
-  | some chs => .ok chs
+  | some a => .ok a
   | none => .error "not a decodable FLAC stream (within the v1 feature set)"
 
 end Flac
