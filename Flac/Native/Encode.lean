@@ -428,39 +428,6 @@ def pushFrame (bw : BitWriter) (b : Nat) (strat : Bool) (num : Nat)
   w := w.align
   return w.push 16 (Crc.crc16Range w.buf start w.buf.size).toNat
 
-/-- One frame into its own buffer (frames are byte-aligned and
-    self-contained, so they can be encoded independently). -/
-def frameBytes (blockSize : Nat) (bps : Nat) (varBlk : Bool)
-    (chs : Array (Array Int)) (n f : Nat) : ByteArray :=
-  let lo := f * blockSize
-  let hi := min (lo + blockSize) n
-  (pushFrame (BitWriter.empty ((hi - lo) * chs.size * 2 + 64)) bps varBlk
-    (if varBlk then f * blockSize else f) (chs.map (·.extract lo hi))).buf
-
-/-- The full stream: `fLaC` marker, STREAMINFO, frames — the exact
-    layout of `Stream.writeStream` under the default heuristics. Frames
-    are encoded in parallel (`Task` per frame) and concatenated in order,
-    so the output is byte-for-byte what the serial encoder writes. -/
-def encodeArrays (blockSize : Nat) (varBlk : Bool) (chs : Array (Array Int))
-    (bps sr : Nat) (md5 : ByteArray) : ByteArray := Id.run do
-  let n := (chs.getD 0 #[]).size
-  let mut w := BitWriter.empty 64
-  w := w.push 32 0x664C6143
-  w := ((w.push 1 1).push 7 0).push 24 34
-  w := (w.push 16 blockSize).push 16 blockSize
-  w := (w.push 24 0).push 24 0
-  w := ((w.push 20 sr).push 3 (chs.size - 1)).push 5 (bps - 1)
-  w := w.pushBits 36 n
-  for byte in md5.toList do
-    w := w.push 8 byte.toNat
-  if blockSize = 0 then return w.buf
-  let tasks := (List.range ((n + blockSize - 1) / blockSize)).map fun f =>
-    Task.spawn fun _ => frameBytes blockSize bps varBlk chs n f
-  let mut out := w.buf
-  for t in tasks do
-    out := out ++ t.get
-  return out
-
 /-! ## 16-bit PCM entry point -/
 
 /-- One little-endian 16-bit sample at byte offset `j`. -/
@@ -470,37 +437,67 @@ def encodeArrays (blockSize : Nat) (varBlk : Bool) (chs : Array (Array Int))
   let v := lo + 256 * hi
   if v < 32768 then (v : Int) else (v : Int) - 65536
 
-/-- Deinterleave signed 16-bit little-endian PCM into channel arrays.
-    Channel-major: each channel array is filled by its own loop, so a
-    sample costs one `Array.push`. The sample-major version updated the
-    outer array of channels once per sample (`Array.modify`), which made
-    deinterleaving 17% of encode time and all of it serial. -/
-def pcm16Channels (ch : Nat) (bytes : ByteArray) : Array (Array Int) := Id.run do
-  if ch = 0 then return #[]
-  let n := bytes.size / (2 * ch)
-  if ch = 1 then
-    let mut a : Array Int := Array.emptyWithCapacity n
-    for i in [0 : n] do
-      a := a.push (sampleAt bytes (2 * i))
-    return #[a]
-  if ch = 2 then
-    let mut a : Array Int := Array.emptyWithCapacity n
-    let mut b : Array Int := Array.emptyWithCapacity n
-    for i in [0 : n] do
-      a := a.push (sampleAt bytes (4 * i))
-      b := b.push (sampleAt bytes (4 * i + 2))
-    return #[a, b]
-  let mut chans : Array (Array Int) := Array.emptyWithCapacity ch
-  for c in [0 : ch] do
-    let mut a : Array Int := Array.emptyWithCapacity n
-    for i in [0 : n] do
-      a := a.push (sampleAt bytes (2 * (i * ch + c)))
-    chans := chans.push a
-  return chans
+/-- Channel arrays for the sample window `[lo, hi)`, read straight from
+    the interleaved PCM bytes. -/
+def frameChannels (bytes : ByteArray) (ch lo hi : Nat) : Array (Array Int) :=
+  Id.run do
+    let len := hi - lo
+    if ch = 1 then
+      let mut a : Array Int := Array.emptyWithCapacity len
+      for i in [lo : hi] do
+        a := a.push (sampleAt bytes (2 * i))
+      return #[a]
+    if ch = 2 then
+      let mut a : Array Int := Array.emptyWithCapacity len
+      let mut b : Array Int := Array.emptyWithCapacity len
+      for i in [lo : hi] do
+        a := a.push (sampleAt bytes (4 * i))
+        b := b.push (sampleAt bytes (4 * i + 2))
+      return #[a, b]
+    let mut chans : Array (Array Int) := Array.emptyWithCapacity ch
+    for c in [0 : ch] do
+      let mut a : Array Int := Array.emptyWithCapacity len
+      for i in [lo : hi] do
+        a := a.push (sampleAt bytes (2 * (i * ch + c)))
+      chans := chans.push a
+    return chans
+
+/-- One frame straight from the interleaved PCM bytes. -/
+def frameBytesPcm (blockSize ch bps : Nat) (varBlk : Bool)
+    (bytes : ByteArray) (n f : Nat) : ByteArray :=
+  let lo := f * blockSize
+  let hi := min (lo + blockSize) n
+  (pushFrame (BitWriter.empty ((hi - lo) * ch * 2 + 64)) bps varBlk
+    (if varBlk then f * blockSize else f) (frameChannels bytes ch lo hi)).buf
 
 /-- Fast byte-level 16-bit encoder (the MD5 input of RFC 9639 §8.2 for
-    16-bit interleaved LE PCM is the input byte string itself). -/
+    16-bit interleaved LE PCM is the input byte string itself).
+
+    Each frame worker deinterleaves its own window out of the shared PCM
+    bytes. Deinterleaving the whole file up front was serial (17% of
+    encode) and the per-frame `Array.extract` then copied every sample a
+    second time; both are gone, and the workers read a shared immutable
+    `ByteArray` instead. -/
 def encodePcm16 (blockSize ch sr : Nat) (bytes : ByteArray) : ByteArray :=
-  encodeArrays blockSize false (pcm16Channels ch bytes) 16 sr (Md5.md5 bytes)
+  Id.run do
+    if ch = 0 then return ByteArray.empty
+    let n := bytes.size / (2 * ch)
+    let md5 := Md5.md5 bytes
+    let mut w := BitWriter.empty 64
+    w := w.push 32 0x664C6143
+    w := ((w.push 1 1).push 7 0).push 24 34
+    w := (w.push 16 blockSize).push 16 blockSize
+    w := (w.push 24 0).push 24 0
+    w := ((w.push 20 sr).push 3 (ch - 1)).push 5 (16 - 1)
+    w := w.pushBits 36 n
+    for byte in md5.toList do
+      w := w.push 8 byte.toNat
+    if blockSize = 0 then return w.buf
+    let tasks := (List.range ((n + blockSize - 1) / blockSize)).map fun f =>
+      Task.spawn fun _ => frameBytesPcm blockSize ch 16 false bytes n f
+    let mut out := w.buf
+    for t in tasks do
+      out := out ++ t.get
+    return out
 
 end Flac.Encode
