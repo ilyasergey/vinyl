@@ -27,8 +27,9 @@ open Flac.Bits (p2 sar)
 /-! ## Bit writer -/
 
 /-- MSB-first bit accumulator over a `ByteArray`. The low `n` bits of
-    `acc` are pending; `n < 8` between pushes. `UInt64` throughout — its
-    shifts and masks are unboxed intrinsics, unlike scalar `Nat` ops. -/
+    `acc` are pending; `n < 8` between pushes, and the bits above
+    position `n` are stale (never read). `UInt64` throughout — its shifts
+    and masks are unboxed intrinsics, unlike scalar `Nat` ops. -/
 structure BitWriter where
   buf : ByteArray
   acc : UInt64
@@ -38,13 +39,21 @@ namespace BitWriter
 
 def empty (cap : Nat) : BitWriter := ⟨ByteArray.emptyWithCapacity cap, 0, 0⟩
 
-/-- Emit completed bytes out of the accumulator. -/
-def flushGo (buf : ByteArray) (acc : UInt64) (n : Nat) : ByteArray × UInt64 × Nat :=
-  if h : n < 8 then (buf, acc, n)
-  else
-    let hi := n - 8
-    flushGo (buf.push (acc >>> UInt64.ofNat hi).toUInt8)
-      (acc &&& ((1 <<< UInt64.ofNat hi) - 1)) hi
+/-- Emit the `n / 8` completed bytes out of the accumulator, most
+    significant first.
+
+    Returns only the buffer, deliberately. The tuple this used to return
+    (`ByteArray × UInt64 × Nat`) cost three heap allocations per call —
+    two `Prod` cells plus a boxed `UInt64`, since `Prod`'s fields are
+    polymorphic and so always boxed — and `push` runs twice per residual
+    sample, which made the bit writer the single largest allocator in the
+    encoder. The two dropped components are recoverable without it: the
+    new pending count is `n % 8`, and `acc` need not be masked at all
+    because `toUInt8` truncates and no bit at or above position `n` is
+    ever read back. -/
+def flushBytes (buf : ByteArray) (acc : UInt64) (n : Nat) : ByteArray :=
+  if h : n < 8 then buf
+  else flushBytes (buf.push (acc >>> UInt64.ofNat (n - 8)).toUInt8) acc (n - 8)
 termination_by n
 decreasing_by omega
 
@@ -53,9 +62,9 @@ decreasing_by omega
     fields. -/
 def push (bw : BitWriter) (k : Nat) (v : Nat) : BitWriter :=
   let kk := UInt64.ofNat k
-  let (buf, acc, n) := flushGo bw.buf
-    ((bw.acc <<< kk) ||| (UInt64.ofNat v &&& ((1 <<< kk) - 1))) (bw.n + k)
-  ⟨buf, acc, n⟩
+  let acc := (bw.acc <<< kk) ||| (UInt64.ofNat v &&& ((1 <<< kk) - 1))
+  let n := bw.n + k
+  ⟨flushBytes bw.buf acc n, acc, n % 8⟩
 
 /-- Arbitrary-width big-endian push, chunked to keep the accumulator
     scalar. -/
@@ -459,6 +468,37 @@ def choosePlan (b : Nat) (blk : Array Int) : SubPlan :=
 
 /-! ## Writers -/
 
+/-- Rice-code `res[i] … res[stop-1]` with parameter `k`, carrying the
+    writer state **unpacked**: `buf`/`acc`/`n` as three parameters rather
+    than a `BitWriter`, so the per-sample path allocates nothing at all
+    (a `UInt64` function parameter stays in a register, a `BitWriter`
+    field does not). One `BitWriter` is built per partition, on exit.
+
+    `mask = 2^k - 1` is hoisted by the caller. `q ≥ 32` (a residual more
+    than 32·2^k from zero) is rare enough to hand back to `pushRice`. -/
+def pushRiceRange (k mask : Nat) (res : Array Int) :
+    (i stop : Nat) → (buf : ByteArray) → (acc : UInt64) → (n : Nat) → BitWriter
+  | i, stop, buf, acc, n =>
+    if h : i < stop then
+      let x := res.getD i 0
+      let u := if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1
+      let q := u >>> k
+      if q < 32 then
+        -- unary quotient: `q` zero bits then a one bit — the low `q+1`
+        -- bits of the value 1
+        let acc1 := (acc <<< UInt64.ofNat (q + 1)) ||| 1
+        let n1 := n + q + 1
+        let buf1 := BitWriter.flushBytes buf acc1 n1
+        -- then the `k` remainder bits
+        let acc2 := (acc1 <<< UInt64.ofNat k) ||| UInt64.ofNat (u &&& mask)
+        let n2 := n1 % 8 + k
+        pushRiceRange k mask res (i + 1) stop (BitWriter.flushBytes buf1 acc2 n2) acc2 (n2 % 8)
+      else
+        let w := (BitWriter.mk buf acc n).pushRice k x
+        pushRiceRange k mask res (i + 1) stop w.buf w.acc w.n
+    else ⟨buf, acc, n⟩
+  termination_by i stop => stop - i
+
 /-- Partitioned coded residual (method RICE, the only one the default
     heuristics emit). -/
 def pushResidual (bw : BitWriter) (bs ord po : Nat) (ks : Array Nat)
@@ -470,8 +510,7 @@ def pushResidual (bw : BitWriter) (bs ord po : Nat) (ks : Array Nat)
     let len := if j = 0 then c - ord else c
     let k := ks.getD j 10
     w := w.push 4 k
-    for i in [start : start + len] do
-      w := w.pushRice k (res.getD i 0)
+    w := pushRiceRange k (p2 k - 1) res start (start + len) w.buf w.acc w.n
     start := start + len
   return w
 
