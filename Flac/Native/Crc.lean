@@ -8,8 +8,8 @@ both with initial value 0, MSB-first, not reflected (RFC 9639 §9.3).
 No theorems are needed here: the encoder writes the CRC of the bytes it just
 produced, and the decoder recomputes the same function over the same bytes
 and compares — so in the round-trip proof the check is satisfied
-definitionally (PLAN.md §4, L1 `crc*_encoderOutput_valid`). Correctness
-against the standard is covered by test vectors and Rigs 1–2.
+definitionally. Correctness against the standard is covered by test
+vectors and by differential testing against libFLAC.
 -/
 
 namespace Flac.Crc

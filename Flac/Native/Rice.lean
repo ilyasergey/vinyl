@@ -10,7 +10,7 @@ round-trip theorems live in `Flac.Spec.Rice`.
 Heuristic choices — which partition order, which Rice parameter per
 partition, whether to escape — are *inputs* here (`Partition`,
 `ResidualCfg`), produced later by `Heuristics.lean` together with validity
-certificates (PLAN.md §5.4). The round-trip holds for every valid choice.
+certificates. The round-trip holds for every valid choice.
 -/
 
 namespace Flac.Rice
@@ -171,8 +171,7 @@ structure ResidualCfg where
   choices : List Partition
 deriving Repr
 
-/-- Validity certificate tying a `ResidualCfg` to a concrete residual
-    (PLAN.md §4 L2: the encoder's partition chooser *returns* these). -/
+/-- Validity certificate tying a `ResidualCfg` to a concrete residual. -/
 structure ResidualCfg.Valid (cfg : ResidualCfg) (bs ord : Nat)
     (res : List Int) : Prop where
   po_lt : cfg.po < 16

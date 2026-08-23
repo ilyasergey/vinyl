@@ -2,14 +2,16 @@ import Flac.Native.Frame
 import Flac.Spec.Bits
 import Flac.Spec.Utf8Num
 import Flac.Spec.Subframe
+import Flac.Spec.Stereo
+import Flac.Spec.Rice
 
 /-!
-# L5 (part 2) — frame round-trip
+# L5 (part 2) — multichannel frame round-trip
 
-`frameDecode_frameEncode` of PLAN.md §4, restricted to the M2 profile
-(mono, fixed-blocksize numbering). The CRC checks are discharged
-definitionally: the decoder recomputes the same CRC function over the same
-consumed bits (`withConsumed_spec`) that the encoder wrote by construction.
+The frame round-trip over the full channel option
+space: 1–8 independent channels and the three stereo-decorrelation modes
+(side channel at `b+1` bits), both numbering strategies. CRC checks
+discharge definitionally via `withConsumed_spec`.
 -/
 
 namespace Flac.Frame
@@ -37,78 +39,211 @@ theorem skipSampleRate_zero (s : BitStream) : skipSampleRate 0 s = some s := by
   rw [if_neg (by omega), if_neg (by omega : ¬((0 : Nat) = 13 ∨ (0 : Nat) = 14)),
     if_neg (by omega)]
 
-/-- Parsing the canonical header core recovers the fields. `b0` is the
-    STREAMINFO bit depth; the encoder's 3-bit code round-trips through it. -/
-theorem readFields_headerCore (b0 b idx bs : Nat) (tail : BitStream)
-    (hb : bpsOfCode (bpsCode b) b0 = some b)
-    (hidx : idx < 2 ^ 36) (hbs1 : 1 ≤ bs) (hbs2 : bs ≤ 65536) :
-    readFields b0 (headerCore b idx bs ++ tail) = some (⟨bs, b, idx⟩, tail) := by
+/-- A valid assignment's channel code fits the 4-bit field. -/
+theorem code_lt {asg : ChannelAsg} {b bs : Nat} {chs : List (List Int)}
+    (hv : asg.Valid b bs chs) : asg.code chs.length < 16 := by
+  match asg with
+  | .independent cfgs =>
+    obtain ⟨_, _, h8, _⟩ := hv
+    simp only [ChannelAsg.code]
+    omega
+  | .leftSide c0 c1 | .rightSide c0 c1 | .midSide c0 c1 =>
+    simp only [ChannelAsg.code]
+    omega
+
+/-- Parsing the canonical header core recovers the fields. -/
+theorem readFields_headerCore (b0 b : Nat) (strat : Bool) (num bs chCode : Nat)
+    (tail : BitStream) (hb : bpsOfCode (bpsCode b) b0 = some b)
+    (hnum : num < 2 ^ 36) (hbs1 : 1 ≤ bs) (hbs2 : bs ≤ 65536)
+    (hch : chCode < 16) :
+    readFields b0 (headerCore b strat num bs chCode ++ tail)
+      = some (⟨bs, b, chCode, num⟩, tail) := by
+  have hstrat : (if strat then 1 else 0) < 2 ^ 1 := by cases strat <;> decide
   simp only [headerCore, readFields, List.append_assoc,
     readBits_writeBits _ _ _ (by omega : 0x3FFE < 2 ^ 14),
     readBits_writeBits _ _ _ (by omega : 0 < 2 ^ 1),
+    readBits_writeBits _ _ _ hstrat,
     readBits_writeBits _ _ _ (by omega : 7 < 2 ^ 4),
     readBits_writeBits _ _ _ (by omega : 0 < 2 ^ 4),
+    readBits_writeBits _ _ _ (show chCode < 2 ^ 4 by omega),
     readBits_writeBits _ _ _ (bpsCode_lt b),
-    hb, Utf8Num.read_write idx hidx,
+    hb, Utf8Num.read_write num hnum,
     resolveBlockSize_seven bs hbs1 hbs2, skipSampleRate_zero]
-  rw [if_pos (by trivial), if_pos (by trivial), if_pos (by trivial), if_pos (by trivial),
-    if_pos (by trivial)]
+  rw [if_pos (by trivial), if_pos (by trivial), if_pos (by trivial)]
 
 /-- Header round-trip, CRC-8 verified. -/
-theorem readHeader_writeHeader (b0 b idx bs : Nat) (tail : BitStream)
-    (hb : bpsOfCode (bpsCode b) b0 = some b)
-    (hidx : idx < 2 ^ 36) (hbs1 : 1 ≤ bs) (hbs2 : bs ≤ 65536) :
-    readHeader b0 (writeHeader b idx bs ++ tail) = some (⟨bs, b, idx⟩, tail) := by
+theorem readHeader_writeHeader (b0 b : Nat) (strat : Bool) (num bs chCode : Nat)
+    (tail : BitStream) (hb : bpsOfCode (bpsCode b) b0 = some b)
+    (hnum : num < 2 ^ 36) (hbs1 : 1 ≤ bs) (hbs2 : bs ≤ 65536)
+    (hch : chCode < 16) :
+    readHeader b0 (writeHeader b strat num bs chCode ++ tail)
+      = some (⟨bs, b, chCode, num⟩, tail) := by
   unfold writeHeader readHeader
   rw [List.append_assoc]
-  simp only [withConsumed_spec (readFields b0) (headerCore b idx bs) _ _
-      (readFields_headerCore b0 b idx bs _ hb hidx hbs1 hbs2),
+  simp only [withConsumed_spec (readFields b0) (headerCore b strat num bs chCode) _ _
+      (readFields_headerCore b0 b strat num bs chCode _ hb hnum hbs1 hbs2 hch),
     readBits_writeBits _ _ _
-      (show (Crc.crc8 (bitsToBytes (headerCore b idx bs))).toNat < 2 ^ 8 from
+      (show (Crc.crc8 (bitsToBytes (headerCore b strat num bs chCode))).toNat < 2 ^ 8 from
         UInt8.toNat_lt_size _)]
   rw [if_pos (by trivial)]
 
-/-- Header + subframe. -/
-theorem readHeaderSub_spec (b0 b idx : Nat) (cfg : Subframe.SubCfg)
-    (xs : List Int) (tail : BitStream)
-    (hb : bpsOfCode (bpsCode b) b0 = some b) (hidx : idx < 2 ^ 36)
-    (h1 : 1 ≤ xs.length) (h2 : xs.length ≤ 65536)
-    (hv : cfg.Valid b xs) :
-    readHeaderSub b0 ((writeHeader b idx xs.length ++ Subframe.write b cfg xs) ++ tail)
-      = some (xs, tail) := by
-  unfold readHeaderSub
-  rw [List.append_assoc]
-  simp only [readHeader_writeHeader b0 b idx xs.length _ hb hidx h1 h2]
-  exact Subframe.read_write b cfg xs hv tail
+/-! ## Subframe sequences and channel decorrelation -/
 
-/-- Header + subframe + alignment padding. -/
-theorem readBody_spec (b0 b idx : Nat) (cfg : Subframe.SubCfg)
-    (xs : List Int) (tail : BitStream)
-    (hb : bpsOfCode (bpsCode b) b0 = some b) (hidx : idx < 2 ^ 36)
-    (h1 : 1 ≤ xs.length) (h2 : xs.length ≤ 65536)
-    (hv : cfg.Valid b xs) :
-    readBody b0 (body b idx cfg xs ++ tail) = some (xs, tail) := by
+private theorem zip_map_left' {α β γ : Type} (f : α → γ) :
+    ∀ (l1 : List α) (l2 : List β),
+      (l1.map f).zip l2 = (l1.zip l2).map (fun p => (f p.1, p.2)) := by
+  intro l1
+  induction l1 with
+  | nil => intro l2; rfl
+  | cons a l1 ih =>
+    intro l2
+    match l2 with
+    | [] => rfl
+    | b :: l2 => simp only [List.map_cons, List.zip_cons_cons, ih]
+
+theorem readSubframes_pairs (b bs : Nat) :
+    ∀ (pairs : List (Subframe.SubCfg × List Int)) (rest : BitStream),
+      (∀ p ∈ pairs, p.2.length = bs ∧ p.1.Valid b p.2) →
+      readSubframes bs b pairs.length
+        (writeSubframes (pairs.map (fun p => ((b, p.1), p.2))) ++ rest)
+        = some (pairs.map Prod.snd, rest) := by
+  intro pairs
+  induction pairs with
+  | nil => intro rest _; rfl
+  | cons p ps ih =>
+    intro rest hv
+    obtain ⟨hlen, hval⟩ := hv p (List.mem_cons_self ..)
+    have hsub := Subframe.read_write b p.1 p.2 hval
+      (writeSubframes (ps.map (fun p => ((b, p.1), p.2))) ++ rest)
+    rw [hlen] at hsub
+    simp only [writeSubframes] at hsub ih
+    simp only [writeSubframes, List.map_cons, List.flatMap_cons, List.length_cons,
+      readSubframes, List.append_assoc, hsub]
+    rw [ih rest (fun q hq => hv q (List.mem_cons_of_mem _ hq))]
+
+/-- Channel-sequence round-trip: reading back the written subframes and
+    undoing decorrelation recovers the channels. -/
+theorem readChannels_spec (b bs : Nat) (asg : ChannelAsg)
+    (chs : List (List Int)) (rest : BitStream)
+    (hv : asg.Valid b bs chs) :
+    readChannels bs b (asg.code chs.length)
+      (writeSubframes (subframePlan b asg chs) ++ rest) = some (chs, rest) := by
+  obtain ⟨hlens, hshape⟩ := hv
+  match asg with
+  | .independent cfgs =>
+    obtain ⟨hch1, hch8, hclen, hpv⟩ := hshape
+    have hziplen : (cfgs.zip chs).length = chs.length := by
+      rw [List.length_zip]; omega
+    have hpairs := readSubframes_pairs b bs (cfgs.zip chs) rest (fun p hp =>
+      ⟨hlens p.2 (List.of_mem_zip hp).2, hpv p hp⟩)
+    rw [hziplen, Rice.map_snd_zip_eq cfgs chs hclen] at hpairs
+    simp only [ChannelAsg.code, subframePlan, zip_map_left']
+    unfold readChannels
+    rw [if_pos (by omega : chs.length - 1 ≤ 7),
+      show chs.length - 1 + 1 = chs.length from by omega]
+    exact hpairs
+  | .leftSide c0 c1 =>
+    match chs, hshape with
+    | [l, r], hsh =>
+      obtain ⟨hv0, hv1⟩ := hsh
+      have hll : l.length = bs := hlens l (by simp)
+      have hrl : r.length = bs := hlens r (by simp)
+      have hs0 := Subframe.read_write b c0 l hv0
+        (Subframe.write (b + 1) c1 (Stereo.side l r) ++ rest)
+      rw [hll] at hs0
+      have hs1 := Subframe.read_write (b + 1) c1 (Stereo.side l r) hv1 rest
+      rw [show (Stereo.side l r).length = bs by
+        simp only [Stereo.length_side]; omega] at hs1
+      simp only [ChannelAsg.code, subframePlan, writeSubframes,
+        List.flatMap_cons, List.flatMap_nil, List.append_nil, List.append_assoc]
+      unfold readChannels
+      rw [if_neg (by omega : ¬(8 ≤ 7)), if_pos (by trivial)]
+      simp only [hs0, hs1, Stereo.decodeLS_side l r (by omega)]
+  | .rightSide c0 c1 =>
+    match chs, hshape with
+    | [l, r], hsh =>
+      obtain ⟨hv0, hv1⟩ := hsh
+      have hll : l.length = bs := hlens l (by simp)
+      have hrl : r.length = bs := hlens r (by simp)
+      have hs0 := Subframe.read_write (b + 1) c0 (Stereo.side l r) hv0
+        (Subframe.write b c1 r ++ rest)
+      rw [show (Stereo.side l r).length = bs by
+        simp only [Stereo.length_side]; omega] at hs0
+      have hs1 := Subframe.read_write b c1 r hv1 rest
+      rw [hrl] at hs1
+      simp only [ChannelAsg.code, subframePlan, writeSubframes,
+        List.flatMap_cons, List.flatMap_nil, List.append_nil, List.append_assoc]
+      unfold readChannels
+      rw [if_neg (by omega : ¬(9 ≤ 7)), if_neg (by omega : ¬(9 = 8)),
+        if_pos (by trivial)]
+      simp only [hs0, hs1, Stereo.decodeRS_side l r (by omega)]
+  | .midSide c0 c1 =>
+    match chs, hshape with
+    | [l, r], hsh =>
+      obtain ⟨hv0, hv1⟩ := hsh
+      have hll : l.length = bs := hlens l (by simp)
+      have hrl : r.length = bs := hlens r (by simp)
+      have hs0 := Subframe.read_write b c0 (Stereo.mid l r) hv0
+        (Subframe.write (b + 1) c1 (Stereo.side l r) ++ rest)
+      rw [show (Stereo.mid l r).length = bs by
+        simp only [Stereo.length_mid]; omega] at hs0
+      have hs1 := Subframe.read_write (b + 1) c1 (Stereo.side l r) hv1 rest
+      rw [show (Stereo.side l r).length = bs by
+        simp only [Stereo.length_side]; omega] at hs1
+      simp only [ChannelAsg.code, subframePlan, writeSubframes,
+        List.flatMap_cons, List.flatMap_nil, List.append_nil, List.append_assoc]
+      unfold readChannels
+      rw [if_neg (by omega : ¬(10 ≤ 7)), if_neg (by omega : ¬(10 = 8)),
+        if_neg (by omega : ¬(10 = 9)), if_pos (by trivial)]
+      simp only [hs0, hs1, Stereo.decodeMSL_mid_side l r (by omega),
+        Stereo.decodeMSR_mid_side l r (by omega)]
+
+/-! ## Frame assembly -/
+
+theorem readHeaderChannels_spec (b0 b : Nat) (strat : Bool) (num : Nat)
+    (asg : ChannelAsg) (chs : List (List Int)) (tail : BitStream)
+    (hb : bpsOfCode (bpsCode b) b0 = some b) (hnum : num < 2 ^ 36)
+    (hbs1 : 1 ≤ (chs.headD []).length) (hbs2 : (chs.headD []).length ≤ 65536)
+    (hv : asg.Valid b (chs.headD []).length chs) :
+    readHeaderChannels b0
+      ((writeHeader b strat num (chs.headD []).length (asg.code chs.length)
+        ++ writeSubframes (subframePlan b asg chs)) ++ tail)
+      = some (chs, tail) := by
+  unfold readHeaderChannels
+  rw [List.append_assoc]
+  simp only [readHeader_writeHeader b0 b strat num (chs.headD []).length
+    (asg.code chs.length) _ hb hnum hbs1 hbs2 (code_lt hv)]
+  exact readChannels_spec b (chs.headD []).length asg chs tail hv
+
+theorem readBody_spec (b0 b : Nat) (strat : Bool) (num : Nat)
+    (asg : ChannelAsg) (chs : List (List Int)) (tail : BitStream)
+    (hb : bpsOfCode (bpsCode b) b0 = some b) (hnum : num < 2 ^ 36)
+    (hbs1 : 1 ≤ (chs.headD []).length) (hbs2 : (chs.headD []).length ≤ 65536)
+    (hv : asg.Valid b (chs.headD []).length chs) :
+    readBody b0 (body b strat num asg chs ++ tail) = some (chs, tail) := by
   unfold readBody body alignToByte
   rw [List.append_assoc]
-  simp only [withConsumed_spec (readHeaderSub b0)
-      (writeHeader b idx xs.length ++ Subframe.write b cfg xs) _ _
-      (readHeaderSub_spec b0 b idx cfg xs _ hb hidx h1 h2 hv),
+  simp only [withConsumed_spec (readHeaderChannels b0)
+      (writeHeader b strat num (chs.headD []).length (asg.code chs.length)
+        ++ writeSubframes (subframePlan b asg chs)) _ _
+      (readHeaderChannels_spec b0 b strat num asg chs _ hb hnum hbs1 hbs2 hv),
     readBits_replicate_false]
   rw [if_pos (by trivial)]
 
-/-- **Frame round-trip** (M2 profile: mono, fixed-blocksize numbering). -/
-theorem read_write (b0 b idx : Nat) (cfg : Subframe.SubCfg)
-    (xs : List Int) (rest : BitStream)
-    (hb : bpsOfCode (bpsCode b) b0 = some b) (hidx : idx < 2 ^ 36)
-    (h1 : 1 ≤ xs.length) (h2 : xs.length ≤ 65536)
-    (hv : cfg.Valid b xs) :
-    read b0 (write b idx cfg xs ++ rest) = some (xs, rest) := by
+/-- **Frame round-trip** over the full channel/stereo/numbering option
+    space. -/
+theorem read_write (b0 b : Nat) (strat : Bool) (num : Nat)
+    (asg : ChannelAsg) (chs : List (List Int)) (rest : BitStream)
+    (hb : bpsOfCode (bpsCode b) b0 = some b) (hnum : num < 2 ^ 36)
+    (hbs1 : 1 ≤ (chs.headD []).length) (hbs2 : (chs.headD []).length ≤ 65536)
+    (hv : asg.Valid b (chs.headD []).length chs) :
+    read b0 (write b strat num asg chs ++ rest) = some (chs, rest) := by
   unfold write read
   rw [List.append_assoc]
-  simp only [withConsumed_spec (readBody b0) (body b idx cfg xs) _ _
-      (readBody_spec b0 b idx cfg xs _ hb hidx h1 h2 hv),
+  simp only [withConsumed_spec (readBody b0) (body b strat num asg chs) _ _
+      (readBody_spec b0 b strat num asg chs _ hb hnum hbs1 hbs2 hv),
     readBits_writeBits _ _ _
-      (show (Crc.crc16 (bitsToBytes (body b idx cfg xs))).toNat < 2 ^ 16 from
+      (show (Crc.crc16 (bitsToBytes (body b strat num asg chs))).toNat < 2 ^ 16 from
         UInt16.toNat_lt_size _)]
   rw [if_pos (by trivial)]
 

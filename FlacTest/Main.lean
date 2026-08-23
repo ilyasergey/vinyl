@@ -119,55 +119,77 @@ def riceTests : TestM Unit := do
 
 /-! ## End-to-end: encode → decodeReference -/
 
-/-- A test chooser exercising CONSTANT and FIXED subframes. -/
-def testChooser (blk : List Int) : Subframe.SubCfg :=
+/-- A mono test chooser exercising CONSTANT and FIXED subframes. -/
+def testSubCfg (blk : List Int) : Subframe.SubCfg :=
   if blk.all (· == blk.headD 0) then ⟨0, .constant⟩
   else if 2 < blk.length then
     ⟨0, .fixed 2 { method := .rice4, po := 0, choices := [.rice 4] }⟩
   else ⟨0, .verbatim⟩
 
+/-- Lift a per-block subframe chooser to a channel assignment. -/
+def indep (f : List Int → Subframe.SubCfg) : List (List Int) → Frame.ChannelAsg :=
+  fun fr => .independent (fr.map f)
+
 def e2eTests : TestM Unit := do
-  let mkCfg (chooser : List Int → Subframe.SubCfg) : Stream.EncoderCfg :=
-    { blockSize := 16, sampleRate := 44100, bps := 16, chooser := chooser }
+  let mono (bs : Nat) (chooser : List (List Int) → Frame.ChannelAsg)
+      (pcm : List Int) : Option (List (List Int)) :=
+    Stream.decodeReference (Stream.encode ⟨bs, false, chooser⟩ ⟨[pcm], 16, 44100⟩)
   -- 40 samples → frames of 16/16/8 (short last frame)
   let pcm : List Int := (List.range 40).map fun (i : Nat) =>
     (100 * (i : Int)) - 2000 + (if i % 3 == 0 then 7 else -5)
   checkEq "e2e verbatim 40 samples"
-    (Stream.decodeReference (Stream.encode (mkCfg Stream.verbatimChooser) pcm))
-    (some pcm)
+    (mono 16 Stream.verbatimChooser pcm) (some [pcm])
   checkEq "e2e fixed/constant 40 samples"
-    (Stream.decodeReference (Stream.encode (mkCfg testChooser) pcm)) (some pcm)
+    (mono 16 (indep testSubCfg) pcm) (some [pcm])
   -- constant blocks
   let flat : List Int := List.replicate 48 (-12345)
-  checkEq "e2e constant blocks"
-    (Stream.decodeReference (Stream.encode (mkCfg testChooser) flat)) (some flat)
+  checkEq "e2e constant blocks" (mono 16 (indep testSubCfg) flat) (some [flat])
   -- empty stream (zero frames)
   checkEq "e2e empty pcm"
-    (Stream.decodeReference (Stream.encode (mkCfg Stream.verbatimChooser) []))
-    (some ([] : List Int))
+    (mono 16 Stream.verbatimChooser []) (some [[]])
   -- extreme 16-bit values
   let extremes : List Int := [32767, -32768, 0, -1, 1] ++ List.replicate 20 32767
   checkEq "e2e extreme values"
-    (Stream.decodeReference (Stream.encode (mkCfg Stream.verbatimChooser) extremes))
-    (some extremes)
+    (mono 16 Stream.verbatimChooser extremes) (some [extremes])
   -- 8-bit depth
-  let cfg8 : Stream.EncoderCfg :=
-    { blockSize := 16, sampleRate := 8000, bps := 8, chooser := Stream.verbatimChooser }
   let pcm8 : List Int := (List.range 30).map fun (i : Nat) => ((i : Int) % 100) - 50
-  checkEq "e2e 8-bit" (Stream.decodeReference (Stream.encode cfg8 pcm8)) (some pcm8)
-  -- the certified default heuristic (M3+M4: wasted bits, LPC, fixed)
-  checkEq "e2e defaultSubCfg"
-    (Stream.decodeReference (Stream.encode (mkCfg (Heuristics.defaultSubCfg 16)) pcm))
-    (some pcm)
-  checkEq "e2e defaultSubCfg constant blocks"
-    (Stream.decodeReference (Stream.encode (mkCfg (Heuristics.defaultSubCfg 16)) flat))
-    (some flat)
+  checkEq "e2e 8-bit"
+    (Stream.decodeReference (Stream.encode ⟨16, false, Stream.verbatimChooser⟩
+      ⟨[pcm8], 8, 8000⟩)) (some [pcm8])
+  -- the certified default heuristics (wasted bits, LPC, fixed, stereo)
+  checkEq "e2e defaultAsgChooser mono"
+    (mono 16 (Heuristics.defaultAsgChooser 16) pcm) (some [pcm])
+  checkEq "e2e defaultAsgChooser constant" (mono 16 (Heuristics.defaultAsgChooser 16) flat)
+    (some [flat])
   -- wasted bits: all samples share 3 low zero bits
   let wpcm : List Int := (List.range 40).map fun (i : Nat) => ((i : Int) - 20) * 8
-  checkEq "e2e wasted bits"
-    (Stream.decodeReference (Stream.encode (mkCfg (Heuristics.defaultSubCfg 16)) wpcm))
-    (some wpcm)
+  checkEq "e2e wasted bits" (mono 16 (Heuristics.defaultAsgChooser 16) wpcm)
+    (some [wpcm])
   checkEq "wastedDetect finds 3" (Heuristics.wastedDetect 16 wpcm) 3
+  -- stereo: correlated channels (side should win), all four modes decode
+  let left : List Int := (List.range 40).map fun (i : Nat) => 500 * (i : Int) - 9000
+  let right : List Int := left.map (· + 37)
+  let stereo (chooser : List (List Int) → Frame.ChannelAsg) :=
+    Stream.decodeReference (Stream.encode ⟨16, false, chooser⟩
+      ⟨[left, right], 16, 44100⟩)
+  checkEq "e2e stereo default" (stereo (Heuristics.defaultAsgChooser 16))
+    (some [left, right])
+  checkEq "e2e stereo leftSide"
+    (stereo fun _ => .leftSide ⟨0, .verbatim⟩ ⟨0, .verbatim⟩) (some [left, right])
+  checkEq "e2e stereo rightSide"
+    (stereo fun _ => .rightSide ⟨0, .verbatim⟩ ⟨0, .verbatim⟩) (some [left, right])
+  checkEq "e2e stereo midSide"
+    (stereo fun _ => .midSide ⟨0, .verbatim⟩ ⟨0, .verbatim⟩) (some [left, right])
+  -- 5 channels, independent
+  let chans : List (List Int) := (List.range 5).map fun (c : Nat) =>
+    (List.range 33).map fun (i : Nat) => ((c : Int) + 1) * ((i : Int) - 16)
+  checkEq "e2e 5 channels"
+    (Stream.decodeReference (Stream.encode ⟨16, false, Heuristics.defaultAsgChooser 16⟩
+      ⟨chans, 16, 44100⟩)) (some chans)
+  -- variable-blocksize numbering strategy
+  checkEq "e2e variable numbering"
+    (Stream.decodeReference (Stream.encode ⟨16, true, Heuristics.defaultAsgChooser 16⟩
+      ⟨[pcm], 16, 44100⟩)) (some [pcm])
 
 /-! ## Bit-level spot checks -/
 
@@ -185,24 +207,28 @@ def bitsTests : TestM Unit := do
 /-- With an argument, write sample encoded streams into that directory
     (for differential testing against `flac`/`ffmpeg` from the shell). -/
 def emitSamples (dir : String) : IO Unit := do
-  let mk (name : String) (cfg : Stream.EncoderCfg) (pcm : List Int) : IO Unit := do
-    IO.FS.writeBinFile s!"{dir}/{name}.flac" (Stream.encode cfg pcm)
-    -- raw PCM for byte-compare: signed little-endian, ⌈bps/8⌉ bytes/sample
-    IO.FS.writeBinFile s!"{dir}/{name}.pcm" (Stream.pcmBytes cfg.bps pcm)
+  let mk (name : String) (bs : Nat) (chooser : List (List Int) → Frame.ChannelAsg)
+      (chans : List (List Int)) : IO Unit := do
+    let a : Stream.Audio := ⟨chans, 16, 44100⟩
+    IO.FS.writeBinFile s!"{dir}/{name}.flac" (Stream.encode ⟨bs, false, chooser⟩ a)
+    -- raw PCM for byte-compare: interleaved signed little-endian
+    IO.FS.writeBinFile s!"{dir}/{name}.pcm" (Stream.pcmBytes 16 chans)
   let sine : List Int := (List.range 4000).map fun (i : Nat) =>
     (8000 * Float.sin (Float.ofNat i * 0.05)).toInt64.toInt
-  let cfg16 : Stream.EncoderCfg :=
-    { blockSize := 4096, sampleRate := 44100, bps := 16,
-      chooser := Stream.verbatimChooser }
-  mk "sine-verbatim" cfg16 sine
-  mk "sine-fixed" { cfg16 with chooser := testChooser } sine
-  mk "wasted-bits" { cfg16 with chooser := Heuristics.defaultSubCfg 16 }
-    ((List.range 3000).map fun (i : Nat) => (((i * i * 2654435761 + i * 40503) % 8192 : Nat) : Int) * 4 - 16384)
-  mk "flat-constant" { cfg16 with chooser := testChooser }
-    (List.replicate 10000 (1234 : Int))
-  mk "noise-small-blocks" { cfg16 with blockSize := 256 }
-    ((List.range 5000).map fun (i : Nat) => ((i * i * 2654435761 + i * 40503) % 65536 : Int) - 32768)
-  mk "empty" cfg16 []
+  mk "sine-verbatim" 4096 Stream.verbatimChooser [sine]
+  mk "sine-fixed" 4096 (indep testSubCfg) [sine]
+  mk "wasted-bits" 4096 (Heuristics.defaultAsgChooser 16)
+    [(List.range 3000).map fun (i : Nat) => (((i * i * 2654435761 + i * 40503) % 8192 : Nat) : Int) * 4 - 16384]
+  mk "flat-constant" 4096 (indep testSubCfg) [List.replicate 10000 (1234 : Int)]
+  mk "noise-small-blocks" 256 (Heuristics.defaultAsgChooser 16)
+    [(List.range 5000).map fun (i : Nat) => ((i * i * 2654435761 + i * 40503) % 65536 : Int) - 32768]
+  mk "empty" 4096 Stream.verbatimChooser [[]]
+  -- stereo: correlated channels, default chooser picks a side mode
+  let l : List Int := (List.range 4000).map fun (i : Nat) =>
+    (9000 * Float.sin (Float.ofNat i * 0.02)).toInt64.toInt
+  let r : List Int := l.map fun x => x - x / 8 + 100
+  mk "stereo-corr" 4096 (Heuristics.defaultAsgChooser 16) [l, r]
+  mk "stereo-ms" 4096 (fun _ => .midSide ⟨0, .verbatim⟩ ⟨0, .verbatim⟩) [l, r]
 
 /-- Parse raw signed 16-bit little-endian mono PCM. -/
 def pcm16OfBytes (b : ByteArray) : List Int :=
@@ -210,23 +236,27 @@ def pcm16OfBytes (b : ByteArray) : List Int :=
     let u : Nat := b[2*i]!.toNat + 256 * b[2*i+1]!.toNat
     if u < 32768 then (u : Int) else (u : Int) - 65536
 
+/-- Deinterleave raw 16-bit LE PCM into `ch` channels. -/
+def deinterleave (ch : Nat) (xs : List Int) : List (List Int) :=
+  (List.range ch).map fun c =>
+    (List.range (xs.length / ch)).map fun i => xs.getD (i * ch + c) 0
+
 def main (args : List String) : IO UInt32 := do
-  if let ["--encode", inFile, outFile, bs] := args then
+  if let ["--encode", inFile, outFile, bs, ch] := args then
     let bytes ← IO.FS.readBinFile inFile
-    let pcm := pcm16OfBytes bytes
-    let cfg : Stream.EncoderCfg :=
-      { blockSize := bs.toNat!, sampleRate := 44100, bps := 16,
-        chooser := Heuristics.defaultSubCfg 16 }
-    IO.FS.writeBinFile outFile (Stream.encode cfg pcm)
-    IO.println s!"encoded {pcm.length} samples"
+    let chans := deinterleave ch.toNat! (pcm16OfBytes bytes)
+    let a : Stream.Audio := ⟨chans, 16, 44100⟩
+    IO.FS.writeBinFile outFile
+      (Stream.encode ⟨bs.toNat!, false, Heuristics.defaultAsgChooser 16⟩ a)
+    IO.println s!"encoded {a.numSamples} samples x {chans.length} channels"
     return 0
   if let ["--decode", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
     match Stream.decodeReference bytes with
     | none => IO.println "DECODE ERROR"; return 1
-    | some pcm =>
-      IO.FS.writeBinFile outFile (Stream.pcmBytes 16 pcm)
-      IO.println s!"decoded {pcm.length} samples"
+    | some chans =>
+      IO.FS.writeBinFile outFile (Stream.pcmBytes 16 chans)
+      IO.println s!"decoded {(chans.headD []).length} samples x {chans.length} channels"
       return 0
   if let dir :: _ := args then
     emitSamples dir

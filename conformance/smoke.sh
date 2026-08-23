@@ -48,9 +48,28 @@ flac --force-raw-format --sign=signed --endian=little --channels=1 --bps=16 \
   --sample-rate=44100 -l 0 -s -f -o "$WORK/rig2.flac" "$WORK/rig2.pcm" 2>/dev/null
 lake exe flactest --decode "$WORK/rig2.flac" "$WORK/rig2.out" >/dev/null
 if cmp -s "$WORK/rig2.out" "$WORK/rig2.pcm"; then
-  echo "ok: libFLAC(-l 0) stream decodes byte-identically"
+  echo "ok: libFLAC(-l 0) mono stream decodes byte-identically"
 else
-  echo "FAIL: Rig 2 mismatch"; fail=1
+  echo "FAIL: Rig 2 mono mismatch"; fail=1
+fi
+
+# stereo: libFLAC will pick stereo decorrelation modes on correlated channels
+python3 - "$WORK/rig2s.pcm" <<'EOF2'
+import struct, sys, math
+out = []
+for i in range(20000):
+    l = int(9000 * math.sin(i * 0.02))
+    r = l - l // 8 + ((i * 37) % 5)
+    out.append(struct.pack('<hh', l, r))
+open(sys.argv[1], 'wb').write(b''.join(out))
+EOF2
+flac --force-raw-format --sign=signed --endian=little --channels=2 --bps=16 \
+  --sample-rate=44100 -l 0 -s -f -o "$WORK/rig2s.flac" "$WORK/rig2s.pcm" 2>/dev/null
+lake exe flactest --decode "$WORK/rig2s.flac" "$WORK/rig2s.out" >/dev/null
+if cmp -s "$WORK/rig2s.out" "$WORK/rig2s.pcm"; then
+  echo "ok: libFLAC(-l 0) stereo stream decodes byte-identically"
+else
+  echo "FAIL: Rig 2 stereo mismatch"; fail=1
 fi
 
 if [ "$fail" = 0 ]; then echo "CONFORMANCE SMOKE: ALL GREEN"; else echo "CONFORMANCE SMOKE: FAILURES"; fi

@@ -6,7 +6,7 @@ import Flac.Spec.Stream
 # The heuristics' single proof obligation
 
 `defaultChooser` always returns a valid subframe configuration — the only
-fact the kernel ever needs about the heuristic layer (PLAN.md §4 L3 note).
+fact the kernel ever needs about the heuristic layer.
 With it, the M2 keystone specializes to the hypothesis-light corollary
 `decodeReference_encode_default`.
 -/
@@ -123,7 +123,7 @@ theorem defaultChooser_valid (b : Nat) (blk : List Int)
 /-! ## Wasted-bits detection -/
 
 /-- Scaling down an exactly-divisible sample keeps it in the reduced
-    width: the pointwise width bookkeeping of PLAN.md §5.6. -/
+    width: the pointwise width bookkeeping of-/
 theorem fitsSInt_shiftDown (b w : Nat) (hw : w < b) (x : Int)
     (hfit : FitsSInt b x) (hdvd : ((2 ^ w : Nat) : Int) ∣ x) :
     FitsSInt (b - w) (shiftDown w x) := by
@@ -194,19 +194,133 @@ theorem defaultSubCfg_valid (b : Nat) (blk : List Int) (hb : 1 ≤ b)
     exact fitsSInt_shiftDown b _ (wastedDetect_lt b hb blk) x (hfit x hxmem)
       (wastedDetect_dvd b blk x hxmem)
 
-/-- **Keystone corollary with the default heuristic**: no chooser
-    hypothesis left — encode with `defaultSubCfg` (wasted-bit detection,
-    LPC/fixed search), decode, get the input back, kernel-checked. -/
+/-! ## Channel-assignment chooser -/
+
+private theorem exists_of_mem_zipWith {f : Int → Int → Int} :
+    ∀ {l r : List Int} {x : Int}, x ∈ List.zipWith f l r →
+      ∃ a ∈ l, ∃ b ∈ r, x = f a b := by
+  intro l
+  induction l with
+  | nil => intro r x hx; simp at hx
+  | cons a l ih =>
+    intro r x hx
+    match r with
+    | [] => simp at hx
+    | b :: r =>
+      simp only [List.zipWith_cons_cons, List.mem_cons] at hx
+      rcases hx with rfl | hx
+      · exact ⟨a, by simp, b, by simp, rfl⟩
+      · obtain ⟨a', ha', b', hb', rfl⟩ := ih hx
+        exact ⟨a', by simp [ha'], b', by simp [hb'], rfl⟩
+
+private theorem mem_zip_map_self {α β : Type} (f : α → β) :
+    ∀ (l : List α) (p : β × α), p ∈ (l.map f).zip l → p.1 = f p.2 ∧ p.2 ∈ l := by
+  intro l
+  induction l with
+  | nil => intro p hp; simp at hp
+  | cons a l ih =>
+    intro p hp
+    simp only [List.map_cons, List.zip_cons_cons, List.mem_cons] at hp
+    rcases hp with rfl | hp
+    · exact ⟨rfl, by simp⟩
+    · obtain ⟨h1, h2⟩ := ih p hp
+      exact ⟨h1, by simp [h2]⟩
+
+/-- Side channels of fitting audio fit `b+1` bits. -/
+private theorem side_all_fits (b : Nat) (l r : List Int)
+    (hl : ∀ x ∈ l, FitsSInt b x) (hr : ∀ x ∈ r, FitsSInt b x) :
+    ∀ x ∈ Stereo.side l r, FitsSInt (b + 1) x := by
+  intro x hx
+  obtain ⟨a, ha, c, hc, rfl⟩ := exists_of_mem_zipWith hx
+  exact Stereo.side_fits b a c (hl a ha) (hr c hc)
+
+/-- Mid channels of fitting audio fit `b` bits. -/
+private theorem mid_all_fits (b : Nat) (l r : List Int)
+    (hl : ∀ x ∈ l, FitsSInt b x) (hr : ∀ x ∈ r, FitsSInt b x) :
+    ∀ x ∈ Stereo.mid l r, FitsSInt b x := by
+  intro x hx
+  obtain ⟨a, ha, c, hc, rfl⟩ := exists_of_mem_zipWith hx
+  exact Stereo.mid_fits b a c (hl a ha) (hr c hc)
+
+/-- The channel-assignment chooser is always valid. -/
+theorem defaultAsgChooser_valid (b : Nat) (fr : List (List Int))
+    (hb : 1 ≤ b) (hch1 : 1 ≤ fr.length) (hch8 : fr.length ≤ 8)
+    (heqfr : ∀ c ∈ fr, c.length = (fr.headD []).length)
+    (h1 : 1 ≤ (fr.headD []).length)
+    (hfit : ∀ c ∈ fr, ∀ x ∈ c, FitsSInt b x) :
+    (defaultAsgChooser b fr).Valid b (fr.headD []).length fr := by
+  match fr with
+  | [l, r] =>
+    simp only [List.headD_cons] at heqfr h1 ⊢
+    have hll : l.length = l.length := rfl
+    have hrl : r.length = l.length := heqfr r (by simp)
+    have hfl : ∀ x ∈ l, FitsSInt b x := hfit l (by simp)
+    have hfr : ∀ x ∈ r, FitsSInt b x := hfit r (by simp)
+    have hslen : 1 ≤ (Stereo.side l r).length := by
+      simp only [Stereo.length_side]
+      omega
+    have hmlen : 1 ≤ (Stereo.mid l r).length := by
+      simp only [Stereo.length_mid]
+      omega
+    have hsl : (Stereo.side l r).length = l.length := by
+      simp only [Stereo.length_side]; omega
+    have hml : (Stereo.mid l r).length = l.length := by
+      simp only [Stereo.length_mid]; omega
+    have hvl := defaultSubCfg_valid b l hb h1 hfl
+    have hvr := defaultSubCfg_valid b r hb (by omega) hfr
+    have hvs := defaultSubCfg_valid (b + 1) (Stereo.side l r) (by omega)
+      hslen (side_all_fits b l r hfl hfr)
+    have hvm := defaultSubCfg_valid b (Stereo.mid l r) hb hmlen
+      (mid_all_fits b l r hfl hfr)
+    unfold defaultAsgChooser
+    have hlens : ∀ c ∈ [l, r], c.length = l.length := heqfr
+    have hindep : (Frame.ChannelAsg.independent
+        [defaultSubCfg b l, defaultSubCfg b r]).Valid b l.length [l, r] := by
+      refine ⟨hlens, by simp, by simp, by simp, ?_⟩
+      intro p hp
+      rcases List.mem_cons.mp hp with rfl | hp
+      · exact hvl
+      · rcases List.mem_cons.mp hp with rfl | hp
+        · exact hvr
+        · simp at hp
+    rcases hpick : stereoPick l r with - | - | - | - | n
+    · simpa only [hpick] using hindep
+    · simp only [hpick]
+      exact ⟨hlens, hvl, hvs⟩
+    · simp only [hpick]
+      exact ⟨hlens, hvs, hvr⟩
+    · simp only [hpick]
+      exact ⟨hlens, hvm, hvs⟩
+    · simpa only [hpick] using hindep
+  | [c0] =>
+    refine ⟨heqfr, by omega, by omega, by simp, ?_⟩
+    intro p hp
+    rcases List.mem_cons.mp hp with rfl | hp
+    · simp only [List.headD_cons] at h1
+      exact defaultSubCfg_valid b c0 hb h1 (hfit c0 (by simp))
+    · simp at hp
+  | c0 :: c1 :: c2 :: t =>
+    refine ⟨heqfr, by simp, by simpa using hch8, by simp, ?_⟩
+    intro p hp
+    obtain ⟨h1', h2'⟩ := mem_zip_map_self (defaultSubCfg b) _ p hp
+    rw [h1']
+    exact defaultSubCfg_valid b p.2 hb
+      (by rw [heqfr p.2 h2']; exact h1) (hfit p.2 h2')
+
+/-- **Capstone corollary with the default heuristics**: wasted-bit
+    detection, LPC/fixed search, and stereo-mode decision — no chooser
+    hypothesis left. Encode any well-formed audio, decode, get the
+    channels back, kernel-checked. -/
 theorem _root_.Flac.Stream.decodeReference_encode_default
-    (blockSize sampleRate b : Nat) (pcm : List Int)
+    (blockSize : Nat) (varBlk : Bool) (a : Stream.Audio)
+    (hwf : a.WellFormed)
     (hbs1 : 16 ≤ blockSize) (hbs2 : blockSize ≤ 65535)
-    (hsr : sampleRate < 2 ^ 20) (hb1 : 1 ≤ b) (hb2 : b ≤ 32)
-    (htot : pcm.length < 2 ^ 36)
-    (hfit : ∀ x ∈ pcm, FitsSInt b x) :
+    (hsr : a.sampleRate < 2 ^ 20) (htot : a.numSamples < 2 ^ 36) :
     Stream.decodeReference (Stream.encode
-      ⟨blockSize, sampleRate, b, defaultSubCfg b⟩ pcm) = some pcm :=
-  Stream.decodeReference_encode _ pcm hbs1 hbs2 hsr hb1 hb2 htot
-    (fun ys h1 _ hmem => defaultSubCfg_valid b ys hb1 h1
-      (fun x hx => hfit x (hmem x hx)))
+      ⟨blockSize, varBlk, defaultAsgChooser a.bps⟩ a) = some a.channels :=
+  Stream.decodeReference_encode _ a hwf hbs1 hbs2 hsr htot
+    (fun fr hlen heqfr h1 _ hfit =>
+      defaultAsgChooser_valid a.bps fr hwf.2.2.1 (hlen ▸ hwf.1)
+        (hlen ▸ hwf.2.1) heqfr h1 hfit)
 
 end Flac.Heuristics

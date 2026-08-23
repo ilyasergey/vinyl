@@ -6,7 +6,7 @@ import Flac.Native.Bits
 Left/side, right/side, and mid/side transforms. The side channel is
 `L - R` (needs one extra bit of depth — the `b+1` bookkeeping at L5);
 mid is `(L + R) >>ₐ 1`, recoverable exactly because `L+R` and `L-R`
-share parity (PLAN.md §5.3).
+share parity.
 
 Decoding follows libFLAC's formulation: reconstruct `2·mid + parity(side)`
 = `L + R`, then halve `(L+R) ± (L-R)` with an arithmetic shift.

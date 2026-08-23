@@ -3,7 +3,7 @@ import Flac.Native.Fixed
 /-!
 # L3-fixed proofs — fixed-predictor restore round-trip
 
-`restoreFixed_residualFixed` from PLAN.md §4: restoring from the warmup
+Restoring from the warmup
 samples and the order-`ord` residual recovers the original samples. The
 proof is an induction on `ord`, peeling one differencing step at a time;
 the only interesting ingredients are that `diffN` commutes with `take` and
@@ -78,7 +78,7 @@ theorem undiff1_diff1 (xs : List Int) (h : xs ≠ []) :
       simp only [List.headD_cons] at this
       rw [this]
 
-/-- **L3-fixed keystone** (`restoreFixed_residualFixed` in PLAN.md §4):
+/-- **L3-fixed keystone**:
     fixed-predictor decode inverts encode for every order. -/
 theorem restore_residual (ord : Nat) (xs : List Int) (h : ord ≤ xs.length) :
     restore ord (xs.take ord) (residual ord xs) = xs := by

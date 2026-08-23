@@ -4,7 +4,7 @@ import Flac.Spec.Bits
 /-!
 # L1 proof — coded-number round-trip
 
-`utf8NumDecode_encode` from PLAN.md §4: reading back an encoded coded number
+Reading back an encoded coded number
 returns it exactly, for every `n < 2^36`.
 -/
 
@@ -43,7 +43,7 @@ theorem readConts_writeConts (k acc n : Nat) (rest : BitStream) :
     have hd : 0x80 + n / 64 ^ k % 64 - 0x80 = n / 64 ^ k % 64 := by omega
     rw [if_pos hcond, hd, ih, mod_pow_succ n 64 k, Nat.pow_succ, digit_step]
 
-/-- **Coded-number round-trip** (PLAN.md §4, `utf8NumDecode_encode`). -/
+/-- **Coded-number round-trip**. -/
 theorem read_write (n : Nat) (h : n < 2 ^ 36) (rest : BitStream) :
     read (write n ++ rest) = some (n, rest) := by
   unfold write read

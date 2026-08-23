@@ -5,7 +5,7 @@ import Flac.Native.Bits
 
 Round-trip lemmas for `Flac.Bits`: `readBits`/`writeBits`, unary codes,
 byte-alignment padding, and byte packing. Everything above L0 uses these
-opaquely (PLAN.md §4).
+opaquely.
 -/
 
 namespace Flac.Bits
@@ -32,7 +32,7 @@ theorem readBits_writeBits_append (n v : Nat) (rest : BitStream) :
     rw [mod_two_pow_succ]
     by_cases h : v / 2 ^ n % 2 = 1 <;> simp [h]
 
-/-- **L0 keystone** (`readBits_writeBits` in PLAN.md §4): reading `n` bits
+/-- **L0 keystone**: reading `n` bits
     just after writing `v < 2^n` returns exactly `v`. -/
 theorem readBits_writeBits (n v : Nat) (rest : BitStream) (hv : v < 2 ^ n) :
     readBits n (writeBits n v ++ rest) = some (v, rest) := by
@@ -77,7 +77,7 @@ theorem readBits_length {n : Nat} {s s' : BitStream} {v : Nat}
         simp [← h.2] at *
         omega
 
-/-- Unary round-trip (needed by Rice coding and wasted-bits, PLAN.md §4 L0). -/
+/-- Unary round-trip (needed by Rice coding and wasted-bits). -/
 theorem readUnary_writeUnary (q : Nat) (rest : BitStream) :
     readUnary (writeUnary q ++ rest) = some (q, rest) := by
   induction q with
@@ -121,7 +121,7 @@ theorem withConsumed_spec {α : Type} (f : BitStream → Option (α × BitStream
   | .negSucc m => simp [Nat.shiftRight_zero]
 
 /-- `2 · (x >>ₐ 1) + x % 2 = x`: the parity decomposition used by
-    mid/side stereo (PLAN.md §5.3). -/
+    mid/side stereo. -/
 theorem two_mul_sar_one (x : Int) :
     2 * sar x 1 + x % 2 = x := by
   unfold sar
@@ -142,7 +142,7 @@ theorem two_mul_sar_one (x : Int) :
   | nil => rfl
   | cons x t ih => simp [shiftDown, ih]
 
-/-- **Wasted-bits round-trip** (`wastedRestore_wastedShift` in PLAN.md §4):
+/-- **Wasted-bits round-trip**:
     scaling back up after an exact scale-down is the identity. -/
 theorem map_shiftUp_shiftDown (w : Nat) (xs : List Int)
     (h : ∀ x ∈ xs, ((2 ^ w : Nat) : Int) ∣ x) :

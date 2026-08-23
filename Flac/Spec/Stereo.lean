@@ -4,9 +4,9 @@ import Flac.Spec.Bits
 /-!
 # L4 proofs — stereo decorrelation round-trips
 
-`stereoRestore_stereoApply` of PLAN.md §4, one lemma per mode, plus the
+One round-trip lemma per stereo mode, plus the
 width fact that the side channel fits `b+1` bits. The mid/side parity
-argument (PLAN.md §5.3) is `Flac.Bits.two_mul_sar_one` plus `omega`.
+argument is `Flac.Bits.two_mul_sar_one` plus `omega`.
 -/
 
 namespace Flac.Stereo
@@ -79,7 +79,7 @@ theorem decodeMSR_mid_side (l r : List Int) (h : l.length = r.length) :
       simp only [side, mid, decodeMSR, List.zipWith_cons_cons] at *
       rw [msr_point a b, ih r (by simp only [List.length_cons] at h; omega)]
 
-/-! ## Width bookkeeping (the `b+1` side channel, PLAN.md §5.6) -/
+/-! ## Width bookkeeping (the `b+1` side channel) -/
 
 /-- The side channel of `b`-bit audio fits `b+1` bits. -/
 theorem side_fits (b : Nat) (x y : Int)

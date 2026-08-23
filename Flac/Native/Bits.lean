@@ -5,10 +5,10 @@ FLAC is big-endian / MSB-first throughout (RFC 9639 §1.1). The bitstream
 model is `List Bool` (`true` = 1 bit). Writers are pure functions returning
 bit lists; readers are structural-recursive consumers returning
 `Option (α × List Bool)` (no `partial`, no panicking access — decoder
-totality by construction, PLAN.md §5.7).
+totality by construction).
 
-This representation is the *proof* backbone; production (buffered) bit I/O
-arrives with M5 and is transferred against this model. Round-trip theorems
+This representation is the *proof* backbone; buffered production bit I/O
+will later be proven equivalent to (transferred against) this model. Round-trip theorems
 live in `Flac.Spec.Bits`.
 -/
 

@@ -2,9 +2,8 @@
 # MD5 (RFC 1321)
 
 Pure-Lean MD5 for the STREAMINFO checksum of the unencoded PCM
-(RFC 9639 §8.2). Part of the *tested* trusted base, not the verified one
-(PLAN.md §10): it is a conformance checksum, not part of the losslessness
-claim. Validated against the RFC 1321 test suite in `FlacTest`.
+(RFC 9639 §8.2). Tested, not verified: it is a conformance checksum, not part of the
+losslessness claim. Validated against the RFC 1321 test suite in `FlacTest`.
 
 Encoder-side only (the decoder does not verify MD5 in v1), so `!`-indexing
 into arrays whose sizes are fixed by construction is acceptable here.

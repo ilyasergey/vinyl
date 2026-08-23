@@ -2,14 +2,14 @@ import Flac.Native.Frame
 import Flac.Native.Md5
 
 /-!
-# Stream layer (RFC 9639 §8): `fLaC` marker, STREAMINFO, frames
+# Stream layer (RFC 9639 §8) — multichannel
 
-M2 scope: mono streams at any bit depth 1–32, fixed-blocksize numbering.
-The encoder emits marker + a single STREAMINFO metadata block + frames;
-the reference decoder additionally skips unknown metadata blocks by length
-(so foreign files with VORBIS_COMMENT etc. still decode).
+`fLaC` marker, STREAMINFO, frames. The encoder emits marker + a single
+STREAMINFO metadata block + frames (fixed- or variable-blocksize
+numbering); the reference decoder additionally skips unknown metadata
+blocks by length, so foreign files with VORBIS_COMMENT etc. still decode.
 
-`decodeReference` is the verified reference decoder of PLAN.md: total by
+`decodeReference` is the verified reference decoder: total by
 construction (fuel-bounded loops, no `partial`, no `!`).
 -/
 
@@ -17,25 +17,54 @@ namespace Flac.Stream
 
 open Flac.Bits
 
-/-- Split into consecutive blocks of `n` samples; the last block may be
-    shorter. `n = 0` yields no blocks. -/
-def chunkFixed (n : Nat) (xs : List Int) : List (List Int) :=
-  if _h : xs = [] ∨ n = 0 then []
-  else xs.take n :: chunkFixed n (xs.drop n)
-termination_by xs.length
-decreasing_by
-  simp only [List.length_drop]
-  have hx : xs ≠ [] := fun hc => _h (Or.inl hc)
-  have hn : n ≠ 0 := fun hc => _h (Or.inr hc)
-  have : 0 < xs.length := List.length_pos_iff.mpr hx
-  omega
+def takeAll (n : Nat) (chs : List (List Int)) : List (List Int) :=
+  chs.map (·.take n)
 
-/-- PCM as little-endian two's-complement bytes, `⌈b/8⌉` bytes per sample
-    (the MD5 input format of RFC 9639 §8.2). Unverified — MD5 is a
-    conformance checksum, not part of the losslessness claim. -/
-def pcmBytes (b : Nat) (pcm : List Int) : ByteArray :=
+def dropAll (n : Nat) (chs : List (List Int)) : List (List Int) :=
+  chs.map (·.drop n)
+
+def tailAll (chs : List (List Int)) : List (List Int) :=
+  chs.map (·.tail)
+
+/-- Split all channels into consecutive frames of `n` samples; the last
+    frame may be shorter. Channels are assumed equally long. -/
+def chunkChannels (n : Nat) (chs : List (List Int)) : List (List (List Int)) :=
+  if _h : (chs.headD []).length = 0 ∨ n = 0 then []
+  else takeAll n chs :: chunkChannels n (dropAll n chs)
+termination_by (chs.headD []).length
+decreasing_by
+  rcases chs with _ | ⟨c, t⟩
+  · simp at _h
+  · simp only [dropAll, List.map_cons, List.headD_cons, List.length_drop]
+    simp only [List.headD_cons] at _h
+    rw [not_or] at _h
+    omega
+
+/-- Reassemble channels from per-frame channel blocks (`ch` = channel
+    count, used when there are zero frames). -/
+def recombine (ch : Nat) : List (List (List Int)) → List (List Int)
+  | [] => List.replicate ch []
+  | fr :: frs => List.zipWith (· ++ ·) fr (recombine ch frs)
+
+/-- Interleave channels sample-by-sample (the MD5 input order,
+    RFC 9639 §8.2). -/
+def interleave (chs : List (List Int)) : List Int :=
+  if _h : (chs.headD []).length = 0 then []
+  else chs.map (·.headD 0) ++ interleave (tailAll chs)
+termination_by (chs.headD []).length
+decreasing_by
+  rcases chs with _ | ⟨c, t⟩
+  · simp at _h
+  · simp only [tailAll, List.map_cons, List.headD_cons, List.length_tail]
+    simp only [List.headD_cons] at _h
+    omega
+
+/-- Interleaved PCM as little-endian two's-complement bytes, `⌈b/8⌉` bytes
+    per sample (the MD5 input format of RFC 9639 §8.2). Unverified — MD5
+    is a conformance checksum, not part of the losslessness claim. -/
+def pcmBytes (b : Nat) (chs : List (List Int)) : ByteArray :=
   let w := (b + 7) / 8
-  ⟨(pcm.flatMap fun x =>
+  ⟨((interleave chs).flatMap fun x =>
       let u := ((x + ((2 ^ (8 * w) : Nat) : Int)).toNat) % 2 ^ (8 * w)
       (List.range w).map fun i => UInt8.ofNat (u / 2 ^ (8 * i) % 256)).toArray⟩
 
@@ -43,12 +72,12 @@ def pcmBytes (b : Nat) (pcm : List Int) : ByteArray :=
 def md5Nat (d : ByteArray) : Nat :=
   d.foldl (fun a c => a * 256 + c.toNat) 0
 
-/-- STREAMINFO for a fixed-blocksize mono stream: min = max block size,
+/-- STREAMINFO for a fixed-blocksize stream: min = max block size,
     unknown (0) frame sizes. -/
-def writeStreamInfo (bs sr b total md5 : Nat) : BitStream :=
+def writeStreamInfo (bs sr ch b total md5 : Nat) : BitStream :=
   writeBits 16 bs ++ writeBits 16 bs ++
   writeBits 24 0 ++ writeBits 24 0 ++
-  writeBits 20 sr ++ writeBits 3 0 ++ writeBits 5 (b - 1) ++
+  writeBits 20 sr ++ writeBits 3 (ch - 1) ++ writeBits 5 (b - 1) ++
   writeBits 36 total ++ writeBits 128 md5
 
 /-- Parsed STREAMINFO fields the decoder consumes downstream. -/
@@ -139,50 +168,69 @@ def readMeta (fuel : Nat) (s : BitStream) : Option (Info × BitStream) :=
 
 /-! ## Frame sequences -/
 
-def writeFrames (b : Nat) (chooser : List Int → Subframe.SubCfg) :
-    Nat → List (List Int) → BitStream
+def writeFrames (b : Nat) (varBlk : Bool) (blockSize : Nat)
+    (chooser : List (List Int) → Frame.ChannelAsg) :
+    Nat → List (List (List Int)) → BitStream
   | _, [] => []
-  | idx, blk :: blks =>
-    Frame.write b idx (chooser blk) blk ++ writeFrames b chooser (idx + 1) blks
+  | i, fr :: frs =>
+    Frame.write b varBlk (if varBlk then i * blockSize else i)
+      (chooser fr) fr ++
+    writeFrames b varBlk blockSize chooser (i + 1) frs
 
 /-- Decode frames until the stream is exhausted. Fuel bounds the loop
     (each frame consumes at least one bit, so `s.length + 1` suffices). -/
-def readFrames (b0 : Nat) : Nat → BitStream → Option (List Int)
+def readFrames (b0 : Nat) : Nat → BitStream → Option (List (List (List Int)))
   | 0, s => if s = [] then some [] else none
   | fuel + 1, s =>
     if s = [] then some []
     else
       match Frame.read b0 s with
       | none => none
-      | some (xs, s') =>
+      | some (chs, s') =>
         match readFrames b0 fuel s' with
         | none => none
-        | some rest => some (xs ++ rest)
+        | some rest => some (chs :: rest)
 
 /-! ## Top level -/
 
-/-- Encoder options for the M2 profile (mono). The `chooser` is the
-    heuristic layer: any choice satisfying `SubframeCfg.Valid` yields a
-    valid stream (the round-trip theorem quantifies over it). -/
+/-- Interleaved multichannel PCM. -/
+structure Audio where
+  channels : List (List Int)
+  bps : Nat
+  sampleRate : Nat
+
+def Audio.numSamples (a : Audio) : Nat := (a.channels.headD []).length
+
+/-- Well-formedness: 1–8 equal-length channels, samples in
+    range for the bit depth. -/
+def Audio.WellFormed (a : Audio) : Prop :=
+  1 ≤ a.channels.length ∧ a.channels.length ≤ 8 ∧
+  1 ≤ a.bps ∧ a.bps ≤ 32 ∧
+  (∀ c ∈ a.channels, c.length = a.numSamples) ∧
+  (∀ c ∈ a.channels, ∀ x ∈ c, FitsSInt a.bps x)
+
+/-- Encoder options: block size, numbering
+    strategy, and the per-frame channel-assignment/subframe heuristic —
+    every knob the capstone quantifies over. -/
 structure EncoderCfg where
   blockSize : Nat
-  sampleRate : Nat
-  bps : Nat
-  chooser : List Int → Subframe.SubCfg
+  variableBlocking : Bool
+  chooser : List (List Int) → Frame.ChannelAsg
 
-def writeStream (cfg : EncoderCfg) (pcm : List Int) : BitStream :=
+def writeStream (cfg : EncoderCfg) (a : Audio) : BitStream :=
   writeBits 32 0x664C6143 ++
   writeBits 1 1 ++ writeBits 7 0 ++ writeBits 24 34 ++
-  writeStreamInfo cfg.blockSize cfg.sampleRate cfg.bps pcm.length
-    (md5Nat (Md5.md5 (pcmBytes cfg.bps pcm))) ++
-  writeFrames cfg.bps cfg.chooser 0 (chunkFixed cfg.blockSize pcm)
+  writeStreamInfo cfg.blockSize a.sampleRate a.channels.length a.bps
+    a.numSamples (md5Nat (Md5.md5 (pcmBytes a.bps a.channels))) ++
+  writeFrames a.bps cfg.variableBlocking cfg.blockSize cfg.chooser 0
+    (chunkChannels cfg.blockSize a.channels)
 
-/-- **The encoder** (M2 profile: mono, fixed block size). -/
-def encode (cfg : EncoderCfg) (pcm : List Int) : ByteArray :=
-  bitsToBytes (writeStream cfg pcm)
+/-- **The encoder.** -/
+def encode (cfg : EncoderCfg) (a : Audio) : ByteArray :=
+  bitsToBytes (writeStream cfg a)
 
-/-- **The verified reference decoder** (M2 profile: mono streams). -/
-def decodeReference (bytes : ByteArray) : Option (List Int) :=
+/-- **The verified reference decoder**: returns the decoded channels. -/
+def decodeReference (bytes : ByteArray) : Option (List (List Int)) :=
   let s := bytesToBits bytes
   match readBits 32 s with
   | none => none
@@ -190,13 +238,16 @@ def decodeReference (bytes : ByteArray) : Option (List Int) :=
     if marker = 0x664C6143 then
       match readMeta s.length s with
       | none => none
-      | some (si, s) => readFrames si.bps (s.length + 1) s
+      | some (si, s) =>
+        match readFrames si.bps (s.length + 1) s with
+        | none => none
+        | some frames => some (recombine si.channels frames)
     else none
 
-/-! ## Default heuristic -/
+/-! ## Default heuristics -/
 
-/-- The safe fallback chooser: VERBATIM everything, no wasted bits.
-    Valid whenever the samples fit the bit depth. -/
-def verbatimChooser : List Int → Subframe.SubCfg := fun _ => ⟨0, .verbatim⟩
+/-- The safe fallback: independent channels, VERBATIM, no wasted bits. -/
+def verbatimChooser : List (List Int) → Frame.ChannelAsg :=
+  fun fr => .independent (fr.map fun _ => ⟨0, .verbatim⟩)
 
 end Flac.Stream

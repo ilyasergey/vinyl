@@ -4,12 +4,12 @@ import Flac.Spec.Bits
 /-!
 # L1–L2 proofs — Rice coding and partitioned residuals
 
-PLAN.md §4: `unzigzag_zigzag`, `riceDecode_riceEncode` (here
+: `unzigzag_zigzag`, `riceDecode_riceEncode` (here
 `readRice_writeRice`), `escapeDecode_escapeEncode` (here
 `readSIntSeq_writeSIntSeq`, via `Flac.Bits.readSInt_writeSInt`), and the L2
 `partitionsDecode_encode` (here `readResidual_writeResidual`), with the
 partition-order certificates carried in `ResidualCfg.Valid` exactly as
-PLAN.md §5.4 prescribes: the encoder's partition chooser must *return* them.
+prescribes: the encoder's partition chooser must *return* them.
 -/
 
 namespace Flac.Rice
@@ -187,8 +187,8 @@ theorem partSizes_sum (bs po ord : Nat) (hdvd : 2 ^ po ∣ bs)
 
 /-! ## The coded residual (L2 keystone) -/
 
-/-- **Partitioned-residual round-trip** (`partitionsDecode_encode` of
-    PLAN.md §4): for every valid encoder configuration, reading back a coded
+/-- **Partitioned-residual round-trip** (the L2 keystone of
+   ): for every valid encoder configuration, reading back a coded
     residual returns exactly the residual sequence. -/
 theorem readResidual_writeResidual (bs ord : Nat) (cfg : ResidualCfg)
     (res : List Int) (hv : cfg.Valid bs ord res) (rest : BitStream) :

@@ -13,8 +13,7 @@ round-trip (`Flac.Spec.Lpc.restore_residual`) a one-line induction — the
 decoder's history provably equals the encoder's, so the predictions
 coincide and `residual + prediction = sample` — independent of what the
 prediction function actually computes. Where the coefficients come from
-(Levinson–Durbin, windowing, quantization) never enters the kernel
-(PLAN.md §4, L3 note).
+(Levinson–Durbin, windowing, quantization) never enters the kernel.
 -/
 
 namespace Flac.Lpc

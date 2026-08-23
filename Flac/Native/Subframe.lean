@@ -4,7 +4,7 @@ import Flac.Native.Fixed
 import Flac.Native.Lpc
 
 /-!
-# Subframes (RFC 9639 §9.2): CONSTANT, VERBATIM, FIXED
+# Subframes (RFC 9639 §9.2): CONSTANT, VERBATIM, FIXED, LPC
 
 All four subframe types, with wasted-bits support (RFC 9639 §9.2.2): a
 subframe whose samples all share `w` low zero bits stores them scaled down
@@ -64,7 +64,7 @@ structure SubCfg where
 
 /-- Validity: `w` in range, all samples divisible by `2^w`, and the inner
     configuration valid for the scaled samples at the reduced depth —
-    the width bookkeeping of PLAN.md §5.6. -/
+    the width bookkeeping of-/
 def SubCfg.Valid (sc : SubCfg) (b : Nat) (xs : List Int) : Prop :=
   sc.wasted < b ∧
   (∀ x ∈ xs, ((2 ^ sc.wasted : Nat) : Int) ∣ x) ∧

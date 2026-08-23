@@ -1,16 +1,18 @@
 import Flac.Native.Subframe
 import Flac.Native.Lpc
+import Flac.Native.Stereo
+import Flac.Native.Frame
 
 /-!
 # Heuristics — subframe/parameter search (UNVERIFIED BY DESIGN)
 
 Everything here only decides *which* valid stream the encoder emits, never
-whether the round-trip holds (PLAN.md §1). The single obligation carried is
+whether the round-trip holds. The single obligation carried is
 `defaultChooser_valid` (in `Flac.Spec.Heuristics`): the returned
 configuration satisfies `SubframeCfg.Valid`, so the keystone theorem
 applies to it. Beyond that, this file is free optimization territory.
 
-Current strategy (M3): detect constant blocks; search fixed orders 0–4 and
+Current strategy: detect constant blocks; search fixed orders 0–4 and
 Welch-windowed Levinson–Durbin LPC (orders 1–8, 12-bit coefficients) by
 exact Rice bit cost, partition order 0; fall back to VERBATIM when
 prediction does not pay.
@@ -191,5 +193,37 @@ def defaultSubCfg (b : Nat) (blk : List Int) : Subframe.SubCfg :=
   ⟨wastedDetect b blk,
    defaultChooser (b - wastedDetect b blk)
      (blk.map (Flac.Bits.shiftDown (wastedDetect b blk)))⟩
+
+/-! ## Stereo-mode decision -/
+
+def sumAbs (xs : List Int) : Nat :=
+  xs.foldl (fun a x => a + x.natAbs) 0
+
+/-- Pick a stereo mode by the classic sum-of-magnitudes proxy:
+    0 = independent, 1 = left/side, 2 = right/side, 3 = mid/side. -/
+def stereoPick (l r : List Int) : Nat :=
+  let al := sumAbs l
+  let ar := sumAbs r
+  let sa := sumAbs (Stereo.side l r)
+  let am := sumAbs (Stereo.mid l r)
+  if al + ar ≤ al + sa ∧ al + ar ≤ sa + ar ∧ al + ar ≤ am + sa then 0
+  else if al + sa ≤ sa + ar ∧ al + sa ≤ am + sa then 1
+  else if sa + ar ≤ am + sa then 2
+  else 3
+
+/-- The per-frame channel-assignment chooser: stereo-mode decision for two
+    channels, independent coding otherwise; `defaultSubCfg` per subframe
+    (at `b+1` bits for side channels). Certified valid by
+    `Flac.Spec.Heuristics.defaultAsgChooser_valid`. -/
+def defaultAsgChooser (b : Nat) (fr : List (List Int)) : Frame.ChannelAsg :=
+  match fr with
+  | [l, r] =>
+    match stereoPick l r with
+    | 1 => .leftSide (defaultSubCfg b l) (defaultSubCfg (b + 1) (Stereo.side l r))
+    | 2 => .rightSide (defaultSubCfg (b + 1) (Stereo.side l r)) (defaultSubCfg b r)
+    | 3 => .midSide (defaultSubCfg b (Stereo.mid l r))
+        (defaultSubCfg (b + 1) (Stereo.side l r))
+    | _ => .independent [defaultSubCfg b l, defaultSubCfg b r]
+  | _ => .independent (fr.map (defaultSubCfg b))
 
 end Flac.Heuristics
