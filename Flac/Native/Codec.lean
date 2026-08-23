@@ -107,6 +107,62 @@ def pcm16FastA (arrs : List (Array Int)) : ByteArray :=
   pcm16Go arrs (arrs.headD #[]).size 0
     (ByteArray.emptyWithCapacity (2 * arrs.length * (arrs.headD #[]).size))
 
+/-! ### Serializing in parallel windows
+
+The interleaved layout is sample-major, so a window of samples serializes
+independently and the windows concatenate. `Task.spawn`/`Task.get` are
+opaque, so a worker cannot be *assumed* to have computed the window asked
+of it: it returns a `PcmChunk` carrying the equation for what it did
+compute, and the consumer uses a chunk only when its recorded window
+matches the one it wants, serializing that window itself otherwise. This
+is the same self-certifying arrangement the parallel frame decoder uses. -/
+
+/-- The serialization of the sample window `[lo, lo + len)`. -/
+def pcm16Window (arrs : List (Array Int)) (lo len : Nat) : ByteArray :=
+  pcm16Go arrs len lo (ByteArray.emptyWithCapacity (2 * arrs.length * len))
+
+/-- A serialized window together with the equation for it. -/
+structure PcmChunk (arrs : List (Array Int)) where
+  lo : Nat
+  len : Nat
+  bytes : ByteArray
+  ok : bytes = pcm16Window arrs lo len
+
+def pcm16ChunkAt (arrs : List (Array Int)) (lo len : Nat) : PcmChunk arrs :=
+  ⟨lo, len, pcm16Window arrs lo len, rfl⟩
+
+/-- Concatenate precomputed windows, checking each against the window it
+    is supposed to cover. Proven equal to `pcm16Go` by
+    `Flac.pcm16Chunks_eq`. -/
+def pcm16Chunks (arrs : List (Array Int)) (win : Nat) :
+    List (PcmChunk arrs) → (n lo : Nat) → ByteArray → ByteArray
+  | [], n, lo, out => pcm16Go arrs n lo out
+  | c :: cs', n, lo, out =>
+    match n with
+    | 0 => out
+    | rem + 1 =>
+      if _h : c.lo = lo ∧ c.len = max 1 (min (rem + 1) win) then
+        pcm16Chunks arrs win cs' (rem + 1 - max 1 (min (rem + 1) win))
+          (lo + max 1 (min (rem + 1) win)) (out ++ c.bytes)
+      else pcm16Go arrs (rem + 1) lo out
+
+/-- One worker per window. Every task is spawned before any is collected —
+    that ordering is what makes the windows run concurrently. -/
+def pcm16Tasks (arrs : List (Array Int)) (ws : List (Nat × Nat)) :
+    List (PcmChunk arrs) :=
+  (ws.map fun w => Task.spawn fun _ => pcm16ChunkAt arrs w.1 w.2).map Task.get
+
+/-- `pcm16FastA` with the windows computed in parallel (equal to it by
+    `Flac.pcm16FastPar_eq`). This is the encoder's runtime certificate
+    doing its own serialization, which was 10% of encode and serial. -/
+def pcm16FastPar (arrs : List (Array Int)) : ByteArray :=
+  if (arrs.headD #[]).size ≤ Flac.Stream.pcmWindow then pcm16FastA arrs
+  else
+    pcm16Chunks arrs Flac.Stream.pcmWindow
+      (pcm16Tasks arrs (Flac.Stream.pcmWindows (arrs.headD #[]).size))
+      (arrs.headD #[]).size 0
+      (ByteArray.emptyWithCapacity (2 * arrs.length * (arrs.headD #[]).size))
+
 /-- Interleave + serialize in one indexed pass — proven equal to the
     compositional `byteListOfPcm16 ∘ interleave` by `Flac.pcm16Fast_eq`. -/
 def pcm16Fast (chs : List (List Int)) : ByteArray :=
@@ -130,7 +186,7 @@ def decodePcm16A (flac : ByteArray) : Except String ByteArray :=
   match Decode.decodeArrays flac with
   | none => .error "not a decodable FLAC stream (within the v1 feature set)"
   | some (chs, bps, _) =>
-    if bps = 16 then .ok (pcm16FastA chs)
+    if bps = 16 then .ok (pcm16FastPar chs)
     else .error "not 16-bit audio"
 
 /-! ## The certified fast encoder

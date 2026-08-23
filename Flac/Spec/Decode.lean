@@ -2503,6 +2503,115 @@ private theorem emptyWithCapacity_eq_empty' (c : Nat) :
   apply ByteArray.ext
   rfl
 
+/-! ### The parallel serializer computes the serial one
+
+Two accumulator lemmas (`pcm16Row_app`, `pcm16Go_app`) say the writers only
+ever append, which gives window splitting (`pcm16Go_split`); the chunk
+consumer then collapses to `pcm16Go` because each chunk carries the
+equation for the window it actually serialized. -/
+
+private theorem pcm16Row_app (arrs : List (Array Int)) (i : Nat) :
+    ∀ out : ByteArray,
+      pcm16Row arrs i out = out ++ pcm16Row arrs i ByteArray.empty := by
+  induction arrs with
+  | nil =>
+    intro out
+    show out = out ++ ByteArray.empty
+    apply ByteArray.ext
+    apply Array.toList_inj.mp
+    rw [ByteArray.data_append]
+    simp
+  | cons a rest ih =>
+    intro out
+    show pcm16Row rest i ((out.push _).push _)
+      = out ++ pcm16Row rest i ((ByteArray.empty.push _).push _)
+    rw [ih ((out.push _).push _), ih ((ByteArray.empty.push _).push _)]
+    apply ByteArray.ext
+    apply Array.toList_inj.mp
+    rw [ByteArray.data_append, ByteArray.data_append, ByteArray.data_append,
+      Array.toList_append, Array.toList_append, Array.toList_append,
+      data_toList_push, data_toList_push, data_toList_push, data_toList_push]
+    simp
+
+private theorem pcm16Go_app (arrs : List (Array Int)) :
+    ∀ (n i : Nat) (out : ByteArray),
+      pcm16Go arrs n i out = out ++ pcm16Go arrs n i ByteArray.empty := by
+  intro n
+  induction n with
+  | zero =>
+    intro i out
+    show out = out ++ ByteArray.empty
+    apply ByteArray.ext
+    apply Array.toList_inj.mp
+    rw [ByteArray.data_append]
+    simp
+  | succ n ih =>
+    intro i out
+    show pcm16Go arrs n (i + 1) (pcm16Row arrs i out)
+      = out ++ pcm16Go arrs n (i + 1) (pcm16Row arrs i ByteArray.empty)
+    rw [ih (i + 1) (pcm16Row arrs i out),
+      ih (i + 1) (pcm16Row arrs i ByteArray.empty), pcm16Row_app arrs i out,
+      ByteArray.append_assoc]
+
+/-- A run of `n₁ + n₂` samples is the two runs concatenated. -/
+private theorem pcm16Go_split (arrs : List (Array Int)) :
+    ∀ (n₁ n₂ i : Nat) (out : ByteArray),
+      pcm16Go arrs (n₁ + n₂) i out
+        = pcm16Go arrs n₂ (i + n₁) (pcm16Go arrs n₁ i out) := by
+  intro n₁
+  induction n₁ with
+  | zero =>
+    intro n₂ i out
+    rw [Nat.zero_add, Nat.add_zero]
+    rfl
+  | succ n₁ ih =>
+    intro n₂ i out
+    rw [show n₁ + 1 + n₂ = (n₁ + n₂) + 1 from by omega]
+    show pcm16Go arrs (n₁ + n₂) (i + 1) (pcm16Row arrs i out)
+      = pcm16Go arrs n₂ (i + (n₁ + 1)) (pcm16Go arrs n₁ (i + 1) (pcm16Row arrs i out))
+    rw [ih n₂ (i + 1) (pcm16Row arrs i out),
+      show i + 1 + n₁ = i + (n₁ + 1) from by omega]
+
+/-- The window-consuming serializer is the plain one: a chunk is used only
+    when it certifies the very window being asked for. -/
+private theorem pcm16Chunks_eq (arrs : List (Array Int)) (win : Nat) :
+    ∀ (cs : List (PcmChunk arrs)) (n lo : Nat) (out : ByteArray),
+      pcm16Chunks arrs win cs n lo out = pcm16Go arrs n lo out := by
+  intro cs
+  induction cs with
+  | nil => intro n lo out; rfl
+  | cons c cs' ih =>
+    intro n lo out
+    match n with
+    | 0 => rfl
+    | rem + 1 =>
+      show (if _h : c.lo = lo ∧ c.len = max 1 (min (rem + 1) win) then
+            pcm16Chunks arrs win cs' (rem + 1 - max 1 (min (rem + 1) win))
+              (lo + max 1 (min (rem + 1) win)) (out ++ c.bytes)
+          else pcm16Go arrs (rem + 1) lo out) = _
+      by_cases h : c.lo = lo ∧ c.len = max 1 (min (rem + 1) win)
+      · rw [dif_pos h, ih (rem + 1 - max 1 (min (rem + 1) win))
+          (lo + max 1 (min (rem + 1) win)) (out ++ c.bytes)]
+        -- the chunk certifies exactly the first window, so appending it and
+        -- continuing is one split of the plain run
+        have hc : c.bytes = pcm16Go arrs c.len c.lo ByteArray.empty := by
+          rw [c.ok, pcm16Window, emptyWithCapacity_eq_empty']
+        rw [hc, h.1, h.2, ← pcm16Go_app arrs (max 1 (min (rem + 1) win)) lo out,
+          ← pcm16Go_split arrs (max 1 (min (rem + 1) win))
+            (rem + 1 - max 1 (min (rem + 1) win)) lo out,
+          show max 1 (min (rem + 1) win)
+              + (rem + 1 - max 1 (min (rem + 1) win)) = rem + 1 from by omega]
+      · rw [dif_neg h]
+
+/-- **The parallel serializer computes the serial one.** -/
+theorem pcm16FastPar_eq (arrs : List (Array Int)) :
+    pcm16FastPar arrs = pcm16FastA arrs := by
+  unfold pcm16FastPar
+  split
+  · rfl
+  · rw [pcm16Chunks_eq]
+    rfl
+
 /-- The fused serializer computes the compositional byte-level output. -/
 theorem pcm16Fast_eq (chs : List (List Int)) :
     pcm16Fast chs = (byteListOfPcm16 (interleave chs)).toByteArray := by
@@ -2583,7 +2692,7 @@ theorem decodePcm16A_eq (flac : ByteArray) :
   | some p =>
     show (if p.2.1 = 16 then _ else _) = (if p.2.1 = 16 then _ else _)
     by_cases hb : p.2.1 = 16
-    · rw [if_pos hb, if_pos hb, pcm16FastA_eq]
+    · rw [if_pos hb, if_pos hb, pcm16FastPar_eq, pcm16FastA_eq]
     · rw [if_neg hb, if_neg hb]
 
 /-- **Byte-level guarantee for the fast encoder** — no hypotheses, and no
