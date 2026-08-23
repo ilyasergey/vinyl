@@ -63,12 +63,28 @@ decode (the shipped buffered decoder):
 
 ![Throughput vs libFLAC](performance.png)
 
-Current five-run medians (2026-08-23, after the allocation-free CRC
-ranges landed): Vinyl encode 13.9 MB/s and Vinyl decode 30.6 MB/s,
-versus 106.5 MB/s for `flac -5` encode, 72.5 MB/s for `flac -8` encode,
-and 123.7 MB/s for libFLAC decode. That is a 7.7× encode gap against
-`flac -5` — **4.9× against `flac -8`, the level whose compression Vinyl
-matches** — and a 4.0× decode gap.
+Current five-run medians (2026-08-23, after the array-typed decoder
+core): Vinyl encode 15.3 MB/s and Vinyl decode 40.3 MB/s, versus
+106.4 MB/s for `flac -5` encode, 72.7 MB/s for `flac -8` encode, and
+122.9 MB/s for libFLAC decode. That is a 6.9× encode gap against
+`flac -5` — **4.8× against `flac -8`, the level whose compression Vinyl
+matches** — and a **3.1× decode gap**.
+
+Recent stages, all with the capstones unchanged and no proof debt:
+
+| stage | encode | decode |
+|---|---|---|
+| corrected-timer baseline | 13.9 MB/s | 30.6 MB/s |
+| allocation-free CRC ranges | 13.9 MB/s | 30.6 MB/s |
+| array-typed decoder core | 15.3 MB/s | 40.3 MB/s |
+
+The decoder used to convert every decoded sample from its `Array Int`
+into a `List Int` (the type the theorems are phrased over) and then the
+serializer rebuilt the very same arrays. `Flac.Decode.decodeArrays` is
+now the decoder core, with `decodeOption` defined as that plus the
+conversion, so consumers that want bytes skip the round-trip entirely
+(`pcmBytesA_eq`, `pcm16FastA_eq`, `decodePcm16A_eq`). Encode benefits
+too: its runtime certificate is a decode, roughly 40% of encode time.
 
 The important correction is methodological: libFLAC did not suddenly get
 faster, and Vinyl also measures faster without the timestamp surcharge.
