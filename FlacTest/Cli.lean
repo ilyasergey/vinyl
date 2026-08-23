@@ -241,6 +241,46 @@ def fastMirrorTests : TestM Unit := do
     (fun i => (9000.0 * Float.sin (Float.ofNat i * 0.01)).toInt64.toInt)
     (fun i => (9000.0 * Float.sin (Float.ofNat i * 0.01)).toInt64.toInt / 8 + 77) 9000)
 
+/-! ## The fused byte decoder engages, and agrees with the sample path
+
+`Flac.Stream.decodeBytes_spec` says a `some` result is the right bytes. It
+does *not* say the fused path ever returns `some` — a bug that made it
+always decline would keep the CLI correct (it falls back) while silently
+giving up the parallel serialization. These checks pin that it engages on
+real streams, and that its bytes match the fallback's. -/
+
+def fusedDecodeTests : TestM Unit := do
+  let cases : List (String × Nat × List (List Int)) :=
+    [("mono sine", 1, [(List.range 9000).map fun i =>
+        (9000.0 * Float.sin (Float.ofNat i * 0.01)).toInt64.toInt]),
+     ("mono noise", 1, [(List.range 9000).map fun i =>
+        (((i * i * 2654435761 + i * 40503) % 65536 : Nat) : Int) - 32768]),
+     ("mono constant", 1, [List.replicate 9000 (4321 : Int)]),
+     ("stereo", 2, [(List.range 9000).map fun i =>
+        (9000.0 * Float.sin (Float.ofNat i * 0.01)).toInt64.toInt,
+       (List.range 9000).map fun i =>
+        (9000.0 * Float.sin (Float.ofNat i * 0.01)).toInt64.toInt / 8 + 77]),
+     ("short last frame", 1, [(List.range 5000).map fun i => ((i % 700 : Nat) : Int) - 350]),
+     ("empty", 1, [[]])]
+  for (name, ch, chans) in cases do
+    let flac := Stream.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ⟨chans, 16, 44100⟩
+    match Flac.Decode.decodeBytes flac, Flac.Decode.decodeArrays flac with
+    | some pcm, some (arrs, bps, _) =>
+      checkEq s!"fused decode = sample path: {name}" pcm
+        (Stream.pcmBytesRange bps arrs 0 (arrs.headD #[]).size)
+      checkEq s!"fused decode = original PCM: {name}" pcm (Stream.pcmBytes 16 chans)
+    | none, _ => check s!"fused decode engages: {name}" false
+    | _, none => check s!"sample path decodes: {name}" false
+  -- the parallel branch is only taken above `parThreshold`, so exercise a
+  -- stream large enough to cross it
+  let big : List Int := (List.range 200000).map fun i =>
+    (((i * i * 2654435761 + i * 40503) % 65536 : Nat) : Int) - 32768
+  let bigFlac := Stream.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ⟨[big], 16, 44100⟩
+  check "fused decode crosses the parallel threshold"
+    (Flac.Decode.parThreshold ≤ bigFlac.size)
+  checkEq "fused decode = original PCM: 200k samples"
+    (Flac.Decode.decodeBytes bigFlac) (some (Stream.pcmBytes 16 [big]))
+
 /-! ## Interleaved PCM bytes at every bit depth
 
 `Stream.pcmBytesRange` is deliberately outside every theorem
@@ -389,16 +429,27 @@ def cliMain (args : List String) : IO UInt32 := do
       return 1
   if let ["--decode-fast", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
-    -- the array-typed decoder core: `Flac.Decode.decodeOption` is this plus
-    -- a per-sample `Array → List` conversion, and `Stream.pcmBytesA_eq`
-    -- says serializing the arrays gives the same bytes as serializing the
-    -- lists, so the output is exactly `Flac.decode`'s
-    match Flac.Decode.decodeArrays bytes with
-    | none => IO.println "DECODE ERROR: not a decodable FLAC stream (within the v1 feature set)"; return 1
-    | some (chs, bps, _) =>
-      IO.FS.writeBinFile outFile (Stream.pcmBytesA bps chs)
-      IO.println s!"decoded {(chs.headD #[]).size} samples x {chs.length} channels ({bps}-bit)"
+    -- the fused path: each frame is serialized by the worker that decoded
+    -- it, and `Flac.Stream.decodeBytes_spec` says a `some` result is
+    -- exactly `Stream.pcmBytesRange` of what `Flac.Decode.decodeArrays`
+    -- returns — so the bytes are the decoded samples, proven, with no
+    -- appeal to how the windows were scheduled
+    match Flac.Decode.decodeBytes bytes with
+    | some pcm =>
+      IO.FS.writeBinFile outFile pcm
+      IO.println "decoded (frame-parallel serialization)"
       return 0
+    | none =>
+      -- either the stream does not decode, or some frame is not the uniform
+      -- channel shape the concatenation lemma covers: serialize the samples
+      -- in one window instead, which is the form `decodeBytes_spec` is
+      -- stated against
+      match Flac.Decode.decodeArrays bytes with
+      | none => IO.println "DECODE ERROR: not a decodable FLAC stream (within the v1 feature set)"; return 1
+      | some (chs, bps, _) =>
+        IO.FS.writeBinFile outFile (Stream.pcmBytesRange bps chs 0 (chs.headD #[]).size)
+        IO.println s!"decoded {(chs.headD #[]).size} samples x {chs.length} channels ({bps}-bit)"
+        return 0
   if let ["--decode", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
     match Stream.decodeReference bytes with
@@ -417,7 +468,7 @@ def cliMain (args : List String) : IO UInt32 := do
     IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
     IO.eprintln usage
     return 2
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; e2eTests; fastMirrorTests; pcmBytesTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0

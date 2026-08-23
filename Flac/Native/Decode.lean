@@ -712,6 +712,138 @@ def readFramesFast (b0 : Nat) (d : ByteArray) (fuel pos : Nat) :
     readFramesSteps b0 d
       (stepsPar b0 d (syncCandidates d (pos / 8)) stepChunkSize) fuel pos
 
+/-! ## Frame-parallel *serialization*
+
+Turning the decoded samples into interleaved PCM bytes was 46% of decode
+wall time and none of it was decoding. On a 32 MB probe: `recombineA`
+concatenated every frame's channel arrays into whole-file arrays (41 ms,
+serial), and `Stream.pcmBytesA` then walked those again (61 ms — and its
+task fan-out bought nothing, because marking the shared `Array Int`
+channels multi-threaded cost about what the parallelism saved).
+
+A frame covers a contiguous sample range, so a frame *is* a serialization
+window: its bytes can be produced by the worker that decoded it, and the
+frames concatenate (`Flac.Spec.Stream.recombineA_model`). That also
+removes the marking cost outright — a worker returns a `ByteArray`, which
+is O(1) to mark, where `Array Int` channels are O(samples).
+
+A `ByteStep` carries the frame reader's own equation exactly as `Step`
+does, except that the channel arrays are *existentially quantified*: proof
+fields are erased, so they never exist at runtime and never cross the
+thread boundary. The equation also records that the frame is uniform (all
+channels the same length) and carries the stream's channel count, which is
+what the concatenation lemma needs; a frame that is neither is simply
+refused, and the caller falls back to the sample path. -/
+
+/-- A frame's interleaved PCM bytes, with the equation they satisfy. -/
+structure ByteStep (b0 bps ch : Nat) (d : ByteArray) where
+  pos : Nat
+  bytes : ByteArray
+  next : Nat
+  ok : ∃ chs, readFrameAt b0 d pos = some (chs, next)
+        ∧ chs.length = ch
+        ∧ (∀ a ∈ chs, a.size = (chs.headD #[]).size)
+        ∧ bytes = Stream.pcmBytesRange bps chs 0 (chs.headD #[]).size
+
+/-- Decode the frame at `pos` and serialize it, packaging the equation.
+    `none` when the frame does not read, or is not a uniform `ch`-channel
+    frame — the concatenation lemma needs both. -/
+def byteStepAt (b0 bps ch : Nat) (d : ByteArray) (pos : Nat) :
+    Option (ByteStep b0 bps ch d) :=
+  match h : readFrameAt b0 d pos with
+  | none => none
+  | some (chs, next) =>
+    if hu : chs.length = ch ∧ ∀ a ∈ chs, a.size = (chs.headD #[]).size then
+      some ⟨pos, Stream.pcmBytesRange bps chs 0 (chs.headD #[]).size, next,
+        ⟨chs, h, hu.1, hu.2, rfl⟩⟩
+    else none
+
+/-- Serialize one chunk of candidate positions (the unit of parallel
+    work). -/
+def byteStepChunk (b0 bps ch : Nat) (d : ByteArray) (cands : Array Nat) (lo hi : Nat) :
+    Array (ByteStep b0 bps ch d) := Id.run do
+  let mut out : Array (ByteStep b0 bps ch d) := Array.emptyWithCapacity (hi - lo)
+  for i in [lo : hi] do
+    match byteStepAt b0 bps ch d (8 * cands.getD i 0) with
+    | some st => out := out.push st
+    | none => pure ()
+  return out
+
+/-- One task per chunk; candidates ascend, so the steps do too. -/
+def byteStepsPar (b0 bps ch : Nat) (d : ByteArray) (cands : Array Nat) (chunk : Nat) :
+    Array (ByteStep b0 bps ch d) := Id.run do
+  if chunk = 0 then return #[]
+  let tasks := (List.range ((cands.size + chunk - 1) / chunk)).map fun c =>
+    Task.spawn fun _ =>
+      byteStepChunk b0 bps ch d cands (c * chunk) (min ((c + 1) * chunk) cands.size)
+  let mut out : Array (ByteStep b0 bps ch d) := Array.emptyWithCapacity cands.size
+  for t in tasks do
+    out := out ++ t.get
+  return out
+
+/-- Binary search for the step recorded at `pos` (mirrors `findStep`). -/
+def findByteStep {b0 bps ch : Nat} {d : ByteArray}
+    (steps : Array (ByteStep b0 bps ch d)) (pos : Nat) :
+    Option (ByteStep b0 bps ch d) := Id.run do
+  let mut lo := 0
+  let mut hi := steps.size
+  for _ in [0 : 64] do
+    if lo ≥ hi then
+      break
+    let mid := (lo + hi) / 2
+    match steps[mid]? with
+    | none => break
+    | some st =>
+      if st.pos = pos then
+        return some st
+      else if st.pos < pos then
+        lo := mid + 1
+      else
+        hi := mid
+  return none
+
+/-- The frame's bytes at `pos`: a precomputed step when one is recorded
+    there, otherwise decoded and serialized on the spot. -/
+def byteStepFor (b0 bps ch : Nat) (d : ByteArray)
+    (steps : Array (ByteStep b0 bps ch d)) (pos : Nat) :
+    Option (ByteStep b0 bps ch d) :=
+  match findByteStep steps pos with
+  | some st => if st.pos = pos then some st else byteStepAt b0 bps ch d pos
+  | none => byteStepAt b0 bps ch d pos
+
+/-- The frame loop, accumulating bytes instead of samples. -/
+def readBytesSteps (b0 bps ch : Nat) (d : ByteArray)
+    (steps : Array (ByteStep b0 bps ch d)) :
+    Nat → Nat → ByteArray → Option ByteArray
+  | 0, pos, out => if 8 * d.size - pos = 0 then some out else none
+  | fuel + 1, pos, out =>
+    if 8 * d.size - pos = 0 then some out
+    else
+      match byteStepFor b0 bps ch d steps pos with
+      | none => none
+      | some st => readBytesSteps b0 bps ch d steps fuel st.next (out ++ st.bytes)
+
+/-- **Decode straight to interleaved PCM bytes**, one worker per frame
+    chunk. A `some` result is exactly the serialization of what
+    `decodeArrays` returns (`Flac.Spec.Stream.decodeBytes_spec`); `none`
+    means the caller should use the sample path. -/
+def decodeBytes (bytes : ByteArray) : Option ByteArray :=
+  let br : BitReader := ⟨bytes, 0⟩
+  match br.readBits 32 with
+  | none => none
+  | some (marker, br) =>
+    if marker = 0x664C6143 then
+      match readMeta br.remaining br with
+      | none => none
+      | some (si, br) =>
+        readBytesSteps si.bps si.bps si.channels br.data
+          (if br.data.size < parThreshold then #[]
+           else byteStepsPar si.bps si.bps si.channels br.data
+             (syncCandidates br.data (br.pos / 8)) stepChunkSize)
+          (br.remaining + 1) br.pos
+          (ByteArray.emptyWithCapacity (2 * si.channels * si.totalSamples + 64))
+    else none
+
 /-- The production decoder body, **array-typed**: reassembled channels stay
     `Array Int` (plus bit depth and sample rate). This is where the decoder
     actually stops; `decodeOption` only adds the `Array → List` conversion

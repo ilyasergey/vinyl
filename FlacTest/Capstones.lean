@@ -17,18 +17,22 @@ they answer "is the thing I ran the thing that was proved?":
 | `--encode` | `Flac.encodePcm16Fast` | `pin_encode_fast` |
 | `--encode-slow` | `Flac.encodePcm16Cfg` | `pin_encode_cfg` |
 | `--decode-pcm16` | `Flac.decodePcm16A` | `pin_decodePcm16A` |
-| `--decode-fast` | `Flac.Decode.decodeArrays` | `pin_decodeArrays` |
+| `--decode-fast` | `Flac.Decode.decodeBytes` | `pin_decodeBytes` |
+| `--decode-fast` (fallback) | `Flac.Decode.decodeArrays` | `pin_decodeArrays` |
 | `--decode` | `Stream.decodeReference` | `pin_reference` |
 
 The CLI *call sites* are pinned separately, by grep, in
 `scripts/check.sh` — which function a `do` block invokes is not something
 a type can express.
 
-Note what is deliberately *not* claimed here: `--decode-fast` and
-`--decode` serialize samples to bytes with `Stream.pcmBytesA`, which
-carries no correctness theorem (it is the MD5-input serializer, tested
-against libFLAC rather than proved). The theorem-backed byte-level decode
-is `--decode-pcm16`. See `ARCHITECTURE.md`.
+`--decode-fast` used to serialize with `Stream.pcmBytesA`, whose window
+concatenation carried no theorem — it could not, since it reasons through
+`Task`. It now runs `Flac.Decode.decodeBytes`, whose result is *proved*
+to be `Stream.pcmBytesRange` of the samples `decodeArrays` returns
+(`pin_decodeBytes`), because every frame's step carries its own equation.
+`--decode` still serializes with `Stream.pcmBytesA`; the theorem-backed
+byte-level decode of the reference pipeline is `--decode-pcm16`. See
+`ARCHITECTURE.md`.
 -/
 
 namespace FlacTest.Capstones
@@ -100,5 +104,14 @@ theorem pin_parallel_decode :
 theorem pin_parallel_serialize :
     ∀ (arrs : List (Array Int)), Flac.pcm16FastPar arrs = Flac.pcm16FastA arrs :=
   @Flac.pcm16FastPar_eq
+
+/-- **What `vinyl --decode-fast` runs**: whenever the frame-parallel byte
+    decoder returns bytes, they are exactly the interleaved PCM
+    serialization of the samples `decodeArrays` returns. -/
+theorem pin_decodeBytes :
+    ∀ (bytes out : ByteArray), Flac.Decode.decodeBytes bytes = some out →
+      ∃ chs bps sr, Flac.Decode.decodeArrays bytes = some (chs, bps, sr)
+        ∧ out = Flac.Stream.pcmBytesRange bps chs 0 (chs.headD #[]).size :=
+  @Flac.Stream.decodeBytes_spec
 
 end FlacTest.Capstones
