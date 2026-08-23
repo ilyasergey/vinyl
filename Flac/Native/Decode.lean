@@ -432,7 +432,7 @@ end Flac.Decode
 
 namespace Flac
 
-/-- **The shipped decoder** (PLAN.md §1's `Flac.decode`): total, buffered,
+/-- **The shipped decoder**: total, buffered,
     diagnostic on failure. -/
 def decode (bytes : ByteArray) : Except String Stream.Audio :=
   match Decode.decodeOption bytes with

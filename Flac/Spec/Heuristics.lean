@@ -7,7 +7,7 @@ import Flac.Spec.Stream
 
 `defaultChooser` always returns a valid subframe configuration — the only
 fact the kernel ever needs about the heuristic layer.
-With it, the M2 keystone specializes to the hypothesis-light corollary
+With it, the reference capstone specializes to the corollary
 `decodeReference_encode_default`.
 -/
 

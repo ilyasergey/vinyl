@@ -2,7 +2,7 @@ import Flac
 import Flac.Native.Decode
 
 /-!
-# M0 unit tests
+# Unit tests
 
 Golden vectors for CRC-8/CRC-16, MD5 (the RFC 1321 test suite), coded
 numbers (incl. the RFC 9639 §9.1.5 worked example), and executable
