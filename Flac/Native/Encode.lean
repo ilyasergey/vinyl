@@ -256,34 +256,6 @@ private def lpcFoldRange (xs : FloatArray) (cs : List Float) (inv : Float) :
     else acc
   termination_by i stop => stop - i
 
-/-- Folded magnitudes of an already-computed residual range. -/
-private def resFoldRange (res : FloatArray) :
-    (i stop : Nat) → stop ≤ res.size → Float → Float
-  | i, stop, hstop, acc =>
-    if h : i < stop then
-      have hhi : i < res.size := by omega
-      resFoldRange res (i + 1) stop hstop (acc + foldF res[i])
-    else acc
-  termination_by i stop => stop - i
-
-/-- Mirror of `Heuristics.partitionSearch`, fed by the residual directly:
-    each finest partition is folded by one tail recursion, and each
-    candidate order then costs O(partitions). -/
-private def partitionSearchFf (bs ord : Nat) (res : FloatArray) :
-    Nat × Array Nat × Nat := Id.run do
-  let pomax := partitionMaxF bs ord
-  let cF := bs / p2 pomax
-  let np := p2 pomax
-  let mut sums : Array Nat := Array.emptyWithCapacity np
-  -- partition `j` covers residual indices `[j*cF - ord, (j+1)*cF - ord)`
-  -- (`ord < cF`, so the first partition is the short one)
-  for j in [0 : np] do
-    let stop := (j + 1) * cF - ord
-    let lo := if j = 0 then 0 else j * cF - ord
-    if h : stop ≤ res.size then
-      sums := sums.push (resFoldRange res lo stop h ff0).toUInt64.toNat
-  return partitionSearchSumsF bs ord pomax sums
-
 /-- Evaluate one LPC candidate directly into finest-partition sums. Same
     residual arithmetic and same visiting order as `lpcResidualArr`
     followed by `partitionSearchFf`, without allocating a block-sized
@@ -304,17 +276,6 @@ private def lpcPartitionSearchFf (cs : List Float) (shift : Nat) (xs : FloatArra
       if hlo : cs.length ≤ lo then
         sums := sums.push (lpcFoldRange xs cs inv lo stop h hlo ff0).toUInt64.toNat
   return partitionSearchSumsF bs ord pomax sums
-
-/-- First differences over floats (exact: order-4 differences of 18-bit
-    samples stay below `2^23`). -/
-private def diffArrFf (xs : FloatArray) : FloatArray := Id.run do
-  if xs.size = 0 then return FloatArray.empty
-  let mut out := FloatArray.emptyWithCapacity (xs.size - 1)
-  for h : i in [1 : xs.size] do
-    have h1 : i < xs.size := h.2.1
-    have h2 : i - 1 < xs.size := by omega
-    out := out.push (xs[i] - xs[i - 1])
-  return out
 
 /-- First differences (`Fixed.diff1` over arrays) — the exact `Int` form,
     used when emitting the chosen FIXED subframe. -/
@@ -350,20 +311,132 @@ def lpcResidualArr (cs : List Int) (shift : Nat) (xs : Array Int) : Array Int :=
     out := out.push (xs[i] - sar s shift)
   return out
 
+/-! ### The fused fixed-order pass
+
+The order-`ord` fixed residual is the `ord`-th finite difference, so one
+traversal carrying the difference ladder yields all five residual streams
+at once: one array read per sample instead of five, and no block-sized
+difference array at any order. `FixedSums` is nine `Float`s — the previous
+value of each difference order and the running folded sum of each — passed
+as tail-recursion parameters so they stay unboxed.
+
+The finest partitioning used is the one legal at order 0 (`partitionMaxF`
+is antitone in `ord`); each order's own partitioning is a coarsening, and
+partition sums nest, so `aggrSums` recovers it by adding consecutive
+entries. Sample `i` belongs to order `ord`'s residual only for `i ≥ ord`,
+which is what the guarded `fixedFoldHead` handles for the first four
+samples. -/
+
+/-- Difference-ladder state and per-order folded sums. -/
+private structure FixedSums where
+  /-- Previous value of the `k`-th difference, `k = 0 … 3`. -/
+  l0 : Float
+  l1 : Float
+  l2 : Float
+  l3 : Float
+  /-- Running folded sum of the order-`k` residual, `k = 0 … 4`. -/
+  a0 : Float
+  a1 : Float
+  a2 : Float
+  a3 : Float
+  a4 : Float
+
+/-- Samples `[i, stop)` with `i < 4`: the ladder is warmed here, and order
+    `ord` starts accumulating at sample `ord`. -/
+private def fixedFoldHead (xs : FloatArray) :
+    (i stop : Nat) → stop ≤ xs.size → FixedSums → FixedSums
+  | i, stop, hs, s =>
+    if h : i < stop then
+      have hi : i < xs.size := by omega
+      let e0 := xs[i]
+      let e1 := e0 - s.l0
+      let e2 := e1 - s.l1
+      let e3 := e2 - s.l2
+      let e4 := e3 - s.l3
+      fixedFoldHead xs (i + 1) stop hs
+        { l0 := e0, l1 := e1, l2 := e2, l3 := e3,
+          a0 := s.a0 + foldF e0,
+          a1 := if 1 ≤ i then s.a1 + foldF e1 else s.a1,
+          a2 := if 2 ≤ i then s.a2 + foldF e2 else s.a2,
+          a3 := if 3 ≤ i then s.a3 + foldF e3 else s.a3,
+          a4 := if 4 ≤ i then s.a4 + foldF e4 else s.a4 }
+    else s
+  termination_by i stop => stop - i
+
+/-- Samples `[i, stop)` with `4 ≤ i`: every order accumulates, so the loop
+    carries no guards and no boxed state. -/
+private def fixedFoldTail (xs : FloatArray) :
+    (i stop : Nat) → stop ≤ xs.size →
+    (l0 l1 l2 l3 a0 a1 a2 a3 a4 : Float) → FixedSums
+  | i, stop, hs, l0, l1, l2, l3, a0, a1, a2, a3, a4 =>
+    if h : i < stop then
+      have hi : i < xs.size := by omega
+      let e0 := xs[i]
+      let e1 := e0 - l0
+      let e2 := e1 - l1
+      let e3 := e2 - l2
+      let e4 := e3 - l3
+      fixedFoldTail xs (i + 1) stop hs e0 e1 e2 e3
+        (a0 + foldF e0) (a1 + foldF e1) (a2 + foldF e2) (a3 + foldF e3) (a4 + foldF e4)
+    else ⟨l0, l1, l2, l3, a0, a1, a2, a3, a4⟩
+  termination_by i stop => stop - i
+
+/-- Finest-partition folded sums for fixed orders 0–4, one entry per
+    order. -/
+private def fixedPartitionSums (xs : FloatArray) : Array (Array Nat) := Id.run do
+  let np := p2 (partitionMaxF xs.size 0)
+  let cP := xs.size / np
+  let mut s0 : Array Nat := Array.emptyWithCapacity np
+  let mut s1 : Array Nat := Array.emptyWithCapacity np
+  let mut s2 : Array Nat := Array.emptyWithCapacity np
+  let mut s3 : Array Nat := Array.emptyWithCapacity np
+  let mut s4 : Array Nat := Array.emptyWithCapacity np
+  let mut st : FixedSums := ⟨ff0, ff0, ff0, ff0, ff0, ff0, ff0, ff0, ff0⟩
+  for j in [0 : np] do
+    let lo := j * cP
+    let hi := (j + 1) * cP
+    let split := max lo (min 4 hi)
+    if hh : hi ≤ xs.size then
+      let st1 := if hs : split ≤ xs.size then fixedFoldHead xs lo split hs st else st
+      let st2 := fixedFoldTail xs split hi hh
+        st1.l0 st1.l1 st1.l2 st1.l3 st1.a0 st1.a1 st1.a2 st1.a3 st1.a4
+      s0 := s0.push st2.a0.toUInt64.toNat
+      s1 := s1.push st2.a1.toUInt64.toNat
+      s2 := s2.push st2.a2.toUInt64.toNat
+      s3 := s3.push st2.a3.toUInt64.toNat
+      s4 := s4.push st2.a4.toUInt64.toNat
+      st := { st2 with a0 := ff0, a1 := ff0, a2 := ff0, a3 := ff0, a4 := ff0 }
+  return #[s0, s1, s2, s3, s4]
+
+/-- Coarsen finest-partition sums by adding groups of `group` consecutive
+    entries (partition orders nest, so this is exact). -/
+private def aggrSums (sums : Array Nat) (group : Nat) : Array Nat := Id.run do
+  if group ≤ 1 then return sums
+  let mut out : Array Nat := Array.emptyWithCapacity (sums.size / group + 1)
+  for j in [0 : sums.size / group] do
+    let mut acc := 0
+    for w in [j * group : (j + 1) * group] do
+      acc := acc + sums.getD w 0
+    out := out.push acc
+  return out
+
 /-- Mirror of `Heuristics.fixedSearch`: all orders 0–4 with exact
-    (sum-estimated-partition) costs off the difference cascade. -/
+    (sum-estimated-partition) costs, off one fused pass. -/
 def fixedSearchF (b : Nat) (blkF : FloatArray) :
     Option ((Nat × Nat × Array Nat) × Nat) := Id.run do
+  if blkF.size = 0 then return none
+  let sums := fixedPartitionSums blkF
+  let pfinest := partitionMaxF blkF.size 0
   let mut best : Option ((Nat × Nat × Array Nat) × Nat) := none
-  let mut d := blkF
   for ord in [0 : 5] do
     if ord + 1 ≤ blkF.size then
-      let (po, ks, rcost) := partitionSearchFf blkF.size ord d
+      let pm := partitionMaxF blkF.size ord
+      let (po, ks, rcost) := partitionSearchSumsF blkF.size ord pm
+        (aggrSums (sums.getD ord #[]) (p2 (pfinest - pm)))
       let cost := ord * b + rcost
       match best with
       | some (_, c) => if cost < c then best := some ((ord, po, ks), cost)
       | none => best := some ((ord, po, ks), cost)
-      d := diffArrFf d
   return best
 
 private structure LpcChoice where
