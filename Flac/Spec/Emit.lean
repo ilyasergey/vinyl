@@ -1,5 +1,7 @@
 import Flac.Native.Emit
 import Flac.Spec.Bits
+import Flac.Spec.Fixed
+import Flac.Spec.Lpc
 
 /-!
 # Emitter simulation — the production↔model transfer, writer side
@@ -396,5 +398,120 @@ theorem emits_pushResidual (bs ord : Nat) (cfg : Rice.ResidualCfg)
     (fun w => rfl)
   unfold Rice.writeResidual
   rw [List.drop_zero, List.append_assoc]
+
+/-! ## Array predictor residuals compute the list residuals -/
+
+private theorem take_all_of_ge {l : List Int} {n : Nat} (h : l.length ≤ n) :
+    l.take n = l :=
+  List.take_of_length_le h
+
+theorem diffGo_toList (xs : Array Int) :
+    ∀ (rem i : Nat) (acc : Array Int), i + rem + 1 ≤ xs.size →
+      (Flac.Emit.diffGo xs i rem acc).toList
+        = acc.toList ++ (Fixed.diff1 (xs.toList.drop i)).take rem := by
+  intro rem
+  induction rem with
+  | zero => intro i acc _; simp [Flac.Emit.diffGo]
+  | succ rem ih =>
+    intro i acc h
+    have hi : i < xs.size := by omega
+    have hi1 : i + 1 < xs.size := by omega
+    show (Flac.Emit.diffGo xs (i + 1) rem
+      (acc.push (xs.getD (i + 1) 0 - xs.getD i 0))).toList = _
+    rw [ih (i + 1) _ (by omega), Array.toList_push, List.append_assoc]
+    congr 1
+    rw [getD_lt xs hi, getD_lt xs hi1, drop_toList_cons xs hi,
+      drop_toList_cons xs hi1,
+      show Fixed.diff1 (xs[i] :: xs[i + 1] :: xs.toList.drop (i + 1 + 1))
+        = (xs[i + 1] - xs[i]) :: Fixed.diff1 (xs[i + 1] :: xs.toList.drop (i + 1 + 1))
+        from rfl,
+      List.take_succ_cons]
+    rfl
+
+theorem diffA_toList (xs : Array Int) :
+    (Flac.Emit.diffA xs).toList = Fixed.diff1 xs.toList := by
+  unfold Flac.Emit.diffA
+  by_cases h : xs.size = 0
+  · have hnil : xs.toList = [] := by
+      have := Array.length_toList (xs := xs)
+      rw [h] at this
+      exact List.eq_nil_of_length_eq_zero this
+    rw [h, hnil]
+    show (Flac.Emit.diffGo xs 0 0 _).toList = Fixed.diff1 []
+    simp [Flac.Emit.diffGo]
+  · rw [diffGo_toList xs (xs.size - 1) 0 _ (by omega), List.drop_zero,
+      take_all_of_ge (by rw [Fixed.length_diff1, Array.length_toList]; omega)]
+    simp
+
+theorem fixedResA_toList (xs : Array Int) :
+    ∀ ord, (Flac.Emit.fixedResA ord xs).toList = Fixed.residual ord xs.toList := by
+  intro ord
+  induction ord with
+  | zero => rfl
+  | succ ord ih =>
+    show (Flac.Emit.diffA (Flac.Emit.fixedResA ord xs)).toList = _
+    rw [diffA_toList, ih]
+    rfl
+
+private theorem take_succ_reverse (xs : Array Int) {i : Nat} (hi : i < xs.size) :
+    (xs.toList.take (i + 1)).reverse = xs[i] :: (xs.toList.take i).reverse := by
+  rw [List.take_succ, List.getElem?_eq_getElem (by simpa using hi)]
+  simp
+
+theorem lpcResGo_toList (cs : List Int) (shift : Nat) (xs : Array Int) :
+    ∀ (rem i : Nat) (acc : Array Int), cs.length ≤ i → i + rem ≤ xs.size →
+      (Flac.Emit.lpcResGo cs shift xs i rem acc).toList
+        = acc.toList
+          ++ Lpc.residualAux cs shift (xs.toList.take i).reverse
+              ((xs.toList.drop i).take rem) := by
+  intro rem
+  induction rem with
+  | zero => intro i acc _ _; simp [Flac.Emit.lpcResGo, Lpc.residualAux]
+  | succ rem ih =>
+    intro i acc hord h
+    have hi : i < xs.size := by omega
+    have hpred : Flac.Bits.sar (Lpc.dotA cs xs (i - 1)) shift
+        = Lpc.predict cs shift (xs.toList.take i).reverse := by
+      unfold Lpc.predict
+      congr 1
+      match hcs : cs with
+      | [] => rfl
+      | c :: cs' =>
+        have hi0 : 0 < i := by
+          have := hord
+          simp at this
+          omega
+        rw [Lpc.dotA_take xs (c :: cs') (i - 1) (by omega),
+          show i - 1 + 1 = i from by omega]
+    show (Flac.Emit.lpcResGo cs shift xs (i + 1) rem
+      (acc.push (xs.getD i 0 - Flac.Bits.sar (Lpc.dotA cs xs (i - 1)) shift))).toList = _
+    rw [ih (i + 1) _ (by omega) (by omega), Array.toList_push, List.append_assoc]
+    congr 1
+    rw [getD_lt xs hi, hpred, drop_toList_cons xs hi, List.take_succ_cons,
+      take_succ_reverse xs hi]
+    rfl
+
+theorem lpcResA_toList (cs : List Int) (shift : Nat) (xs : Array Int) :
+    (Flac.Emit.lpcResA cs shift xs).toList = Lpc.residual cs shift xs.toList := by
+  unfold Flac.Emit.lpcResA Lpc.residual
+  by_cases h : cs.length ≤ xs.size
+  · rw [lpcResGo_toList cs shift xs (xs.size - cs.length) cs.length _ (by omega)
+      (by omega)]
+    show (Array.emptyWithCapacity (xs.size - cs.length) : Array Int).toList ++ _ = _
+    rw [Array.emptyWithCapacity_eq]
+    show [] ++ _ = _
+    rw [List.nil_append]
+    congr 1
+    apply take_all_of_ge
+    rw [List.length_drop, Array.length_toList]
+    omega
+  · rw [show xs.size - cs.length = 0 from by omega]
+    show (Flac.Emit.lpcResGo cs shift xs cs.length 0 _).toList = _
+    have hdrop : xs.toList.drop cs.length = [] := by
+      apply List.drop_eq_nil_of_le
+      rw [Array.length_toList]
+      omega
+    rw [hdrop]
+    simp [Flac.Emit.lpcResGo, Lpc.residualAux]
 
 end Flac.Emit
