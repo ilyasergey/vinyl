@@ -23,6 +23,36 @@ for thm in "theorem decodeReference_encode " "theorem _root_.Flac.Stream.decodeR
 done
 echo "ok"
 
+echo "== CLI entry points call the functions the capstones are about"
+# Statements are pinned by type in FlacTest/Capstones.lean; which function a
+# CLI branch *invokes* is not something a type can express, so pin it here.
+# Each entry is: <cli flag> <function the capstone names>
+while read -r flag fn; do
+  [ -z "$flag" ] && continue
+  # the branch body runs from its `if let ["<flag>"` line to the next `if let`
+  body=$(awk -v f="\"$flag\"" '
+    $0 ~ ("if let \\[" f) {inb=1}
+    inb {print}
+    inb && NR>1 && $0 ~ /^  if let \[/ && $0 !~ ("if let \\[" f) {inb=0}' FlacTest/Cli.lean)
+  if ! printf '%s' "$body" | grep -q -- "$fn"; then
+    echo "FAIL: CLI $flag does not call $fn"; fail=1
+  fi
+done <<'EOF'
+--encode Flac.encodePcm16Fast
+--encode-slow Flac.encodePcm16Cfg
+--decode-pcm16 Flac.decodePcm16A
+--decode-fast Flac.Decode.decodeArrays
+--decode Stream.decodeReference
+EOF
+echo "ok"
+
+echo "== proof-level trust holes: no native_decide/implemented_by/unsafe/extern in Flac/"
+if grep -rn --include='*.lean' -E '\bnative_decide\b|@\[implemented_by|\bunsafe def\b|@\[extern' Flac/; then
+  echo "FAIL: proof or compilation trust hole in Flac/"; fail=1
+else
+  echo "ok"
+fi
+
 echo "== decoder totality: no 'partial', no panicking indexing in decode paths"
 # decode paths: everything in Flac/ except the encoder-only modules
 DECODE_FILES=$(ls Flac/Native/*.lean | grep -v -e Md5.lean -e Heuristics.lean)

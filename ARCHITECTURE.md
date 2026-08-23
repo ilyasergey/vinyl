@@ -228,6 +228,52 @@ validity certificates, and the encoder (`EncoderCfg.safeChooser`) checks
 each choice at runtime, falling back to VERBATIM if the check fails. This
 is why the capstone needs no hypothesis about the heuristics at all.
 
+## Is the thing you ran the thing that was proved?
+
+The theorems name specific functions; the `vinyl` binary calls specific
+functions; nothing about Lean forces those to be the same functions. That
+linkage is therefore pinned two ways, both in the merge gate.
+
+`FlacTest/Capstones.lean` restates each capstone in full and discharges it
+with the real theorem, so a statement that drifts while keeping its name
+fails `lake build` (grep-by-name, which `scripts/check.sh` also does,
+cannot notice that). `scripts/check.sh` then greps each CLI branch for the
+function its capstone is about, because which function a `do` block invokes
+is not something a type can express:
+
+| CLI mode | calls | covered by |
+|---|---|---|
+| `--encode` | `Flac.encodePcm16Fast` | `decodePcm16_encodePcm16Fast` — hypothesis-free |
+| `--encode-slow` | `Flac.encodePcm16Cfg` | `decodePcm16_encodePcm16Cfg` |
+| `--decode-pcm16` | `Flac.decodePcm16A` | `decodePcm16A_eq` → the byte-level capstone |
+| `--decode-fast` | `Decode.decodeArrays` + `Stream.pcmBytesA` | samples yes, byte layout **no** (below) |
+| `--decode` | `Stream.decodeReference` + `Stream.pcmBytes` | samples yes, byte layout **no** |
+
+Both negative tests are checked to fire: repointing `--encode` at the
+uncertified `Flac.Encode.encodePcm16` fails the gate, and weakening
+`pin_encode_fast` fails the build.
+
+What is trusted regardless. The proofs rest on Lean's kernel and, per
+`#print axioms`, only on `propext`, `Classical.choice` and `Quot.sound`.
+The executable rests additionally on Lean's compiler and runtime — but
+*not* on any second implementation of this code: `Flac/` contains no
+`native_decide` (which would put the compiler inside a proof), no
+`@[implemented_by]`, no `@[extern]`, no `unsafe`, and no `partial def`, so
+the compiled code is generated from the very definitions the kernel
+checked. The gate greps for all of these. The primitives underneath —
+`Nat`/`Int` arithmetic on GMP, `ByteArray`, `FloatArray`, `Task` — are
+core Lean's `@[extern]` implementations, trusted as by any Lean program.
+
+And the honest gap: `--decode-fast` and `--decode` write samples out
+through `Stream.pcmBytesA`/`pcmBytes`, which carry no correctness theorem
+— they are the MD5-input serializer, established against libFLAC by
+differential testing rather than proof. `pcmBytesA_eq` relates the two
+serializers to each other, not to a specification. So for those two modes
+the *decoded samples* are covered by `decodeOption_eq_reference` while the
+*byte layout* is tested only. The fully proved byte-level decode path is
+`--decode-pcm16` (`decodePcm16A_eq`), and the benchmark's decode column
+measures `--decode-fast`.
+
 ## Trusted vs. tested
 
 Trusted (PLAN.md §10): the Lean kernel and compiler, plus our reading of
