@@ -47,8 +47,12 @@ vinyl/
 │   │   ├── Stream.lean     # STREAMINFO, Audio, encode/decodeReference
 │   │   ├── Heuristics.lean # LPC/fixed/stereo search (sanitized at use)
 │   │   ├── Reader.lean     # BitReader: buffered ByteArray bit reader
+│   │   │                   #   (word-level fast paths proven = the spec)
 │   │   ├── Decode.lean     # the shipped production decoder, Flac.decode
-│   │   └── Codec.lean      # Flac.encode, checked encoders, PCM16 pipeline
+│   │   ├── Encode.lean     # the fast encoder (arrays/Task-parallel frames;
+│   │   │                   #   unverified by design — certified per call)
+│   │   └── Codec.lean      # Flac.encode, checked + certified-fast encoders,
+│   │                       #   PCM16 pipeline
 │   └── Spec/               # ALL theorems; no sorry, no axioms, ever
 │       ├── Bits.lean       # L0 round-trips, packing, withConsumed_spec
 │       ├── Utf8Num.lean    # coded-number round-trip (n < 2^36)
@@ -115,9 +119,28 @@ clean induction. The shipped decoder instead reads bits from a `ByteArray`
 at a bit cursor (`BitReader`); every primitive is proven to simulate the
 model (`Flac/Spec/Reader.lean`), and the whole decoder is proven
 extensionally equal to the reference (`Flac/Spec/Decode.lean`). That is
-the ratchet pattern for M6: optimize only what a theorem already pins
-down — a faster reader replaces the current one *under the same
-simulation lemmas*.
+the ratchet pattern for M6 — optimize only what a theorem already pins
+down — and it is now exercised throughout the decoder: bit extraction is
+byte-at-a-time (`extractBitsFast_eq`), `2^k` is a table (`p2_eq`),
+Rice/verbatim runs are read at raw bit positions into arrays
+(`readRiceSeqFast_eq`, `readSIntSeqFast_eq`), both predictor restores run
+on arrays (`Fixed.restoreA_toList`, `Lpc.restoreA_toList`), and the
+byte-level PCM16 serializer is a fused indexed pass (`pcm16Fast_eq`) —
+each fast path proven equal to its specification, so every simulation
+lemma and capstone keeps its statement.
+
+The fast *encoder* (`Flac/Native/Encode.lean`) uses the other sound
+pattern: it is unverified by design, like the heuristics, and each call
+is **certified at runtime** — `Flac.encodePcm16Fast` decodes the produced
+bytes with the *verified* decoder and compares them with the input,
+falling back to the fully verified encoder on any mismatch. The byte-level
+round-trip theorem (`Flac.decodePcm16_encodePcm16Fast`) therefore holds
+with no hypotheses and no new trusted code, while the encoder itself is
+free to use mutable arrays, a scalar bit accumulator, and a `Task` per
+frame (frames are byte-aligned and independent; outputs are concatenated
+in order and remain byte-identical to the serial verified encoder under
+the default heuristics — which differential tests check on every corpus
+file).
 
 One more by-construction safety device: heuristic outputs carry decidable
 validity certificates, and the encoder (`EncoderCfg.safeChooser`) checks

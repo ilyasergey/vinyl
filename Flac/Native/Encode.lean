@@ -210,9 +210,15 @@ def lpcSearchF (b : Nat) (blk : Array Int) :
   if !(r.getD 0 (Float.ofBits 0) > Float.ofBits 0) then
     return none
   let ord := Heuristics.pickLpcOrder b blk.size (Heuristics.levinsonErrs r 8)
-  let (cs, shift) := Heuristics.quantizeCoefs (Heuristics.levinson r ord).toList 12
-  let (po, ks, rcost) := partitionSearchF blk.size ord (lpcResidualArr cs shift blk)
-  return some ((cs, shift, po, ks), ord * b + 9 + ord * 12 + rcost)
+  let mut best : Option ((List Int × Nat × Nat × Array Nat) × Nat) := none
+  for o in (if ord = 8 then [8] else [ord, 8]) do
+    let (cs, shift) := Heuristics.quantizeCoefs (Heuristics.levinson r o).toList 12
+    let (po, ks, rcost) := partitionSearchF blk.size o (lpcResidualArr cs shift blk)
+    let cost := o * b + 9 + o * 12 + rcost
+    match best with
+    | some (_, c) => if cost < c then best := some ((cs, shift, po, ks), cost)
+    | none => best := some ((cs, shift, po, ks), cost)
+  return best
 
 /-- Mirror of `Heuristics.wastedDetect`: the largest `w < b` such that
     `2^w` divides every sample (`b - 1` for the all-zero block). -/

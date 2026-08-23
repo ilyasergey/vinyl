@@ -253,10 +253,16 @@ def lpcSearch (b : Nat) (blk : List Int) :
   if !(r[0]! > f0) then
     return none
   let ord := pickLpcOrder b blk.length (levinsonErrs r 8)
-  let (cs, shift) := quantizeCoefs (levinson r ord).toList 12
-  let us := (Lpc.residual cs shift blk).map Rice.zigzag
-  let (po, ks, rcost) := partitionSearch blk.length ord us
-  return some ((cs, shift, po, ks), ord * b + 9 + ord * 12 + rcost)
+  let mut best : Option ((List Int × Nat × Nat × List Nat) × Nat) := none
+  for o in (if ord = 8 then [8] else [ord, 8]) do
+    let (cs, shift) := quantizeCoefs (levinson r o).toList 12
+    let us := (Lpc.residual cs shift blk).map Rice.zigzag
+    let (po, ks, rcost) := partitionSearch blk.length o us
+    let cost := o * b + 9 + o * 12 + rcost
+    match best with
+    | some (_, c) => if cost < c then best := some ((cs, shift, po, ks), cost)
+    | none => best := some ((cs, shift, po, ks), cost)
+  return best
 
 /-- Fixed search, estimate-first: pick the order by the folded sum of
     each difference level (O(1) cost estimate per order from the sum),

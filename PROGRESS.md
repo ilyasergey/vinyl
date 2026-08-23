@@ -258,3 +258,109 @@ Docs-only session; no Lean changes (`lake build` / `flactest` untouched).
   `lake exe flactest` (71 checks) and `smoke.sh` green.
 
 **Next:** unchanged — M6 performance under the ratchet.
+
+## 2026-08-23 — Session 5: M6 performance under the ratchet
+
+**Attempted:** M6 — close the throughput gap to libFLAC on both codec
+directions without weakening a single theorem statement.
+
+**Landed (decode, fully verified — every fast path proven equal to its
+specification, so `Spec/Decode`'s simulation statements and the capstones
+are unchanged):**
+
+- Word-level bit extraction (`extractBitsFast`, byte-at-a-time via
+  `accBytes`) and shift/mask single-bit reads (`bitFast`), proven equal to
+  the bit-recursive specs (`extractBitsFast_eq`, `bitFast_eq`).
+- `p2` power table + `p2_eq`: the Lean runtime evaluates `Nat.pow` AND
+  `Nat.shiftLeft` through GMP even for word-sized values (only `>>>`,
+  `&&&`, `+`, `*` have scalar fast paths) — every hot `2^k` now goes
+  through the table (`readRiceNat`, `readSInt`, `shiftUp`, masks).
+- Residual layer on arrays: `readRiceSeqA`/`readSIntSeqA`/`readPartA`/
+  `readPartsA`/`readResidualA` accumulate one `Array Int` across all
+  partitions (accumulator-normalization + model-simulation lemmas per
+  function; PosOK family rebuilt).
+- Fused position-based sequence readers (`readRiceSeqGo`/`readSIntSeqGo`):
+  unary + remainder read at raw bit positions, no `Option (_ × BitReader)`
+  chain per sample; proven equal via positional unrollings `readRice_pos`/
+  `readSInt_pos` (`readRiceSeqFast_eq`, `readSIntSeqFast_eq`).
+- Array predictor restores: `Fixed.restoreA` (prefix-sum `undiffA` folds),
+  `Lpc.restoreA` (decoded prefix indexed from the end, allocation-free
+  `dot`/`dotA`); bridges `restoreA_toList` in `Spec/Fixed`/`Spec/Lpc`,
+  `dot_eq_zip_foldl` pins the RFC prediction sum.
+- Frame layer on arrays end-to-end: subframes, wasted-bits scaling, stereo
+  undo (`Stereo.decode*A` + toList bridges), channel reassembly by
+  amortized left fold (`recombineA`, proven equal to `Stream.recombine`
+  via `zipApp_toList`/`zipApp_assoc`). Lists materialize once per channel
+  at the `Audio` boundary.
+- Verified fused PCM16 serializer `pcm16Fast` (+ `pcm16Fast_eq`) inside
+  `decodePcm16` — the byte-level pipeline now runs at raw decode speed.
+- Table-driven CRC-8/16 (same function on both codec sides, so round-trip
+  proofs unaffected; shift-register definitions kept as reference with
+  exhaustive/sampled agreement tests).
+
+**Landed (encode):**
+
+- `Flac/Native/Encode.lean` — fast encoder on arrays/`ByteArray`:
+  `UInt64` bit accumulator, fused zigzag+partition sums (O(1) per
+  partition off nested finest-level sums), estimate-first model selection
+  (LPC order from Levinson per-order errors via `levinsonErrs`/
+  `pickLpcOrder`, orders 1–8; fixed order from difference-level sums —
+  only the chosen candidates get residuals), `Task`-parallel frame
+  encoding (frames are byte-aligned and independent; concatenated in
+  order). Byte-identical to the verified encoder on the whole corpus
+  (differential-tested every run).
+- **Certified per call, zero proof debt**: `Flac.encodePcm16Fast` decodes
+  its own output with the *verified* decoder and compares with the input,
+  falling back to the verified encoder on mismatch —
+  `Flac.decodePcm16_encodePcm16Fast` holds with no hypotheses. The
+  heuristics changes (sum-estimated partition costs, estimate-first
+  orders, extern-only Float conversions — `Float.ofNat/ofInt/literals`
+  compile to `Float.ofScientific`, which re-parses a big-integer constant
+  per call!) apply to the verified encoder too (19 s → 13 s / 10 MB).
+
+**Numbers (10 MB mono tonal probe; corpus medians in bench/README.md):**
+decode 2.1 → 25 MB/s; certified encode 0.16 → 12 MB/s (raw fast encode
+~0.4 s wall, certification ≈ one decode + compare); stereo decode
+22 MB/s. Compression unchanged within 0.1% (still ahead of `flac -8`
+overall on the corpus).
+
+**Conformance:** IETF must-decode 61/61 comparable ALL GREEN (rig now
+decodes with the production decoder — justified by
+`decodeOption_eq_reference`); uncommon 4/5 (same known out-of-scope
+headerless case); smoke + fuzz rigs 3–5 green; `scripts/check.sh` ALL
+GREEN (no sorry/axiom, capstones pinned, totality lint, 73 checks).
+
+**Proof-engineering notes:**
+
+- Runtime perf: `Nat.pow`/`Nat.shiftLeft` are GMP calls even for scalar
+  values; `>>>`/`&&&`/`+`/`*`/`|||`/`^^^` have scalar fast paths. `Float`
+  literals and `Float.ofNat/ofInt` call the Lean-implemented
+  `Float.ofScientific` whose compiled body re-parses a big-int constant
+  per call — use `Float.ofBits`/`UInt64.toFloat`/`Int64.toFloat`.
+  `Array Float` boxes every element; per-lag accumulator loops beat
+  fused `set!` loops.
+- `rw [if_pos h]` fails when `dsimp` normalized the Prop but not the
+  `Decidable` instance inside the `ite`; `simp only [h, if_true/if_false]`
+  is instance-agnostic.
+- Accumulator functions want two lemmas each: an acc-normalization
+  (`f acc = (f #[]).map (acc ++ ·)`) and a `#[]`-sim against the model;
+  callers then rewrite with both.
+- `subst h` when `h : a = b` eliminates `b` — later references must use
+  `_` for the eliminated variable.
+- IDE diagnostics after editing an imported file are stale until `lake
+  build`; trust the build, not the hover.
+
+**Blocked:** nothing.
+
+**Next (M6b — designed, not started): the verified fast encoder.**
+Replace the runtime certificate by a statically verified fast emitter:
+(1) `BitWriter` simulation against the `List Bool` writer model, lifted
+writer-by-writer (Rice → residual → subframe → frame → stream) to
+`emitFast cfg a = Stream.encode cfg a` — the writer-side mirror of M5;
+(2) fast validity deciders proven equal to the `Decidable` instances
+(today's instances re-materialize residual lists just to check lengths);
+(3) heuristics stay unverified choosers (the capstone already quantifies
+over them), shared between fast and reference paths. Then
+`decode (emitFast cfg a) = .ok a` follows by rewriting — no per-call
+decode, no fallback. Also open: frame-parallel *verified* emission needs
+`(Frame.write …).length % 8 = 0` + `bitsToBytes`-append lemmas.
