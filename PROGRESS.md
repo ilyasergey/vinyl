@@ -230,3 +230,27 @@ conformance corpus; documentation + benchmarks refresh.
 **Next:** M6 performance under the ratchet (word-at-a-time `BitReader`
 under the same simulation lemmas; encoder off the `List Bool` model),
 Rigs 3–5 fuzz harnesses, uncommon-corpus completeness triage.
+
+## 2026-08-23 — Session 4: documentation restructure
+
+Docs-only session; no Lean changes (`lake build` / `flactest` untouched).
+
+- README: quoted `decodePcm16_encodePcm16` statement with a "why it
+  matters" paragraph (end-to-end contract for the file-level API — no
+  unverified glue between the user's bytes and the guarantee).
+- README slimmed into an overview with links; moved out:
+  - `COVERAGE.md` — RFC 9639 feature table, not-supported list,
+    IETF conformance-corpus results;
+  - `bench/README.md` — plots, per-category tables, regeneration steps;
+  - `conformance/README.md` — rigs, now documenting `fuzz.sh`
+    (rigs 3–5) which the README never mentioned.
+- README: new "Cross-checking against libFLAC" walkthrough (verified
+  end-to-end on flac 1.5.0, both directions byte-identical); code
+  blocks kept free of inline `#` comments — interactive zsh without
+  `interactive_comments` passes them as arguments (user-hit failure).
+- `.gitignore`: root-anchored `/*.flac`, `/*.pcm` for walkthrough
+  scratch files.
+
+**Next:** unchanged — M6 performance under the ratchet; possible CLI
+nicety: usage error on malformed `vinyl` arguments instead of falling
+through to samples mode.

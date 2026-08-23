@@ -31,11 +31,26 @@ theorem Flac.decode_encodeChecked
 ```
 
 At the byte level the same guarantee holds for raw PCM files
-([`Flac.decodePcm16_encodePcm16`](Flac/Spec/Decode.lean#L1951)): if
-`encodePcm16 ch bytes` turns a raw interleaved signed 16-bit
-little-endian PCM `ByteArray` into a FLAC file, then `decodePcm16`
-returns **exactly the input bytes** — again with no hypotheses. (The
-"16" is only the byte layout of this front end; the codec and the
+([`Flac.decodePcm16_encodePcm16`](Flac/Spec/Decode.lean#L1951)):
+
+```lean
+/-- If encoding a raw 16-bit PCM byte array succeeds at all,
+    decoding the resulting FLAC file returns exactly the input
+    bytes. No hypotheses. -/
+theorem Flac.decodePcm16_encodePcm16
+    (h : encodePcm16 ch bytes = some flac) : decodePcm16 flac = .ok bytes
+```
+
+This matters because `decode_encode` speaks about the structured
+`Audio` value, while what a user actually holds is a flat interleaved
+signed 16-bit little-endian PCM `ByteArray` (a `.wav` payload, a sound
+card buffer). The corollary extends the sample-level capstone across
+the remaining conversion glue — channel deinterleaving and byte
+packing, proved to round-trip as well — so **no unverified code sits
+between the user's bytes and the guarantee**: it is the end-to-end
+contract for the file-level API (and the `vinyl` CLI), and the single
+hypothesis-free statement to audit if that is the interface you use.
+(The "16" is only the byte layout of this front end; the codec and the
 theorems above cover bit depths 1–32.)
 
 The statements quantify over every encoder knob: block size, numbering
@@ -60,137 +75,60 @@ separately by differential testing against libFLAC (below).
 
 ## Status
 
-Milestones M0–M5 are complete (see `PLAN.md §8` for the roadmap and
-`PROGRESS.md` for the session log); M6 (performance under the theorem
-ratchet) is next.
-
-- [x] **M0** — bit-level I/O with round-trip proofs, CRC-8/CRC-16,
-      extended-UTF-8 coded numbers with round-trip proof, pure-Lean MD5
-      (RFC 1321 suite green)
-- [x] **M1** — Rice/zigzag/escape coding + partitioned-residual proofs
-      with divisibility certificates
-- [x] **M2** — CONSTANT/VERBATIM/FIXED subframes, CRC-verified frames,
-      stream layer; `decodeReference ∘ encode = id` on the mono profile;
-      first libFLAC interop (both directions)
-- [x] **M3** — LPC subframes with the LPC restore proof; certified
-      default heuristic (Welch-windowed Levinson–Durbin LPC + fixed-order
-      search, exact Rice bit costs)
-- [x] **M4** — 1–8 channels, stereo decorrelation (L/S, R/S, M/S with the
-      b+1-bit side channel), wasted bits, both numbering strategies;
-      **reference capstone** over the full option space
-- [x] **M5** — buffered production decoder, simulation proof against the
-      reference, accept-set transfer; **shipped capstone**
-      `decode (encode a) = .ok a` and its byte-level PCM corollary;
-      IETF conformance-corpus gate
-- [ ] **M6** — performance work under the ratchet
-- [ ] **M7** — (stretch) two-sided verification against RFC 9639
+Milestones M0–M5 are complete; M6 (performance under the theorem
+ratchet) is next, M7 (two-sided verification against RFC 9639) is a
+stretch goal. See [`PLAN.md`](PLAN.md) §8 for the milestone-by-milestone
+roadmap and [`PROGRESS.md`](PROGRESS.md) for the session log. In short:
+bit-level I/O, CRCs, MD5, Rice coding, all subframe types (CONSTANT /
+VERBATIM / FIXED / LPC), 1–8 channels with stereo decorrelation, wasted
+bits, and the buffered production decoder are all done and under the
+capstone theorems above.
 
 ## What of RFC 9639 is covered
 
 Everything needed to *decode the "streamable subset"* of FLAC and to
-*encode within it*. Concretely:
-
-**Supported (decode, with the equivalence proof; encode where noted):**
-
-| feature | decode | encode |
-|---|---|---|
-| `fLaC` marker + STREAMINFO; all other metadata blocks (padding, application, seektable, Vorbis comment, cuesheet, picture, …) | ✓ (parsed / skipped) | STREAMINFO only |
-| block sizes: all codes incl. explicit 8/16-bit (192, 576·2ᵏ, 256·2ᵏ, arbitrary 1–65536) | ✓ | 16–65535, explicit code |
-| both frame-numbering strategies (fixed / variable block size) | ✓ | ✓ |
-| sample rates: STREAMINFO up to 2²⁰−1 Hz; all frame-header codes incl. explicit 8/16-bit | ✓ | STREAMINFO code |
-| bit depths 1–32; per-frame bit-depth codes (8/12/16/20/24/32 + STREAMINFO) | ✓ | STREAMINFO code, 1–32 |
-| channels 1–8 independent; stereo decorrelation left/side, right/side, mid/side (b+1-bit side) | ✓ | ✓ |
-| subframes: CONSTANT, VERBATIM, FIXED orders 0–4, LPC orders 1–32 (any precision 1–15, shift 0–15) | ✓ | ✓ |
-| wasted bits (any count < bit depth) | ✓ | ✓ (detected) |
-| residuals: 4-bit Rice, 5-bit Rice2, escaped partitions, partition orders 0–15 | ✓ | ✓ |
-| CRC-8 (frame header) and CRC-16 (frame) verification | ✓ (checked, by theorem) | ✓ (emitted) |
-| MD5 signature of the unencoded data | emitted by encoder | emitted |
-| coded frame numbers (extended UTF-8, up to 36 bits) | ✓ | ✓ |
-
-**Not supported (decode rejects with an error rather than guessing):**
-
-- streams that do not begin with `fLaC` + STREAMINFO — e.g. files
-  starting mid-stream at a frame header, or with leading garbage/ID3
-  tags (RFC 9639 makes STREAMINFO mandatory; resynchronization is a
-  player feature, not part of the format);
-- reserved codes anywhere (block-size code 0, sample-rate code 15,
-  bit-depth code 3, channel codes 11–15, reserved header bits ≠ 0) —
-  rejected, as the RFC requires;
-- MD5 *verification* on decode (the decoder is exact by theorem on
-  every stream it accepts; MD5 is validated in differential tests);
-- metadata *content* (Vorbis comments, seek tables, pictures …) is
-  skipped, not surfaced to the caller;
-- the encoder always emits the streamable subset: it does not produce
-  uncommon block sizes/rates requiring explicit frame-header codes.
-
-On the [IETF FLAC conformance corpus](https://github.com/ietf-wg-cellar/flac-test-files),
-the **must-decode `subset/` set passes 61/61** files that the `flac` CLI
-itself can compare against raw output (the remaining 3 are 12/20-bit
-files the reference *CLI* refuses to emit as raw; Vinyl decodes them
-too). Of the `uncommon/` edge set, everything comparable passes except
-the deliberately headerless "file starting at frame header".
+*encode within it*: all subframe types (LPC orders 1–32), Rice/Rice2
+residuals with escapes, 1–8 channels with all three stereo-decorrelation
+modes, wasted bits, both numbering strategies, CRC-8/CRC-16, and MD5.
+The full feature-by-feature table — and the explicit list of what decode
+*rejects* (headerless streams, reserved codes, …) — is in
+[`COVERAGE.md`](COVERAGE.md). On the
+[IETF conformance corpus](https://github.com/ietf-wg-cellar/flac-test-files)
+the must-decode `subset/` set passes **61/61** comparable files.
 
 ## Differential testing
 
-Three rigs run against libFLAC 1.5.0 (`conformance/`):
-
-- `smoke.sh` — both directions on synthetic signals: every Vinyl stream
-  passes `flac -t` (CRC-8/16 + MD5) and decodes byte-identically with
-  libFLAC; libFLAC-encoded streams decode byte-identically with Vinyl.
-- `ietf.sh` — the RFC 9639 companion test-file corpus (results above);
-  the `subset/` set is a merge gate.
-- `scripts/check.sh` — the ratchet: full build, **zero `sorry`/`axiom`**,
-  grep-pinned capstone theorems present, decoder-totality lint (no
-  `partial`, no panicking indexing), 71-check unit suite.
+The theorems prove encoder and decoder agree with *each other*;
+agreement with the rest of the world is tested against libFLAC 1.5.0.
+[`conformance/`](conformance/README.md) holds the rigs: `smoke.sh`
+(both directions on synthetic signals), `ietf.sh` (the RFC 9639 corpus;
+merge gate), and `fuzz.sh` (decoder-totality, bit-flip, and compiled
+round-trip fuzzing). `scripts/check.sh` is the ratchet: full build,
+**zero `sorry`/`axiom`**, grep-pinned capstones, totality lint, unit
+suite. To run the cross-check yourself on one file, see
+[Cross-checking against libFLAC](#cross-checking-against-libflac) below.
 
 ## Benchmarks
 
-Measured on the 37-file synthetic 16-bit corpus of `bench/gen_corpus.py`
-— six content categories (tonal, waveforms, noise, tonal+noise mixes,
-degenerate signals, stereo pairs) — against libFLAC 1.5.0; regenerate
-with `./bench/run.sh`. All percentages are compression ratios: encoded
-size as a fraction of the raw PCM. 0% would mean the file vanished,
-100% means no compression at all — lower is better.
+On the 37-file synthetic corpus of `bench/gen_corpus.py`, the verified
+encoder's overall compression ratio **beats `flac -8`** (39.5% vs 39.8%
+of raw) — the certified heuristics choose well. Speed is honestly slow
+for now (~0.16 MB/s encode, ~1.5 MB/s decode vs libFLAC's ~30–37 MB/s):
+the encoder still runs on the proof-oriented `List Bool` bit model, and
+performance work is deliberately deferred to M6, *after* the capstone
+makes optimization safe.
 
-### Compression
-
-**Top** — per-file cactus: each encoder's ratios sorted ascending; a
-curve that stays lower compresses better. **Bottom** — aggregate ratio
-(total encoded bytes ÷ total raw bytes) per content category:
+Compression, per file (sorted; lower is better) and aggregated per
+content category:
 
 ![Compression vs libFLAC](bench/compression.png)
 
-| category | vinyl | flac -0 | flac -5 | flac -8 |
-|---|---|---|---|---|
-| tonal | **19.7%** | 40.2% | 22.3% | 20.1% |
-| wave | **39.2%** | 44.5% | 43.9% | 40.9% |
-| noise | **77.5%** | 77.9% | 77.5% | 77.5% |
-| mixed | 72.0% | 72.6% | 71.0% | **70.9%** |
-| degen | **22.1%** | 46.6% | 22.9% | 22.9% |
-| stereo | 27.2% | 31.8% | 26.7% | **26.6%** |
-| **TOTAL** | **39.5%** | 49.4% | 40.9% | 39.8% |
-
-With the certified heuristics (Levinson–Durbin LPC, wasted-bit
-detection, stereo-mode decision, adaptive Rice partitioning), the
-verified encoder's overall ratio **beats `flac -8`** on this corpus
-(39.5% vs 39.8% of raw), winning tonal/waveform/degenerate content and
-trailing slightly on noisy mixes and stereo.
-
-### Speed
-
-Per-file throughput (log scale), sorted slowest→fastest per codec; a
-curve that sits higher is faster. Left: encode. Right: decode (the
-shipped buffered decoder):
+Throughput per file (log scale; higher is faster), encode and decode:
 
 ![Throughput vs libFLAC](bench/performance.png)
 
-Honest reading: Vinyl encodes at ~0.16 MB/s (median; the checked encoder
-re-validates every heuristic certificate) and decodes at ~1.5 MB/s,
-vs libFLAC's ~30–37 MB/s for both. The encoder still runs on the
-proof-oriented `List Bool` bit model and does exhaustive searches;
-performance work is deliberately deferred to M6, *after* the capstone
-makes optimization safe: any faster implementation must re-prove the
-same simulation theorems.
+Per-category tables, how to read the plots in detail, and how to
+regenerate them: [`bench/README.md`](bench/README.md).
 
 ## Building
 
@@ -207,34 +145,81 @@ lake exe flactest   # golden-vector unit tests
 
 `lake build vinyl` produces `.lake/build/bin/vinyl`, a small CLI over the
 verified codec (`vinyl --help` lists the commands). It reads and writes
-raw interleaved **signed 16-bit little-endian** PCM:
+raw interleaved **signed 16-bit little-endian** PCM.
+
+Generate sample `.flac`/`.pcm` pairs to play with (the directory must
+exist; the `.flac` files are real FLAC — any player or tool accepts
+them, e.g. `flac -t` or `ffplay`):
 
 ```sh
-# generate sample .flac/.pcm pairs to play with
+mkdir -p /tmp/vinyl-samples
 lake exe vinyl --samples /tmp/vinyl-samples
-ls /tmp/vinyl-samples          # sine, stereo, wasted-bits, constant, …
+```
 
-# the .flac files are real FLAC — any player/tool accepts them
-flac -t /tmp/vinyl-samples/stereo-corr.flac      # verifies CRCs + MD5
-ffplay /tmp/vinyl-samples/sine-fixed.flac        # plays (mono 44.1 kHz)
+Encode raw PCM (block size 4096, 2 channels) with the verified encoder —
+if this succeeds, the round-trip is guaranteed by theorem — then decode
+(`--decode` is the reference decoder, `--decode-fast` the shipped one)
+and compare:
 
-# encode raw PCM (blockSize 4096, 2 channels) with the verified encoder;
-# if this succeeds, the round-trip is guaranteed by theorem
+```sh
 lake exe vinyl --encode input.pcm out.flac 4096 2
+lake exe vinyl --decode-fast out.flac roundtrip.pcm
+cmp input.pcm roundtrip.pcm
+```
 
-# decode any in-coverage FLAC (bit depths 1-32) — reference or fast decoder
-lake exe vinyl --decode out.flac roundtrip.pcm         # reference decoder
-lake exe vinyl --decode-fast out.flac roundtrip.pcm    # shipped decoder
-cmp input.pcm roundtrip.pcm                      # byte-identical, by theorem
+To make a raw PCM input from any audio file, use ffmpeg or the
+reference `flac` tool:
 
-# make a raw PCM input from any audio file with ffmpeg…
+```sh
 ffmpeg -i song.mp3 -f s16le -acodec pcm_s16le -ac 2 -ar 44100 input.pcm
-# …or from a FLAC file with the reference flac tool
 flac -d --force-raw-format --sign=signed --endian=little -o input.pcm song.flac
 ```
 
 A larger corpus of synthetic test signals (tones, sweeps, noise, stereo
 pairs, …) can be generated with `python3 bench/gen_corpus.py /tmp/corpus`.
+
+## Cross-checking against libFLAC
+
+To see with your own eyes that Vinyl and the reference implementation
+(the `flac` CLI / libFLAC) do the same thing, run the same PCM bytes
+through both codecs, in both directions, and compare byte-for-byte.
+First produce a test signal:
+
+```sh
+mkdir -p /tmp/demo
+lake exe vinyl --samples /tmp/demo
+```
+
+**Direction A** — Vinyl encodes; libFLAC verifies the stream
+(`flac -t` checks CRC-8/16 and the MD5 signature), decodes it, and the
+output must equal the input:
+
+```sh
+lake exe vinyl --encode /tmp/demo/stereo-corr.pcm A.flac 4096 2
+flac -t A.flac
+flac -d -f --force-raw-format --sign=signed --endian=little -o A-libflac.pcm A.flac
+cmp /tmp/demo/stereo-corr.pcm A-libflac.pcm && echo byte-identical
+```
+
+**Direction B** — libFLAC encodes the same signal; Vinyl decodes it,
+and the output must equal the input:
+
+```sh
+flac -f -8 --force-raw-format --sign=signed --endian=little \
+     --channels=2 --bps=16 --sample-rate=44100 -o B.flac /tmp/demo/stereo-corr.pcm
+lake exe vinyl --decode-fast B.flac B-vinyl.pcm
+cmp /tmp/demo/stereo-corr.pcm B-vinyl.pcm && echo byte-identical
+```
+
+The two directions check different things. A shows libFLAC accepts and
+agrees with Vinyl's *encoder* output; B shows Vinyl's *decoder* agrees
+with libFLAC's encoder on a stream Vinyl did not produce. Neither is
+covered by the theorems — they establish interoperability, which is
+exactly why they are tested, not proved. (The Vinyl-encode →
+Vinyl-decode leg in the middle *is* the part guaranteed by
+`decodePcm16_encodePcm16`.) The automated version of this walkthrough,
+run over a batch of signals, is
+[`conformance/smoke.sh`](conformance/smoke.sh).
 
 ## Reading guide
 
@@ -243,5 +228,11 @@ pairs, …) can be generated with `python3 bench/gen_corpus.py /tmp/corpus`.
 - [`PLAN.md`](PLAN.md) — the complete working plan: capstone statement,
   scope, theorem stack, known hard points, fuzzing/conformance rigs,
   milestones.
+- [`COVERAGE.md`](COVERAGE.md) — feature-by-feature RFC 9639 coverage
+  and conformance-corpus results.
+- [`conformance/README.md`](conformance/README.md) — the differential
+  testing and fuzzing rigs against libFLAC.
+- [`bench/README.md`](bench/README.md) — compression and speed
+  benchmarks vs libFLAC, with plots.
 - [`CLAUDE.md`](CLAUDE.md) — contributor/agent workflow rules.
 - [`PROGRESS.md`](PROGRESS.md) — per-session development log.
