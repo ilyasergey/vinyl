@@ -98,4 +98,40 @@ theorem restore_residual (ord : Nat) (xs : List Int) (h : ord ≤ xs.length) :
       headD_take_one, undiff1_diff1 _ hne]
     exact ih (by omega)
 
+/-! ## Array forms compute the list forms -/
+
+private theorem foldl_undiff :
+    ∀ (l : List Int) (pre : Array Int) (x : Int),
+      (l.foldl (fun out d => out.push (out.getD (out.size - 1) 0 + d))
+        (pre.push x)).toList = pre.toList ++ undiff1 x l := by
+  intro l
+  induction l with
+  | nil => intro pre x; simp [undiff1]
+  | cons d ds ih =>
+    intro pre x
+    show (ds.foldl _ ((pre.push x).push ((pre.push x).getD ((pre.push x).size - 1) 0 + d))).toList = _
+    have hget : (pre.push x).getD ((pre.push x).size - 1) 0 = x := by
+      simp [Array.getD, Array.size_push]
+    rw [hget, ih (pre.push x) (x + d)]
+    simp [undiff1]
+
+theorem undiffA_toList (x0 : Int) (ds : Array Int) :
+    (undiffA x0 ds).toList = undiff1 x0 ds.toList := by
+  unfold undiffA
+  rw [← Array.foldl_toList, foldl_undiff ds.toList (Array.emptyWithCapacity (ds.size + 1)) x0]
+  simp
+
+/-- The array restore computes the list restore. -/
+theorem restoreA_toList :
+    ∀ (ord : Nat) (warmup : List Int) (res : Array Int),
+      (restoreA ord warmup res).toList = restore ord warmup res.toList := by
+  intro ord
+  induction ord with
+  | zero => intro w res; rfl
+  | succ ord ih =>
+    intro w res
+    show (restoreA ord (w.take ord) (undiffA ((diffN ord w).headD 0) res)).toList = _
+    rw [ih, undiffA_toList]
+    rfl
+
 end Flac.Fixed

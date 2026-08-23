@@ -71,6 +71,13 @@ def pcmBytes (b : Nat) (chs : List (List Int)) : ByteArray := Id.run do
   let arrs := chs.map (List.toArray ·)
   let n := (arrs.headD #[]).size
   let mut out := ByteArray.emptyWithCapacity (arrs.length * n * w)
+  if w = 2 then
+    -- the 16-bit fast path: two direct pushes per sample
+    for i in [0:n] do
+      for a in arrs do
+        let u := ((a.getD i 0 + m).toNat) &&& 0xFFFF
+        out := (out.push (UInt8.ofNat (u &&& 0xFF))).push (UInt8.ofNat (u >>> 8))
+    return out
   for i in [0:n] do
     for a in arrs do
       let u := ((a.getD i 0 + m).toNat) % mm

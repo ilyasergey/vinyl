@@ -62,51 +62,54 @@ def readRice (k : Nat) (br : BitReader) : Option (Int × BitReader) :=
   | none => none
   | some (u, br) => some (Rice.unzigzag u, br)
 
-def readRiceSeq (k : Nat) : (count : Nat) → BitReader → Option (List Int × BitReader)
-  | 0, br => some ([], br)
-  | count + 1, br =>
+/-- Rice-coded run, accumulated into an array (no per-sample cons). -/
+def readRiceSeqA (k : Nat) : (count : Nat) → BitReader → Array Int →
+    Option (Array Int × BitReader)
+  | 0, br, acc => some (acc, br)
+  | count + 1, br, acc =>
     match readRice k br with
     | none => none
-    | some (x, br) =>
-      match readRiceSeq k count br with
-      | none => none
-      | some (xs, br) => some (x :: xs, br)
+    | some (x, br) => readRiceSeqA k count br (acc.push x)
 
-def readSIntSeq (bits : Nat) : (count : Nat) → BitReader → Option (List Int × BitReader)
-  | 0, br => some ([], br)
-  | count + 1, br =>
+/-- Fixed-width run, accumulated into an array. -/
+def readSIntSeqA (bits : Nat) : (count : Nat) → BitReader → Array Int →
+    Option (Array Int × BitReader)
+  | 0, br, acc => some (acc, br)
+  | count + 1, br, acc =>
     match br.readSInt bits with
     | none => none
-    | some (x, br) =>
-      match readSIntSeq bits count br with
-      | none => none
-      | some (xs, br) => some (x :: xs, br)
+    | some (x, br) => readSIntSeqA bits count br (acc.push x)
 
-/-! ## Partitioned residual -/
-
-def readPart (m : Rice.Method) (count : Nat) (br : BitReader) :
+/-- Fixed-width run as a list (warmup samples and VERBATIM content). -/
+def readSIntSeq (bits count : Nat) (br : BitReader) :
     Option (List Int × BitReader) :=
+  match readSIntSeqA bits count br #[] with
+  | none => none
+  | some (xs, br) => some (xs.toList, br)
+
+/-! ## Partitioned residual (one accumulator across all partitions) -/
+
+def readPartA (m : Rice.Method) (count : Nat) (br : BitReader) (acc : Array Int) :
+    Option (Array Int × BitReader) :=
   match br.readBits m.paramBits with
   | none => none
   | some (k, br) =>
     if k = m.escapeCode then
       match br.readBits 5 with
       | none => none
-      | some (bits, br) => readSIntSeq bits count br
+      | some (bits, br) => readSIntSeqA bits count br acc
     else
-      readRiceSeq k count br
+      readRiceSeqA k count br acc
 
-def readParts (m : Rice.Method) : (sizes : List Nat) → BitReader → Option (List Int × BitReader)
-  | [], br => some ([], br)
-  | sz :: sizes, br =>
-    match readPart m sz br with
+def readPartsA (m : Rice.Method) : (sizes : List Nat) → BitReader → Array Int →
+    Option (Array Int × BitReader)
+  | [], br, acc => some (acc, br)
+  | sz :: sizes, br, acc =>
+    match readPartA m sz br acc with
     | none => none
-    | some (p, br) =>
-      match readParts m sizes br with
-      | none => none
-      | some (ps, br) => some (p ++ ps, br)
+    | some (acc, br) => readPartsA m sizes br acc
 
-def readResidual (bs ord : Nat) (br : BitReader) : Option (List Int × BitReader) :=
+def readResidualA (bs ord : Nat) (br : BitReader) : Option (Array Int × BitReader) :=
   match br.readBits 2 with
   | none => none
   | some (mc, br) =>
@@ -117,7 +120,8 @@ def readResidual (bs ord : Nat) (br : BitReader) : Option (List Int × BitReader
       | none => none
       | some (po, br) =>
         if bs % 2 ^ po = 0 ∧ ord < bs / 2 ^ po then
-          readParts m (Rice.partSizes bs po ord) br
+          readPartsA m (Rice.partSizes bs po ord) br
+            (Array.emptyWithCapacity (bs - ord))
         else none
 
 /-! ## Subframes -/
@@ -133,9 +137,9 @@ def readContent (bs b ty : Nat) (br : BitReader) : Option (List Int × BitReader
     match readSIntSeq b (ty - 8) br with
     | none => none
     | some (warmup, br) =>
-      match readResidual bs (ty - 8) br with
+      match readResidualA bs (ty - 8) br with
       | none => none
-      | some (res, br) => some (Fixed.restore (ty - 8) warmup res, br)
+      | some (res, br) => some ((Fixed.restoreA (ty - 8) warmup res).toList, br)
   else if 32 ≤ ty then
     match readSIntSeq b (ty - 31) br with
     | none => none
@@ -152,10 +156,10 @@ def readContent (bs b ty : Nat) (br : BitReader) : Option (List Int × BitReader
               match readSIntSeq (pm1 + 1) (ty - 31) br with
               | none => none
               | some (cs, br) =>
-                match readResidual bs (ty - 31) br with
+                match readResidualA bs (ty - 31) br with
                 | none => none
                 | some (res, br) =>
-                  some (Lpc.restore cs sh.toNat warmup res, br)
+                  some ((Lpc.restoreA cs sh.toNat warmup res).toList, br)
             else none
   else none
 

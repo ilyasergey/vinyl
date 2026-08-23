@@ -101,52 +101,130 @@ theorem readRice_sim (k : Nat) (br : BitReader) :
   | none => rfl
   | some p => rfl
 
-theorem readRiceSeq_sim (k : Nat) :
+/-- Accumulator normalization: reading into `acc` is reading into `#[]`
+    prepended with `acc`. -/
+theorem readRiceSeqA_acc (k : Nat) :
+    ∀ (count : Nat) (br : BitReader) (acc : Array Int),
+      readRiceSeqA k count br acc
+        = (readRiceSeqA k count br #[]).map (fun p => (acc ++ p.1, p.2)) := by
+  intro count
+  induction count with
+  | zero => intro br acc; simp [readRiceSeqA]
+  | succ count ih =>
+    intro br acc
+    unfold readRiceSeqA
+    cases readRice k br with
+    | none => rfl
+    | some p =>
+      dsimp only
+      rw [ih p.2 (acc.push p.1), ih p.2 (#[].push p.1)]
+      cases readRiceSeqA k count p.2 #[] with
+      | none => rfl
+      | some q =>
+        simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq]
+        refine ⟨Array.toList_inj.mp ?_, trivial⟩
+        simp
+
+theorem readSIntSeqA_acc (bits : Nat) :
+    ∀ (count : Nat) (br : BitReader) (acc : Array Int),
+      readSIntSeqA bits count br acc
+        = (readSIntSeqA bits count br #[]).map (fun p => (acc ++ p.1, p.2)) := by
+  intro count
+  induction count with
+  | zero => intro br acc; simp [readSIntSeqA]
+  | succ count ih =>
+    intro br acc
+    unfold readSIntSeqA
+    cases br.readSInt bits with
+    | none => rfl
+    | some p =>
+      dsimp only
+      rw [ih p.2 (acc.push p.1), ih p.2 (#[].push p.1)]
+      cases readSIntSeqA bits count p.2 #[] with
+      | none => rfl
+      | some q =>
+        simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq]
+        refine ⟨Array.toList_inj.mp ?_, trivial⟩
+        simp
+
+theorem readRiceSeqA_sim (k : Nat) :
     ∀ (count : Nat) (br : BitReader),
       Rice.readRiceSeq k count (toStream br)
-        = (readRiceSeq k count br).map (fun p => (p.1, toStream p.2)) := by
+        = (readRiceSeqA k count br #[]).map (fun p => (p.1.toList, toStream p.2)) := by
   intro count
   induction count with
   | zero => intro br; rfl
   | succ count ih =>
     intro br
-    unfold Rice.readRiceSeq readRiceSeq
+    unfold Rice.readRiceSeq readRiceSeqA
     rw [readRice_sim k br]
     cases readRice k br with
     | none => rfl
     | some p =>
       simp only [Option.map_some]
-      rw [ih p.2]
-      cases readRiceSeq k count p.2 with
+      rw [ih p.2, readRiceSeqA_acc k count p.2 (#[].push p.1)]
+      cases readRiceSeqA k count p.2 #[] with
       | none => rfl
-      | some q => rfl
+      | some q =>
+        simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq]
+        exact ⟨by simp, trivial⟩
 
-theorem readSIntSeq_sim (bits : Nat) :
+theorem readSIntSeqA_sim (bits : Nat) :
     ∀ (count : Nat) (br : BitReader),
       Rice.readSIntSeq bits count (toStream br)
-        = (readSIntSeq bits count br).map (fun p => (p.1, toStream p.2)) := by
+        = (readSIntSeqA bits count br #[]).map (fun p => (p.1.toList, toStream p.2)) := by
   intro count
   induction count with
   | zero => intro br; rfl
   | succ count ih =>
     intro br
-    unfold Rice.readSIntSeq readSIntSeq
+    unfold Rice.readSIntSeq readSIntSeqA
     rw [readSInt_sim bits br]
     cases br.readSInt bits with
     | none => rfl
     | some p =>
       simp only [Option.map_some]
-      rw [ih p.2]
-      cases readSIntSeq bits count p.2 with
+      rw [ih p.2, readSIntSeqA_acc bits count p.2 (#[].push p.1)]
+      cases readSIntSeqA bits count p.2 #[] with
       | none => rfl
-      | some q => rfl
+      | some q =>
+        simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq]
+        exact ⟨by simp, trivial⟩
+
+/-- The list-level wrapper computes the model reader (the statement every
+    caller above the residual layer keeps using). -/
+theorem readSIntSeq_sim (bits : Nat) (count : Nat) (br : BitReader) :
+    Rice.readSIntSeq bits count (toStream br)
+      = (readSIntSeq bits count br).map (fun p => (p.1, toStream p.2)) := by
+  unfold readSIntSeq
+  rw [readSIntSeqA_sim bits count br]
+  cases readSIntSeqA bits count br #[] with
+  | none => rfl
+  | some p => rfl
 
 /-! ## Partitions -/
 
-theorem readPart_sim (m : Rice.Method) (count : Nat) (br : BitReader) :
+theorem readPartA_acc (m : Rice.Method) (count : Nat) (br : BitReader)
+    (acc : Array Int) :
+    readPartA m count br acc
+      = (readPartA m count br #[]).map (fun p => (acc ++ p.1, p.2)) := by
+  unfold readPartA
+  cases br.readBits m.paramBits with
+  | none => rfl
+  | some p =>
+    dsimp only
+    by_cases hk : p.1 = m.escapeCode
+    · rw [if_pos hk, if_pos hk]
+      cases p.2.readBits 5 with
+      | none => rfl
+      | some q => exact readSIntSeqA_acc q.1 count q.2 acc
+    · rw [if_neg hk, if_neg hk]
+      exact readRiceSeqA_acc p.1 count p.2 acc
+
+theorem readPartA_sim (m : Rice.Method) (count : Nat) (br : BitReader) :
     Rice.readPart m count (toStream br)
-      = (readPart m count br).map (fun p => (p.1, toStream p.2)) := by
-  unfold Rice.readPart readPart
+      = (readPartA m count br #[]).map (fun p => (p.1.toList, toStream p.2)) := by
+  unfold Rice.readPart readPartA
   rw [readBits_sim m.paramBits br]
   cases br.readBits m.paramBits with
   | none => rfl
@@ -156,34 +234,59 @@ theorem readPart_sim (m : Rice.Method) (count : Nat) (br : BitReader) :
     · rw [if_pos hk, if_pos hk, readBits_sim 5 p.2]
       cases p.2.readBits 5 with
       | none => rfl
-      | some q => exact readSIntSeq_sim q.1 count q.2
+      | some q => exact readSIntSeqA_sim q.1 count q.2
     · rw [if_neg hk, if_neg hk]
-      exact readRiceSeq_sim p.1 count p.2
+      exact readRiceSeqA_sim p.1 count p.2
 
-theorem readParts_sim (m : Rice.Method) :
+theorem readPartsA_acc (m : Rice.Method) :
+    ∀ (sizes : List Nat) (br : BitReader) (acc : Array Int),
+      readPartsA m sizes br acc
+        = (readPartsA m sizes br #[]).map (fun p => (acc ++ p.1, p.2)) := by
+  intro sizes
+  induction sizes with
+  | nil => intro br acc; simp [readPartsA]
+  | cons sz sizes ih =>
+    intro br acc
+    unfold readPartsA
+    rw [readPartA_acc m sz br acc]
+    cases readPartA m sz br #[] with
+    | none => rfl
+    | some p =>
+      simp only [Option.map_some]
+      rw [ih p.2 (acc ++ p.1), ih p.2 p.1]
+      cases readPartsA m sizes p.2 #[] with
+      | none => rfl
+      | some q =>
+        simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq]
+        refine ⟨Array.toList_inj.mp ?_, trivial⟩
+        simp
+
+theorem readPartsA_sim (m : Rice.Method) :
     ∀ (sizes : List Nat) (br : BitReader),
       Rice.readParts m sizes (toStream br)
-        = (readParts m sizes br).map (fun p => (p.1, toStream p.2)) := by
+        = (readPartsA m sizes br #[]).map (fun p => (p.1.toList, toStream p.2)) := by
   intro sizes
   induction sizes with
   | nil => intro br; rfl
   | cons sz sizes ih =>
     intro br
-    unfold Rice.readParts readParts
-    rw [readPart_sim m sz br]
-    cases readPart m sz br with
+    unfold Rice.readParts readPartsA
+    rw [readPartA_sim m sz br]
+    cases readPartA m sz br #[] with
     | none => rfl
     | some p =>
       simp only [Option.map_some]
-      rw [ih p.2]
-      cases readParts m sizes p.2 with
+      rw [ih p.2, readPartsA_acc m sizes p.2 p.1]
+      cases readPartsA m sizes p.2 #[] with
       | none => rfl
-      | some q => rfl
+      | some q =>
+        simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq]
+        exact ⟨by simp, trivial⟩
 
-theorem readResidual_sim (bs ord : Nat) (br : BitReader) :
+theorem readResidualA_sim (bs ord : Nat) (br : BitReader) :
     Rice.readResidual bs ord (toStream br)
-      = (readResidual bs ord br).map (fun p => (p.1, toStream p.2)) := by
-  unfold Rice.readResidual readResidual
+      = (readResidualA bs ord br).map (fun p => (p.1.toList, toStream p.2)) := by
+  unfold Rice.readResidual readResidualA
   rw [readBits_sim 2 br]
   cases br.readBits 2 with
   | none => rfl
@@ -198,8 +301,8 @@ theorem readResidual_sim (bs ord : Nat) (br : BitReader) :
       | some q =>
         simp only [Option.map_some]
         by_cases hc : bs % 2 ^ q.1 = 0 ∧ ord < bs / 2 ^ q.1
-        · rw [if_pos hc, if_pos hc]
-          exact readParts_sim m _ q.2
+        · rw [if_pos hc, if_pos hc, Array.emptyWithCapacity_eq]
+          exact readPartsA_sim m _ q.2
         · rw [if_neg hc, if_neg hc]
           rfl
 
@@ -223,10 +326,10 @@ theorem readContent_sim (bs b ty : Nat) (br : BitReader) :
     | none => rfl
     | some p =>
       simp only [Option.map_some]
-      rw [readResidual_sim bs (ty - 8) p.2]
-      cases readResidual bs (ty - 8) p.2 with
+      rw [readResidualA_sim bs (ty - 8) p.2]
+      cases readResidualA bs (ty - 8) p.2 with
       | none => rfl
-      | some q => rfl
+      | some q => simp only [Option.map_some, Fixed.restoreA_toList]
   rw [if_neg h2, if_neg h2]
   by_cases h3 : 32 ≤ ty
   · rw [if_pos h3, if_pos h3, readSIntSeq_sim b (ty - 31) br]
@@ -253,10 +356,10 @@ theorem readContent_sim (bs b ty : Nat) (br : BitReader) :
               | none => rfl
               | some u =>
                 simp only [Option.map_some]
-                rw [readResidual_sim bs (ty - 31) u.2]
-                cases readResidual bs (ty - 31) u.2 with
+                rw [readResidualA_sim bs (ty - 31) u.2]
+                cases readResidualA bs (ty - 31) u.2 with
                 | none => rfl
-                | some w => rfl
+                | some w => simp only [Option.map_some, Lpc.restoreA_toList]
             · rw [if_neg h5, if_neg h5]
               rfl
   · rw [if_neg h3, if_neg h3]
@@ -354,60 +457,6 @@ theorem posOK_readRice (k : Nat) : PosOK (readRice k) := by
     subst hbr
     exact posOK_readRiceNat k br u _ hwf h1
 
-theorem posOK_readRiceSeq (k : Nat) : ∀ (count : Nat), PosOK (readRiceSeq k count) := by
-  intro count
-  induction count with
-  | zero =>
-    intro br a br' hwf h
-    simp only [readRiceSeq, Option.some.injEq, Prod.mk.injEq] at h
-    obtain ⟨-, hbr⟩ := h
-    subst hbr
-    exact ⟨rfl, by omega, hwf⟩
-  | succ count ih =>
-    intro br a br' hwf h
-    unfold readRiceSeq at h
-    match h1 : readRice k br with
-    | none => rw [h1] at h; simp at h
-    | some (x, br1) =>
-      simp only [h1] at h
-      match h2 : readRiceSeq k count br1 with
-      | none => rw [h2] at h; simp at h
-      | some (xs, br2) =>
-        simp only [h2, Option.some.injEq, Prod.mk.injEq] at h
-        obtain ⟨-, hbr⟩ := h
-        subst hbr
-        obtain ⟨d1, p1, b1⟩ := posOK_readRice k br x br1 hwf h1
-        obtain ⟨d2, p2, b2⟩ := ih br1 xs _ (by rw [size_congr d1]; omega) h2
-        rw [size_congr d1] at b2
-        exact ⟨by rw [d2, d1], by omega, b2⟩
-
-theorem posOK_readSIntSeq (bits : Nat) : ∀ (count : Nat), PosOK (readSIntSeq bits count) := by
-  intro count
-  induction count with
-  | zero =>
-    intro br a br' hwf h
-    simp only [readSIntSeq, Option.some.injEq, Prod.mk.injEq] at h
-    obtain ⟨-, hbr⟩ := h
-    subst hbr
-    exact ⟨rfl, by omega, hwf⟩
-  | succ count ih =>
-    intro br a br' hwf h
-    unfold readSIntSeq at h
-    match h1 : br.readSInt bits with
-    | none => rw [h1] at h; simp at h
-    | some (x, br1) =>
-      simp only [h1] at h
-      match h2 : readSIntSeq bits count br1 with
-      | none => rw [h2] at h; simp at h
-      | some (xs, br2) =>
-        simp only [h2, Option.some.injEq, Prod.mk.injEq] at h
-        obtain ⟨-, hbr⟩ := h
-        subst hbr
-        obtain ⟨d1, p1, b1⟩ := posOK_readSInt bits br x br1 hwf h1
-        obtain ⟨d2, p2, b2⟩ := ih br1 xs _ (by rw [size_congr d1]; omega) h2
-        rw [size_congr d1] at b2
-        exact ⟨by rw [d2, d1], by omega, b2⟩
-
 /-- Sequencing step for `PosOK` proofs: chain two position facts. -/
 theorem posOK_step {br br1 br' : BitReader}
     (h1 : br1.data = br.data ∧ br.pos ≤ br1.pos ∧ br1.pos ≤ br.size)
@@ -418,9 +467,66 @@ theorem posOK_step {br br1 br' : BitReader}
   rw [size_congr d1] at b2
   exact ⟨by rw [d2, d1], by omega, b2⟩
 
-theorem posOK_readPart (m : Rice.Method) (count : Nat) : PosOK (readPart m count) := by
+theorem posOK_readRiceSeqA (k : Nat) :
+    ∀ (count : Nat) (acc : Array Int),
+      PosOK (fun br => readRiceSeqA k count br acc) := by
+  intro count
+  induction count with
+  | zero =>
+    intro acc br a br' hwf h
+    simp only [readRiceSeqA, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨-, hbr⟩ := h
+    subst hbr
+    exact ⟨rfl, by omega, hwf⟩
+  | succ count ih =>
+    intro acc br a br' hwf h
+    simp only [readRiceSeqA] at h
+    match h1 : readRice k br with
+    | none => rw [h1] at h; simp at h
+    | some (x, br1) =>
+      simp only [h1] at h
+      have s1 := posOK_readRice k br x br1 hwf h1
+      exact posOK_step s1
+        (ih (acc.push x) br1 a br' (by rw [size_congr s1.1]; omega) h)
+
+theorem posOK_readSIntSeqA (bits : Nat) :
+    ∀ (count : Nat) (acc : Array Int),
+      PosOK (fun br => readSIntSeqA bits count br acc) := by
+  intro count
+  induction count with
+  | zero =>
+    intro acc br a br' hwf h
+    simp only [readSIntSeqA, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨-, hbr⟩ := h
+    subst hbr
+    exact ⟨rfl, by omega, hwf⟩
+  | succ count ih =>
+    intro acc br a br' hwf h
+    simp only [readSIntSeqA] at h
+    match h1 : br.readSInt bits with
+    | none => rw [h1] at h; simp at h
+    | some (x, br1) =>
+      simp only [h1] at h
+      have s1 := posOK_readSInt bits br x br1 hwf h1
+      exact posOK_step s1
+        (ih (acc.push x) br1 a br' (by rw [size_congr s1.1]; omega) h)
+
+theorem posOK_readSIntSeq (bits : Nat) : ∀ (count : Nat), PosOK (readSIntSeq bits count) := by
+  intro count br a br' hwf h
+  unfold readSIntSeq at h
+  match h1 : readSIntSeqA bits count br #[] with
+  | none => rw [h1] at h; simp at h
+  | some (xs, br1) =>
+    rw [h1] at h
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨-, hbr⟩ := h
+    subst hbr
+    exact posOK_readSIntSeqA bits count #[] br xs _ hwf h1
+
+theorem posOK_readPartA (m : Rice.Method) (count : Nat) (acc : Array Int) :
+    PosOK (fun br => readPartA m count br acc) := by
   intro br a br' hwf h
-  unfold readPart at h
+  simp only [readPartA] at h
   match h1 : br.readBits m.paramBits with
   | none => rw [h1] at h; simp at h
   | some (k, br1) =>
@@ -432,43 +538,37 @@ theorem posOK_readPart (m : Rice.Method) (count : Nat) : PosOK (readPart m count
       | some (bits, br2) =>
         simp only [h2] at h
         have s2 := posOK_readBits 5 br1 bits br2 (by rw [size_congr s1.1]; omega) h2
-        have s3 := posOK_readSIntSeq bits count br2 a br'
+        have s3 := posOK_readSIntSeqA bits count acc br2 a br'
           (by rw [size_congr s2.1, size_congr s1.1]
               rw [size_congr s1.1] at s2
               omega) h
         exact posOK_step s1 (posOK_step s2 s3)
-    · exact posOK_step s1 (posOK_readRiceSeq k count br1 a br'
+    · exact posOK_step s1 (posOK_readRiceSeqA k count acc br1 a br'
         (by rw [size_congr s1.1]; omega) h)
 
-theorem posOK_readParts (m : Rice.Method) :
-    ∀ sizes, PosOK (readParts m sizes) := by
+theorem posOK_readPartsA (m : Rice.Method) :
+    ∀ sizes (acc : Array Int), PosOK (fun br => readPartsA m sizes br acc) := by
   intro sizes
   induction sizes with
   | nil =>
-    intro br a br' hwf h
-    simp only [readParts, Option.some.injEq, Prod.mk.injEq] at h
+    intro acc br a br' hwf h
+    simp only [readPartsA, Option.some.injEq, Prod.mk.injEq] at h
     obtain ⟨-, hbr⟩ := h
     subst hbr
     exact ⟨rfl, by omega, hwf⟩
   | cons sz sizes ih =>
-    intro br a br' hwf h
-    unfold readParts at h
-    match h1 : readPart m sz br with
+    intro acc br a br' hwf h
+    simp only [readPartsA] at h
+    match h1 : readPartA m sz br acc with
     | none => rw [h1] at h; simp at h
-    | some (pp, br1) =>
+    | some (acc1, br1) =>
       simp only [h1] at h
-      have s1 := posOK_readPart m sz br pp br1 hwf h1
-      match h2 : readParts m sizes br1 with
-      | none => rw [h2] at h; simp at h
-      | some (ps, br2) =>
-        simp only [h2, Option.some.injEq, Prod.mk.injEq] at h
-        obtain ⟨-, hbr⟩ := h
-        subst hbr
-        exact posOK_step s1 (ih br1 ps _ (by rw [size_congr s1.1]; omega) h2)
+      have s1 := posOK_readPartA m sz acc br acc1 br1 hwf h1
+      exact posOK_step s1 (ih acc1 br1 a br' (by rw [size_congr s1.1]; omega) h)
 
-theorem posOK_readResidual (bs ord : Nat) : PosOK (readResidual bs ord) := by
+theorem posOK_readResidualA (bs ord : Nat) : PosOK (readResidualA bs ord) := by
   intro br a br' hwf h
-  unfold readResidual at h
+  unfold readResidualA at h
   match h1 : br.readBits 2 with
   | none => rw [h1] at h; simp at h
   | some (mc, br1) =>
@@ -484,7 +584,7 @@ theorem posOK_readResidual (bs ord : Nat) : PosOK (readResidual bs ord) := by
         simp only [h2] at h
         have s2 := posOK_readBits 4 br1 po br2 (by rw [size_congr s1.1]; omega) h2
         split at h
-        · refine posOK_step s1 (posOK_step s2 (posOK_readParts m _ br2 a br' ?_ h))
+        · refine posOK_step s1 (posOK_step s2 (posOK_readPartsA m _ _ br2 a br' ?_ h))
           rw [size_congr s2.1, size_congr s1.1]
           rw [size_congr s1.1] at s2
           omega
@@ -509,13 +609,13 @@ theorem posOK_readContent (bs b ty : Nat) : PosOK (readContent bs b ty) := by
     | some (warm, br1) =>
       simp only [h1] at h
       have s1 := posOK_readSIntSeq b (ty - 8) br warm br1 hwf h1
-      match h2 : readResidual bs (ty - 8) br1 with
+      match h2 : readResidualA bs (ty - 8) br1 with
       | none => rw [h2] at h; simp at h
       | some (res, br2) =>
         simp only [h2, Option.some.injEq, Prod.mk.injEq] at h
         obtain ⟨-, hbr⟩ := h
         subst hbr
-        exact posOK_step s1 (posOK_readResidual bs (ty - 8) br1 res _
+        exact posOK_step s1 (posOK_readResidualA bs (ty - 8) br1 res _
           (by rw [size_congr s1.1]; omega) h2)
   split at h
   · match h1 : readSIntSeq b (ty - 31) br with
@@ -548,13 +648,13 @@ theorem posOK_readContent (bs b ty : Nat) : PosOK (readContent bs b ty) := by
               | some (cs, br4) =>
                 simp only [h4] at h
                 have s4 := posOK_readSIntSeq (pm1 + 1) (ty - 31) br3 cs br4 hw3 h4
-                match h5 : readResidual bs (ty - 31) br4 with
+                match h5 : readResidualA bs (ty - 31) br4 with
                 | none => rw [h5] at h; simp at h
                 | some (res, br5) =>
                   simp only [h5, Option.some.injEq, Prod.mk.injEq] at h
                   obtain ⟨-, hbr⟩ := h
                   subst hbr
-                  have s5 := posOK_readResidual bs (ty - 31) br4 res _
+                  have s5 := posOK_readResidualA bs (ty - 31) br4 res _
                     (by rw [size_congr s4.1]; omega) h5
                   exact posOK_step s1 (posOK_step s2 (posOK_step s3 (posOK_step s4 s5)))
             · simp at h

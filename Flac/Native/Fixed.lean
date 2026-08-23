@@ -37,4 +37,22 @@ def restore : (ord : Nat) → (warmup : List Int) → (res : List Int) → List 
   | ord + 1, warmup, res =>
     restore ord (warmup.take ord) (undiff1 ((diffN ord warmup).headD 0) res)
 
+/-! ### Array forms (the production decoder's hot path)
+
+Residuals arrive as an `Array Int`; the undifferencing passes run as array
+folds and are proven equal to the list forms in `Flac.Spec.Fixed`
+(`restoreA_toList`). The tiny warmup stays a list. -/
+
+/-- `undiff1` over an array residual: running prefix sums pushed after
+    `x0`. -/
+def undiffA (x0 : Int) (ds : Array Int) : Array Int :=
+  ds.foldl (fun out d => out.push (out.getD (out.size - 1) 0 + d))
+    ((Array.emptyWithCapacity (ds.size + 1)).push x0)
+
+/-- `restore` with the residual (and result) as arrays. -/
+def restoreA : (ord : Nat) → (warmup : List Int) → (res : Array Int) → Array Int
+  | 0, _, res => res
+  | ord + 1, warmup, res =>
+    restoreA ord (warmup.take ord) (undiffA ((diffN ord warmup).headD 0) res)
+
 end Flac.Fixed

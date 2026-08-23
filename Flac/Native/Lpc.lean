@@ -55,4 +55,30 @@ def restoreAux (cs : List Int) (shift : Nat) (hist : List Int) :
 def restore (cs : List Int) (shift : Nat) (warmup res : List Int) : List Int :=
   warmup ++ restoreAux cs shift warmup.reverse res
 
+/-! ### Array forms (the production decoder's hot path)
+
+The decoded prefix lives in one growing array; the prediction indexes it
+from the end instead of consing a reversed history per sample. Proven
+equal to the list forms in `Flac.Spec.Lpc` (`restoreA_toList`). -/
+
+/-- `dot cs hist` where the history is `out[i], out[i-1], …, out[0]` —
+    the decoded prefix walked from the end, most recent first (stopping at
+    index 0 exactly like `dot`'s zip truncation). -/
+def dotA : List Int → Array Int → Nat → Int
+  | [], _, _ => 0
+  | c :: _, out, 0 => c * out.getD 0 0
+  | c :: cs, out, i + 1 => c * out.getD (i + 1) 0 + dotA cs out i
+
+/-- `predict` against the tail of the decoded prefix. -/
+def predictA (cs : List Int) (shift : Nat) (out : Array Int) : Int :=
+  sar (dotA cs out (out.size - 1)) shift
+
+/-- `restore` with the residual (and result) as arrays: the array is both
+    the accumulating output and the prediction history. Callers guarantee
+    `cs.length ≤ warmup.length` (the subframe grammar always does). -/
+def restoreA (cs : List Int) (shift : Nat) (warmup : List Int) (res : Array Int) :
+    Array Int :=
+  res.foldl (fun out r => out.push (r + predictA cs shift out))
+    ((Array.emptyWithCapacity (warmup.length + res.size)) ++ warmup.toArray)
+
 end Flac.Lpc
