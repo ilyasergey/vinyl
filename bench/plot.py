@@ -41,8 +41,8 @@ STYLE = {
     "flac -8": dict(color="#334155", marker="v", lw=1.6),
 }
 
-# ── compression: cactus + category bars ─────────────────────────────────
-fig, (ax1, ax3) = plt.subplots(1, 2, figsize=(11, 4.6), dpi=150)
+# ── compression: cactus above, category bars below ──────────────────────
+fig, (ax1, ax3) = plt.subplots(2, 1, figsize=(8.5, 9), dpi=150)
 
 for enc in STYLE:
     if enc not in ratio:
