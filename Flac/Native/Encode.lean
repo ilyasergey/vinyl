@@ -111,11 +111,17 @@ def partitionSearchF (bs ord : Nat) (res : Array Int) : Nat × Array Nat × Nat 
     if bs % p2 po = 0 ∧ ord < bs / p2 po then
       pomax := po
   let cF := bs / p2 pomax
-  let mut sums : Array Nat := Array.replicate (p2 pomax) 0
+  let mut sums : Array Nat := Array.emptyWithCapacity (p2 pomax)
+  let mut acc := 0
+  let mut left := cF - ord
   for i in [0 : res.size] do
     let x := res.getD i 0
-    let u := if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1
-    sums := sums.modify ((i + ord) / cF) (· + u)
+    acc := acc + (if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1)
+    left := left - 1
+    if left = 0 then
+      sums := sums.push acc
+      acc := 0
+      left := cF
   let mut best : Nat × Array Nat × Nat := (0, #[], 0)
   for po in [0 : pomax + 1] do
     let c := bs / p2 po
@@ -144,16 +150,20 @@ def diffArr (xs : Array Int) : Array Int := Id.run do
     out := out.push (xs.getD i 0 - xs.getD (i - 1) 0)
   return out
 
-/-- LPC residual (`Lpc.residual` over arrays): first `cs.size` samples
-    are warmup, the rest are `x[n] - (Σ cs[i]·x[n-1-i]) >>ₐ shift`. -/
-def lpcResidualArr (cs : Array Int) (shift : Nat) (xs : Array Int) : Array Int := Id.run do
-  let ord := cs.size
+/-- LPC residual (`Lpc.residual` over arrays): first `cs.length` samples
+    are warmup, the rest are `x[n] - (Σ cs[i]·x[n-1-i]) >>ₐ shift`.
+    The coefficients stay a (short) list — walking it costs no bounds
+    check per multiply. -/
+def lpcResidualArr (cs : List Int) (shift : Nat) (xs : Array Int) : Array Int := Id.run do
+  let ord := cs.length
   if xs.size ≤ ord then return #[]
   let mut out := Array.emptyWithCapacity (xs.size - ord)
   for i in [ord : xs.size] do
     let mut s : Int := 0
-    for j in [0 : ord] do
-      s := s + cs.getD j 0 * xs.getD (i - 1 - j) 0
+    let mut j := i
+    for c in cs do
+      j := j - 1
+      s := s + c * xs.getD j 0
     out := out.push (xs.getD i 0 - sar s shift)
   return out
 
@@ -187,7 +197,7 @@ def lpcSearchF (b : Nat) (blk : Array Int) :
   for ord in [1, 2, 4, 6, 8] do
     if ord < blk.size then
       let (cs, shift) := Heuristics.quantizeCoefs (Heuristics.levinson r ord).toList 12
-      let (po, ks, rcost) := partitionSearchF blk.size ord (lpcResidualArr cs.toArray shift blk)
+      let (po, ks, rcost) := partitionSearchF blk.size ord (lpcResidualArr cs shift blk)
       let cost := ord * b + 9 + ord * 12 + rcost
       match best with
       | some (_, c) => if cost < c then best := some ((cs, shift, po, ks), cost)
@@ -293,7 +303,7 @@ def pushSubframe (bw : BitWriter) (b : Nat) (blk : Array Int) : BitWriter := Id.
     w := (w.push 4 (12 - 1)).pushSInt 5 (shift : Int)
     for cf in cs do
       w := w.pushSInt 12 cf
-    return pushResidual w scaled.size ord po ks (lpcResidualArr cs.toArray shift scaled)
+    return pushResidual w scaled.size ord po ks (lpcResidualArr cs shift scaled)
 
 def sumAbsArr (xs : Array Int) : Nat :=
   xs.foldl (fun a x => a + x.natAbs) 0
@@ -337,12 +347,23 @@ def pushFrame (bw : BitWriter) (b : Nat) (strat : Bool) (num : Nat)
   w := w.align
   return w.push 16 (Crc.crc16 (w.buf.extract start w.buf.size)).toNat
 
+/-- One frame into its own buffer (frames are byte-aligned and
+    self-contained, so they can be encoded independently). -/
+def frameBytes (blockSize : Nat) (bps : Nat) (varBlk : Bool)
+    (chs : Array (Array Int)) (n f : Nat) : ByteArray :=
+  let lo := f * blockSize
+  let hi := min (lo + blockSize) n
+  (pushFrame (BitWriter.empty ((hi - lo) * chs.size * 2 + 64)) bps varBlk
+    (if varBlk then f * blockSize else f) (chs.map (·.extract lo hi))).buf
+
 /-- The full stream: `fLaC` marker, STREAMINFO, frames — the exact
-    layout of `Stream.writeStream` under the default heuristics. -/
+    layout of `Stream.writeStream` under the default heuristics. Frames
+    are encoded in parallel (`Task` per frame) and concatenated in order,
+    so the output is byte-for-byte what the serial encoder writes. -/
 def encodeArrays (blockSize : Nat) (varBlk : Bool) (chs : Array (Array Int))
     (bps sr : Nat) (md5 : ByteArray) : ByteArray := Id.run do
   let n := (chs.getD 0 #[]).size
-  let mut w := BitWriter.empty (n * chs.size + 1024)
+  let mut w := BitWriter.empty 64
   w := w.push 32 0x664C6143
   w := ((w.push 1 1).push 7 0).push 24 34
   w := (w.push 16 blockSize).push 16 blockSize
@@ -352,12 +373,12 @@ def encodeArrays (blockSize : Nat) (varBlk : Bool) (chs : Array (Array Int))
   for byte in md5.toList do
     w := w.push 8 byte.toNat
   if blockSize = 0 then return w.buf
-  for f in [0 : (n + blockSize - 1) / blockSize] do
-    let lo := f * blockSize
-    let hi := min (lo + blockSize) n
-    w := pushFrame w bps varBlk (if varBlk then f * blockSize else f)
-      (chs.map (·.extract lo hi))
-  return w.buf
+  let tasks := (List.range ((n + blockSize - 1) / blockSize)).map fun f =>
+    Task.spawn fun _ => frameBytes blockSize bps varBlk chs n f
+  let mut out := w.buf
+  for t in tasks do
+    out := out ++ t.get
+  return out
 
 /-! ## 16-bit PCM entry point -/
 

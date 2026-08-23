@@ -101,6 +101,117 @@ theorem readRice_sim (k : Nat) (br : BitReader) :
   | none => rfl
   | some p => rfl
 
+/-! ### The fused sequence readers compute the reader-chain forms -/
+
+/-- `readRice` unrolled to raw bit positions. -/
+private theorem readRice_pos (k : Nat) (d : ByteArray) (pos : Nat) :
+    readRice k ⟨d, pos⟩
+      = match readUnaryGo d 0 pos (8 * d.size - pos) with
+        | none => none
+        | some (q, pos1) =>
+          if k = 0 then some (Rice.unzigzag q, (⟨d, pos1⟩ : BitReader))
+          else if pos1 + k ≤ 8 * d.size then
+            some (Rice.unzigzag (q * p2 k + extractBitsFast d pos1 k),
+              (⟨d, pos1 + k⟩ : BitReader))
+          else none := by
+  unfold readRice readRiceNat BitReader.readUnary
+  dsimp only [BitReader.remaining, BitReader.size]
+  cases readUnaryGo d 0 pos (8 * d.size - pos) with
+  | none => rfl
+  | some p =>
+    dsimp only
+    unfold BitReader.readBits
+    dsimp only [BitReader.size]
+    by_cases hk : k = 0
+    · rw [if_pos hk, if_pos hk, hk]
+      dsimp only
+      rw [show p.1 * p2 0 + 0 = p.1 from by simp]
+    · rw [if_neg hk, if_neg hk]
+      by_cases hb : p.2 + k ≤ 8 * d.size
+      · simp only [hb, if_true]
+      · simp only [hb, if_false]
+
+/-- `readSInt` unrolled to raw bit positions. -/
+private theorem readSInt_pos (bits : Nat) (d : ByteArray) (pos : Nat) :
+    BitReader.readSInt bits ⟨d, pos⟩
+      = (if bits = 0 then some ((0 : Int), (⟨d, pos⟩ : BitReader))
+         else if pos + bits ≤ 8 * d.size then
+           some ((if 2 * extractBitsFast d pos bits < p2 bits then
+               ((extractBitsFast d pos bits : Nat) : Int)
+             else ((extractBitsFast d pos bits : Nat) : Int)
+               - ((p2 bits : Nat) : Int)), ⟨d, pos + bits⟩)
+         else none) := by
+  unfold BitReader.readSInt BitReader.readBits
+  dsimp only [BitReader.size]
+  by_cases hz : bits = 0
+  · rw [if_pos hz, if_pos hz, hz]
+    dsimp only
+    rw [if_pos (by simp)]
+    rfl
+  · rw [if_neg hz, if_neg hz]
+    by_cases hb : pos + bits ≤ 8 * d.size
+    · simp only [hb, if_true]
+    · simp only [hb, if_false]
+
+theorem readRiceSeqFast_eq (k : Nat) :
+    ∀ (count : Nat) (br : BitReader) (acc : Array Int),
+      readRiceSeqFast k count br acc = readRiceSeqA k count br acc := by
+  intro count
+  induction count with
+  | zero => intro br acc; rfl
+  | succ count ih =>
+    intro br acc
+    obtain ⟨d, pos⟩ := br
+    unfold readRiceSeqFast readRiceSeqGo readRiceSeqA
+    dsimp only
+    rw [readRice_pos]
+    cases readUnaryGo d 0 pos (8 * d.size - pos) with
+    | none => rfl
+    | some p =>
+      dsimp only
+      by_cases hk : k = 0
+      · rw [if_pos hk, if_pos hk]
+        have h := ih ⟨d, p.2⟩ (acc.push (Rice.unzigzag p.1))
+        unfold readRiceSeqFast at h
+        exact h
+      · rw [if_neg hk, if_neg hk]
+        by_cases hb : p.2 + k ≤ 8 * d.size
+        · simp only [hb, if_true]
+          have h := ih ⟨d, p.2 + k⟩
+            (acc.push (Rice.unzigzag (p.1 * p2 k + extractBitsFast d p.2 k)))
+          unfold readRiceSeqFast at h
+          exact h
+        · simp only [hb, if_false]
+
+theorem readSIntSeqFast_eq (bits : Nat) :
+    ∀ (count : Nat) (br : BitReader) (acc : Array Int),
+      readSIntSeqFast bits count br acc = readSIntSeqA bits count br acc := by
+  intro count
+  induction count with
+  | zero => intro br acc; rfl
+  | succ count ih =>
+    intro br acc
+    obtain ⟨d, pos⟩ := br
+    unfold readSIntSeqFast readSIntSeqGo readSIntSeqA
+    dsimp only
+    rw [readSInt_pos]
+    by_cases hz : bits = 0
+    · rw [if_pos hz, if_pos hz]
+      have h := ih ⟨d, pos⟩ (acc.push 0)
+      unfold readSIntSeqFast at h
+      exact h
+    · rw [if_neg hz, if_neg hz]
+      by_cases hb : pos + bits ≤ 8 * d.size
+      · simp only [hb, if_true]
+        have h := ih ⟨d, pos + bits⟩
+          (acc.push (if 2 * extractBitsFast d pos bits < p2 bits then
+              ((extractBitsFast d pos bits : Nat) : Int)
+            else ((extractBitsFast d pos bits : Nat) : Int)
+              - ((p2 bits : Nat) : Int)))
+        unfold readSIntSeqFast at h
+        exact h
+      · simp only [hb, if_false]
+
 /-- Accumulator normalization: reading into `acc` is reading into `#[]`
     prepended with `acc`. -/
 theorem readRiceSeqA_acc (k : Nat) :
@@ -197,6 +308,7 @@ theorem readSIntSeq_sim (bits : Nat) (count : Nat) (br : BitReader) :
     Rice.readSIntSeq bits count (toStream br)
       = (readSIntSeq bits count br).map (fun p => (p.1, toStream p.2)) := by
   unfold readSIntSeq
+  simp only [readSIntSeqFast_eq]
   rw [readSIntSeqA_sim bits count br]
   cases readSIntSeqA bits count br #[] with
   | none => rfl
@@ -209,6 +321,7 @@ theorem readPartA_acc (m : Rice.Method) (count : Nat) (br : BitReader)
     readPartA m count br acc
       = (readPartA m count br #[]).map (fun p => (acc ++ p.1, p.2)) := by
   unfold readPartA
+  simp only [readRiceSeqFast_eq, readSIntSeqFast_eq]
   cases br.readBits m.paramBits with
   | none => rfl
   | some p =>
@@ -225,6 +338,7 @@ theorem readPartA_sim (m : Rice.Method) (count : Nat) (br : BitReader) :
     Rice.readPart m count (toStream br)
       = (readPartA m count br #[]).map (fun p => (p.1.toList, toStream p.2)) := by
   unfold Rice.readPart readPartA
+  simp only [readRiceSeqFast_eq, readSIntSeqFast_eq]
   rw [readBits_sim m.paramBits br]
   cases br.readBits m.paramBits with
   | none => rfl
@@ -514,6 +628,7 @@ theorem posOK_readSIntSeqA (bits : Nat) :
 theorem posOK_readSIntSeq (bits : Nat) : ∀ (count : Nat), PosOK (readSIntSeq bits count) := by
   intro count br a br' hwf h
   unfold readSIntSeq at h
+  simp only [readSIntSeqFast_eq] at h
   match h1 : readSIntSeqA bits count br #[] with
   | none => rw [h1] at h; simp at h
   | some (xs, br1) =>
@@ -526,7 +641,7 @@ theorem posOK_readSIntSeq (bits : Nat) : ∀ (count : Nat), PosOK (readSIntSeq b
 theorem posOK_readPartA (m : Rice.Method) (count : Nat) (acc : Array Int) :
     PosOK (fun br => readPartA m count br acc) := by
   intro br a br' hwf h
-  simp only [readPartA] at h
+  simp only [readPartA, readRiceSeqFast_eq, readSIntSeqFast_eq] at h
   match h1 : br.readBits m.paramBits with
   | none => rw [h1] at h; simp at h
   | some (k, br1) =>

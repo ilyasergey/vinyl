@@ -62,7 +62,10 @@ def readRice (k : Nat) (br : BitReader) : Option (Int × BitReader) :=
   | none => none
   | some (u, br) => some (Rice.unzigzag u, br)
 
-/-- Rice-coded run, accumulated into an array (no per-sample cons). -/
+/-- Rice-coded run, accumulated into an array (no per-sample cons). This
+    is the specification form; the reader runs `readRiceSeqGo` (raw bit
+    positions, no intermediate `Option (_ × BitReader)` per sample),
+    proven equal by `Flac.Spec.Decode.readRiceSeqFast_eq`. -/
 def readRiceSeqA (k : Nat) : (count : Nat) → BitReader → Array Int →
     Option (Array Int × BitReader)
   | 0, br, acc => some (acc, br)
@@ -71,7 +74,29 @@ def readRiceSeqA (k : Nat) : (count : Nat) → BitReader → Array Int →
     | none => none
     | some (x, br) => readRiceSeqA k count br (acc.push x)
 
-/-- Fixed-width run, accumulated into an array. -/
+/-- The fused Rice run: unary + remainder straight off the byte buffer. -/
+def readRiceSeqGo (d : ByteArray) (k : Nat) : (count : Nat) → (pos : Nat) →
+    Array Int → Option (Array Int × Nat)
+  | 0, pos, acc => some (acc, pos)
+  | count + 1, pos, acc =>
+    match readUnaryGo d 0 pos (8 * d.size - pos) with
+    | none => none
+    | some (q, pos1) =>
+      if k = 0 then
+        readRiceSeqGo d k count pos1 (acc.push (Rice.unzigzag q))
+      else if pos1 + k ≤ 8 * d.size then
+        readRiceSeqGo d k count (pos1 + k)
+          (acc.push (Rice.unzigzag (q * p2 k + extractBitsFast d pos1 k)))
+      else none
+
+@[inline] def readRiceSeqFast (k count : Nat) (br : BitReader) (acc : Array Int) :
+    Option (Array Int × BitReader) :=
+  match readRiceSeqGo br.data k count br.pos acc with
+  | none => none
+  | some (a, pos) => some (a, ⟨br.data, pos⟩)
+
+/-- Fixed-width run, accumulated into an array (specification form; the
+    reader runs `readSIntSeqGo`). -/
 def readSIntSeqA (bits : Nat) : (count : Nat) → BitReader → Array Int →
     Option (Array Int × BitReader)
   | 0, br, acc => some (acc, br)
@@ -80,10 +105,29 @@ def readSIntSeqA (bits : Nat) : (count : Nat) → BitReader → Array Int →
     | none => none
     | some (x, br) => readSIntSeqA bits count br (acc.push x)
 
+/-- The fused fixed-width run, straight off the byte buffer. -/
+def readSIntSeqGo (d : ByteArray) (bits : Nat) : (count : Nat) → (pos : Nat) →
+    Array Int → Option (Array Int × Nat)
+  | 0, pos, acc => some (acc, pos)
+  | count + 1, pos, acc =>
+    if bits = 0 then
+      readSIntSeqGo d bits count pos (acc.push 0)
+    else if pos + bits ≤ 8 * d.size then
+      let v := extractBitsFast d pos bits
+      readSIntSeqGo d bits count (pos + bits)
+        (acc.push (if 2 * v < p2 bits then (v : Int) else (v : Int) - ((p2 bits : Nat) : Int)))
+    else none
+
+@[inline] def readSIntSeqFast (bits count : Nat) (br : BitReader) (acc : Array Int) :
+    Option (Array Int × BitReader) :=
+  match readSIntSeqGo br.data bits count br.pos acc with
+  | none => none
+  | some (a, pos) => some (a, ⟨br.data, pos⟩)
+
 /-- Fixed-width run as a list (warmup samples and VERBATIM content). -/
 def readSIntSeq (bits count : Nat) (br : BitReader) :
     Option (List Int × BitReader) :=
-  match readSIntSeqA bits count br #[] with
+  match readSIntSeqFast bits count br #[] with
   | none => none
   | some (xs, br) => some (xs.toList, br)
 
@@ -97,9 +141,9 @@ def readPartA (m : Rice.Method) (count : Nat) (br : BitReader) (acc : Array Int)
     if k = m.escapeCode then
       match br.readBits 5 with
       | none => none
-      | some (bits, br) => readSIntSeqA bits count br acc
+      | some (bits, br) => readSIntSeqFast bits count br acc
     else
-      readRiceSeqA k count br acc
+      readRiceSeqFast k count br acc
 
 def readPartsA (m : Rice.Method) : (sizes : List Nat) → BitReader → Array Int →
     Option (Array Int × BitReader)
