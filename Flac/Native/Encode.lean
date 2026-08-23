@@ -463,20 +463,39 @@ def encodeArrays (blockSize : Nat) (varBlk : Bool) (chs : Array (Array Int))
 
 /-! ## 16-bit PCM entry point -/
 
-/-- Deinterleave signed 16-bit little-endian PCM into channel arrays. -/
+/-- One little-endian 16-bit sample at byte offset `j`. -/
+@[inline] private def sampleAt (bytes : ByteArray) (j : Nat) : Int :=
+  let lo := (if h : j < bytes.size then bytes[j] else 0).toNat
+  let hi := (if h : j + 1 < bytes.size then bytes[j + 1] else 0).toNat
+  let v := lo + 256 * hi
+  if v < 32768 then (v : Int) else (v : Int) - 65536
+
+/-- Deinterleave signed 16-bit little-endian PCM into channel arrays.
+    Channel-major: each channel array is filled by its own loop, so a
+    sample costs one `Array.push`. The sample-major version updated the
+    outer array of channels once per sample (`Array.modify`), which made
+    deinterleaving 17% of encode time and all of it serial. -/
 def pcm16Channels (ch : Nat) (bytes : ByteArray) : Array (Array Int) := Id.run do
+  if ch = 0 then return #[]
   let n := bytes.size / (2 * ch)
-  let mut chans : Array (Array Int) :=
-    (Array.range ch).map fun _ => Array.emptyWithCapacity n
-  let mut i := 0
-  for _ in [0 : n] do
-    for c in [0 : ch] do
-      let lo := (if h : i < bytes.size then bytes[i] else 0).toNat
-      let hi := (if h : i + 1 < bytes.size then bytes[i + 1] else 0).toNat
-      let v := lo + 256 * hi
-      let x : Int := if v < 32768 then (v : Int) else (v : Int) - 65536
-      chans := chans.modify c (·.push x)
-      i := i + 2
+  if ch = 1 then
+    let mut a : Array Int := Array.emptyWithCapacity n
+    for i in [0 : n] do
+      a := a.push (sampleAt bytes (2 * i))
+    return #[a]
+  if ch = 2 then
+    let mut a : Array Int := Array.emptyWithCapacity n
+    let mut b : Array Int := Array.emptyWithCapacity n
+    for i in [0 : n] do
+      a := a.push (sampleAt bytes (4 * i))
+      b := b.push (sampleAt bytes (4 * i + 2))
+    return #[a, b]
+  let mut chans : Array (Array Int) := Array.emptyWithCapacity ch
+  for c in [0 : ch] do
+    let mut a : Array Int := Array.emptyWithCapacity n
+    for i in [0 : n] do
+      a := a.push (sampleAt bytes (2 * (i * ch + c)))
+    chans := chans.push a
   return chans
 
 /-- Fast byte-level 16-bit encoder (the MD5 input of RFC 9639 §8.2 for
