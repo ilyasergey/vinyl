@@ -507,8 +507,25 @@ def _manifest_path(path: Path) -> str:
 def _sqam_category(path: Path) -> str:
     match = re.match(r"^\s*(\d{1,3})(?:[\s._-]|$)", path.stem)
     if match is None:
-        return "programme-or-test-signal"
-    return "test-signal" if int(match.group(1)) <= 7 else "programme"
+        return "unknown"
+    track = int(match.group(1))
+    if track < 1:
+        return "unknown"
+    ranges = (
+        (2, "alignment"),
+        (7, "artificial"),
+        (43, "single-instrument"),
+        (48, "vocal"),
+        (54, "speech"),
+        (60, "solo-instrument"),
+        (64, "vocal-orchestra"),
+        (68, "orchestra"),
+        (70, "pop"),
+    )
+    for last_track, category in ranges:
+        if track <= last_track:
+            return category
+    return "unknown"
 
 
 def _category(spec: ArchiveSpec, path: Path) -> str:
@@ -690,17 +707,64 @@ def _expand_suites(values: list[str]) -> list[str]:
     return [suite for suite in ARCHIVES if suite in expanded]
 
 
+def _print_corpora() -> None:
+    print("Available real-audio corpora:")
+    print()
+    print("  sqam (default)")
+    print("    CLI: --corpus sqam --accept-ebu-terms")
+    print("    Download: 175545976 bytes (167.4 MiB)")
+    print("    Identity: versioned EBU size + S3 ETag; local SHA-256 sidecar")
+    print("    Licence: R&D use; no other commercial use")
+    print("    Categories: alignment, artificial, single-instrument, vocal,")
+    print("                speech, solo-instrument, vocal-orchestra, orchestra, pop")
+    print()
+    print("  librispeech-test-clean (large, opt-in)")
+    print("    CLI: --corpus librispeech-test-clean")
+    print("    Download: 346663984 bytes (330.6 MiB)")
+    print("    MD5: 32fa31d27d2e1cad72775fee3f4849a9")
+    print("    Licence: CC BY 4.0; native 16 kHz mono")
+    print()
+    print("  librispeech-test-other (large, opt-in)")
+    print("    CLI: --corpus librispeech-test-other")
+    print("    Download: 328757843 bytes (313.5 MiB)")
+    print("    MD5: fb5a50374b501bb3bac4815ee91d3135")
+    print("    Licence: CC BY 4.0; native 16 kHz mono")
+    print()
+    print("  librispeech (alias for both test sets; large, opt-in)")
+    print("    CLI: --corpus librispeech")
+    print("    Download: 675421827 bytes total (644.1 MiB), before extraction/PCM")
+    print()
+    print("  all")
+    print("    CLI: --corpus all --accept-ebu-terms")
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Fetch EBU SQAM and/or LibriSpeech and emit canonical S16LE PCM.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=(
+            "With no --corpus, only SQAM is selected. LibriSpeech is a large "
+            "explicit opt-in. Run --list-corpora for exact sizes, checksums, "
+            "licences, and selection commands."
+        ),
     )
     parser.add_argument(
         "--corpus",
         action="append",
-        required=True,
-        choices=("sqam", "librispeech", "librispeech-test-clean", "librispeech-test-other", "all"),
-        help="corpus to prepare; may be repeated",
+        choices=(
+            "sqam",
+            "librispeech",
+            "librispeech-test-clean",
+            "librispeech-test-other",
+            "all",
+        ),
+        help="corpus to prepare; may be repeated (SQAM only when omitted)",
+    )
+    parser.add_argument(
+        "--list-corpora",
+        "--list",
+        action="store_true",
+        help="show corpus sizes, checksums, licences, and exact selectors, then exit",
     )
     parser.add_argument(
         "--data-dir",
@@ -736,13 +800,18 @@ def _parse_args() -> argparse.Namespace:
         help="accept a size-pinned SQAM archive lacking this script's SHA-256 sidecar",
     )
     args = parser.parse_args()
+    if args.list_corpora:
+        _print_corpora()
+        raise SystemExit(0)
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
-    suites = _expand_suites(args.corpus)
+    suites = _expand_suites(args.corpus or ["sqam"])
     if "sqam" in suites and not args.accept_ebu_terms:
-        parser.error("SQAM requires --accept-ebu-terms; see the EBU terms linked in the script")
+        parser.error(
+            "SQAM requires --accept-ebu-terms; see the EBU terms linked in the script"
+        )
     args.suites = suites
     return args
 

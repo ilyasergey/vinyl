@@ -114,15 +114,20 @@ def throughput_panel(ax, styles, kind, gap_pair, gap_note=""):
         hi_med = statistics.median(speed[hi])
         for med, enc in ((lo_med, lo), (hi_med, hi)):
             ax.axhline(med, color=styles[enc]["color"], ls="--", lw=1, alpha=0.6)
-        x = n * 0.3
+        # Curves are sorted slowest → fastest, so they rise left to right:
+        # the upper left and lower right are the empty corners. Put the
+        # arrow where the Vinyl curve has already climbed above its own
+        # median, and the caption *below* Vinyl's median line, so the label
+        # never sits on top of a curve.
+        x = n * 0.62
         ax.annotate("", xy=(x, hi_med), xytext=(x, lo_med),
                     arrowprops=dict(arrowstyle="<->", color="#111827", lw=1.1))
-        ax.text(x + n * 0.03, math.sqrt(lo_med * hi_med),
-                f"×{hi_med / lo_med:.1f} median gap\nvs {hi}{gap_note}",
-                va="center", fontsize=9, color="#111827")
+        ax.text(x, lo_med * 0.90,
+                f"×{hi_med / lo_med:.2f} median gap\nvs {hi}{gap_note}",
+                ha="center", va="top", fontsize=9, color="#111827")
     ax.set_title(f"{kind.capitalize()} speed")
     ax.grid(alpha=0.25, which="both")
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=8, loc="upper left")
 
 fig2, (ax2, ax4) = plt.subplots(2, 1, figsize=(8.5, 9), dpi=150)
 # Encode is judged against `flac -8`: that is the preset whose compression
