@@ -2354,7 +2354,7 @@ private theorem map_tail_zipWith_cons :
       simp only [List.zipWith_cons_cons, List.map_cons, List.tail_cons]
       rw [ih chs (by simpa using hl)]
 
-private theorem length_deinterleaveN (ch : Nat) :
+theorem length_deinterleaveN (ch : Nat) :
     ∀ (n : Nat) (l : List Int), n * ch ≤ l.length →
       (deinterleaveN ch n l).length = ch := by
   intro n

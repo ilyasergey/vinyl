@@ -747,7 +747,7 @@ def pushFrame (bw : BitWriter) (b : Nat) (strat : Bool) (num : Nat)
 /-! ## 16-bit PCM entry point -/
 
 /-- One little-endian 16-bit sample at byte offset `j`. -/
-@[inline] private def sampleAt (bytes : ByteArray) (j : Nat) : Int :=
+@[inline] def sampleAt (bytes : ByteArray) (j : Nat) : Int :=
   let lo := (if h : j < bytes.size then bytes[j] else 0).toNat
   let hi := (if h : j + 1 < bytes.size then bytes[j + 1] else 0).toNat
   let v := lo + 256 * hi

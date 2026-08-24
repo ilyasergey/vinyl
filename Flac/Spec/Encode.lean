@@ -1,4 +1,6 @@
+import Flac.Native.Codec
 import Flac.Native.Encode
+import Flac.Spec.Decode
 import Flac.Spec.Emit
 
 /-!
@@ -567,5 +569,242 @@ theorem sim_pushFrameOf (b : Nat) (strat : Bool) (num : Nat) (fp : FramePrep)
   refine sim_push_buf ?_ (by omega)
     (fun buf => (Crc.crc8Range buf w.buf.size buf.size).toNat)
   exact h1
+
+/-! ## The input bridge
+
+The shipped encoder reads its samples straight out of the interleaved PCM
+bytes, one window per frame worker (`frameChannels`). The reference reads
+`deinterleave ch (pcm16OfByteList …)` and chunks it with
+`Stream.chunkChannels`. These lemmas identify the two. -/
+
+private theorem getD_toList (bytes : ByteArray) (j : Nat) :
+    bytes.data.toList.getD j (0 : UInt8) = if h : j < bytes.size then bytes[j] else 0 := by
+  rw [List.getD_eq_getElem?_getD]
+  by_cases h : j < bytes.size
+  · rw [dif_pos h, List.getElem?_eq_getElem (by simpa using h)]
+    rfl
+  · rw [dif_neg h, List.getElem?_eq_none (by simpa using Nat.le_of_not_lt h)]
+    rfl
+
+/-- The fast per-sample read is the reference's byte pair. -/
+private theorem sampleAt_eq (bytes : ByteArray) (j : Nat) :
+    sampleAt bytes j
+      = Flac.sInt16 (bytes.data.toList.getD j 0) (bytes.data.toList.getD (j + 1) 0) := by
+  rw [getD_toList, getD_toList]
+  rfl
+
+/-- Indexing the parsed sample list, valid at every index because an even
+    byte count leaves no trailing byte (`encodePcm16` rejects odd input). -/
+private theorem getD_pcm16OfByteList : ∀ (n : Nat) (l : List UInt8), l.length = n →
+    l.length % 2 = 0 → ∀ j, (Flac.pcm16OfByteList l).getD j 0
+      = Flac.sInt16 (l.getD (2 * j) 0) (l.getD (2 * j + 1) 0) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n ih =>
+    intro l hn hev j
+    match l with
+    | [] => simp [Flac.pcm16OfByteList, Flac.sInt16]
+    | [_] => simp at hev
+    | lo :: hi :: rest =>
+      cases j with
+      | zero => simp [Flac.pcm16OfByteList]
+      | succ j =>
+        have hrest : rest.length < n := by
+          simp only [List.length_cons] at hn; omega
+        have hev' : rest.length % 2 = 0 := by
+          simp only [List.length_cons] at hev; omega
+        show (Flac.pcm16OfByteList rest).getD j 0 = _
+        rw [ih rest.length hrest rest rfl hev' j,
+          show 2 * (j + 1) = 2 * j + 1 + 1 from by omega]
+        simp only [List.getD_cons_succ]
+
+/-- The sample at interleaved index `i` is the fast reader's byte pair. -/
+private theorem getD_samples (bytes : ByteArray) (hev : bytes.size % 2 = 0) (i : Nat) :
+    (Flac.pcm16OfByteList bytes.data.toList).getD i 0 = sampleAt bytes (2 * i) := by
+  rw [getD_pcm16OfByteList bytes.data.toList.length bytes.data.toList rfl
+    (by simpa using hev) i, sampleAt_eq]
+
+private theorem getD_take {l : List Int} {m c : Nat} (h : c < m) :
+    (l.take m).getD c 0 = l.getD c 0 := by
+  rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD,
+    List.getElem?_take_of_lt h]
+
+private theorem getD_drop : ∀ (m : Nat) (l : List Int) (i : Nat),
+    (l.drop m).getD i 0 = l.getD (m + i) 0 := by
+  intro m
+  induction m with
+  | zero => intro l i; simp
+  | succ m ih =>
+    intro l i
+    match l with
+    | [] => simp
+    | x :: t =>
+      simp only [List.drop_succ_cons]
+      rw [ih t i, show m + 1 + i = m + i + 1 from by omega,
+        List.getD_cons_succ]
+
+private theorem getD_zipWith_cons {as : List Int} {bs : List (List Int)} {c : Nat}
+    (ha : c < as.length) (hb : c < bs.length) :
+    (List.zipWith (· :: ·) as bs).getD c [] = as.getD c 0 :: bs.getD c [] := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_zipWith,
+    List.getElem?_eq_getElem ha, List.getElem?_eq_getElem hb,
+    List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD,
+    List.getElem?_eq_getElem ha, List.getElem?_eq_getElem hb]
+  rfl
+
+/-- Every deinterleaved channel has exactly `n` samples. -/
+private theorem length_getD_deinterleaveN (ch : Nat) (hch : 0 < ch) :
+    ∀ (n : Nat) (l : List Int), n * ch ≤ l.length → ∀ c, c < ch →
+      ((Flac.deinterleaveN ch n l).getD c []).length = n := by
+  intro n
+  induction n with
+  | zero =>
+    intro l _ c _
+    simp only [Flac.deinterleaveN, List.getD_eq_getElem?_getD]
+    cases h : (List.replicate ch ([] : List Int))[c]? with
+    | none => rfl
+    | some x =>
+      have := List.getElem?_eq_some_iff.1 h
+      obtain ⟨_, hx⟩ := this
+      rw [Option.getD_some, ← hx, List.getElem_replicate]
+      rfl
+  | succ n ih =>
+    intro l hl c hc
+    have hstep : (n + 1) * ch = n * ch + ch := Nat.succ_mul ..
+    have hbs : (Flac.deinterleaveN ch n (l.drop ch)).length = ch :=
+      Flac.length_deinterleaveN ch n _ (by simp only [List.length_drop]; omega)
+    have hta : (l.take ch).length = ch := by
+      simp only [List.length_take]; omega
+    simp only [Flac.deinterleaveN]
+    rw [getD_zipWith_cons (by rw [hta]; exact hc) (by rw [hbs]; exact hc),
+      List.length_cons,
+      ih (l.drop ch) (by simp only [List.length_drop]; omega) c hc]
+
+/-- Sample `t` of channel `c` is interleaved sample `t * ch + c`. -/
+private theorem getD_deinterleaveN (ch : Nat) (hch : 0 < ch) :
+    ∀ (n : Nat) (l : List Int), n * ch ≤ l.length → ∀ c t, c < ch → t < n →
+      ((Flac.deinterleaveN ch n l).getD c []).getD t 0 = l.getD (t * ch + c) 0 := by
+  intro n
+  induction n with
+  | zero => intro _ _ _ t _ ht; omega
+  | succ n ih =>
+    intro l hl c t hc ht
+    have hstep : (n + 1) * ch = n * ch + ch := Nat.succ_mul ..
+    have hbs : (Flac.deinterleaveN ch n (l.drop ch)).length = ch :=
+      Flac.length_deinterleaveN ch n _ (by simp only [List.length_drop]; omega)
+    have hta : (l.take ch).length = ch := by
+      simp only [List.length_take]; omega
+    simp only [Flac.deinterleaveN]
+    rw [getD_zipWith_cons (by rw [hta]; exact hc) (by rw [hbs]; exact hc)]
+    cases t with
+    | zero =>
+      rw [List.getD_cons_zero, getD_take hc]
+      congr 1
+      omega
+    | succ t =>
+      have hts : (t + 1) * ch = t * ch + ch := Nat.succ_mul ..
+      rw [List.getD_cons_succ,
+        ih (l.drop ch) (by simp only [List.length_drop]; omega) c t hc (by omega),
+        getD_drop]
+      congr 1
+      omega
+
+private theorem drop_eq_getD_cons {α : Type} {l : List α} {i : Nat} (d : α)
+    (h : i < l.length) : l.drop i = l.getD i d :: l.drop (i + 1) := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem h, Option.getD_some]
+  exact List.drop_eq_getElem_cons h
+
+private theorem length_getD_deinterleave {ch : Nat} (hch : 0 < ch) (l : List Int)
+    {c : Nat} (hc : c < ch) :
+    ((Flac.deinterleave ch l).getD c []).length = l.length / ch :=
+  length_getD_deinterleaveN ch hch _ l (Nat.div_mul_le_self ..) c hc
+
+private theorem getD_deinterleave {ch : Nat} (hch : 0 < ch) (l : List Int)
+    {c t : Nat} (hc : c < ch) (ht : t < l.length / ch) :
+    ((Flac.deinterleave ch l).getD c []).getD t 0 = l.getD (t * ch + c) 0 :=
+  getD_deinterleaveN ch hch _ l (Nat.div_mul_le_self ..) c t hc ht
+
+private theorem length_deinterleave {ch : Nat} (l : List Int) :
+    (Flac.deinterleave ch l).length = ch :=
+  Flac.length_deinterleaveN ch _ l (Nat.div_mul_le_self ..)
+
+/-- One channel's window: what the frame worker reads out of the shared PCM
+    bytes is the reference channel's `drop`-then-`take`. -/
+private theorem channelSeg_eq (bytes : ByteArray) (hev : bytes.size % 2 = 0)
+    {ch : Nat} (hch : 0 < ch) {c : Nat} (hc : c < ch) :
+    ∀ (rem i : Nat) (out : Array Int),
+      i + rem ≤ (Flac.pcm16OfByteList bytes.data.toList).length / ch →
+      (channelSeg bytes ch c i rem out).toList
+        = out.toList ++ ((((Flac.deinterleave ch
+            (Flac.pcm16OfByteList bytes.data.toList)).getD c []).drop i).take rem) := by
+  have hlen := length_getD_deinterleave hch (Flac.pcm16OfByteList bytes.data.toList) hc
+  intro rem
+  induction rem with
+  | zero => intro i out _; simp [channelSeg]
+  | succ rem ih =>
+    intro i out hb
+    have hi : i < ((Flac.deinterleave ch
+        (Flac.pcm16OfByteList bytes.data.toList)).getD c []).length := by
+      rw [hlen]; omega
+    have hgi : ((Flac.deinterleave ch
+        (Flac.pcm16OfByteList bytes.data.toList)).getD c []).getD i 0
+        = sampleAt bytes (2 * (i * ch + c)) := by
+      rw [getD_deinterleave hch (Flac.pcm16OfByteList bytes.data.toList) hc
+        (by rw [hlen] at hi; omega), getD_samples bytes hev]
+    simp only [channelSeg]
+    rw [ih (i + 1) _ (by omega), Array.toList_push,
+      drop_eq_getD_cons 0 hi, List.take_succ_cons, hgi, List.append_assoc]
+    rfl
+
+/-- All channels of one frame's window. -/
+private theorem frameChannelsGo_eq (bytes : ByteArray) (hev : bytes.size % 2 = 0)
+    {ch : Nat} (hch : 0 < ch) (lo len : Nat)
+    (hfit : lo + len ≤ (Flac.pcm16OfByteList bytes.data.toList).length / ch) :
+    ∀ (rem c : Nat) (out : Array (Array Int)), c + rem ≤ ch →
+      (frameChannelsGo bytes ch lo len c rem out).toList
+        = out.toList ++ (((Flac.deinterleave ch
+            (Flac.pcm16OfByteList bytes.data.toList)).drop c).take rem).map
+              (fun l => ((l.drop lo).take len).toArray) := by
+  have hchs := length_deinterleave (ch := ch) (Flac.pcm16OfByteList bytes.data.toList)
+  intro rem
+  induction rem with
+  | zero => intro c out _; simp [frameChannelsGo]
+  | succ rem ih =>
+    intro c out hb
+    have hc : c < ch := by omega
+    have hcl : c < (Flac.deinterleave ch
+        (Flac.pcm16OfByteList bytes.data.toList)).length := by rw [hchs]; omega
+    have hseg : channelSeg bytes ch c lo len (Array.emptyWithCapacity len)
+        = ((((Flac.deinterleave ch
+            (Flac.pcm16OfByteList bytes.data.toList)).getD c []).drop lo).take len).toArray := by
+      have h := channelSeg_eq bytes hev hch hc len lo
+        (Array.emptyWithCapacity len) (by omega)
+      rw [show (Array.emptyWithCapacity len : Array Int).toList = [] from rfl,
+        List.nil_append] at h
+      rw [← h, Array.toArray_toList]
+    simp only [frameChannelsGo]
+    rw [ih (c + 1) _ (by omega), Array.toList_push, hseg,
+      drop_eq_getD_cons [] hcl, List.take_succ_cons, List.map_cons,
+      List.append_assoc]
+    rfl
+
+/-- **The input bridge.** The window each frame worker deinterleaves out of
+    the shared PCM bytes is exactly the reference's frame: the channels of
+    `deinterleave ∘ pcm16OfByteList`, dropped to `lo` and taken to `len` —
+    which is what `Stream.chunkChannels` hands the verified emitter. -/
+theorem frameChannels_eq (bytes : ByteArray) (hev : bytes.size % 2 = 0) {ch : Nat}
+    (hch : 0 < ch) (lo len : Nat)
+    (hfit : lo + len ≤ (Flac.pcm16OfByteList bytes.data.toList).length / ch) :
+    (frameChannels bytes ch lo (lo + len)).toList
+      = (Stream.takeAll len (Stream.dropAll lo (Flac.deinterleave ch
+          (Flac.pcm16OfByteList bytes.data.toList)))).map List.toArray := by
+  have hchs := length_deinterleave (ch := ch) (Flac.pcm16OfByteList bytes.data.toList)
+  have h := frameChannelsGo_eq bytes hev hch lo len hfit ch 0
+    (Array.emptyWithCapacity ch) (by omega)
+  simp only [frameChannels, Nat.add_sub_cancel_left]
+  rw [h, show (Array.emptyWithCapacity ch : Array (Array Int)).toList = [] from rfl,
+    List.nil_append, List.drop_zero, List.take_of_length_le (Nat.le_of_eq hchs)]
+  simp only [Stream.takeAll, Stream.dropAll, List.map_map]
+  rfl
 
 end Flac.Encode
