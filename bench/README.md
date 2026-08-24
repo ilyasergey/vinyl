@@ -67,10 +67,10 @@ the legend, so the `-0`/`-5` presets stay visible for context.
 
 ![Throughput vs libFLAC](performance.png)
 
-Current five-run medians (2026-08-24): Vinyl encode 55.4 MB/s and Vinyl
-decode 121.7 MB/s, versus 107.9 MB/s for `flac -5` encode, 74.6 MB/s for
-`flac -8` encode, and 125.1 MB/s for libFLAC decode. That is a
-**1.03× decode gap** and a 1.95× encode gap against `flac -5` — **1.35×
+Current five-run medians (2026-08-24): Vinyl encode 56.8 MB/s and Vinyl
+decode 121.4 MB/s, versus 107.3 MB/s for `flac -5` encode, 74.0 MB/s for
+`flac -8` encode, and 124.3 MB/s for libFLAC decode. That is a
+**1.02× decode gap** and a 1.89× encode gap against `flac -5` — **1.30×
 against `flac -8`, the level whose compression Vinyl matches**.
 
 ### Read the corpus medians with the file size in mind
@@ -87,16 +87,17 @@ Same material, medians against file size:
 
 | PCM | Vinyl decode | libFLAC | gap | Vinyl encode | `flac -8` | gap |
 |---|---|---|---|---|---|---|
-| 1 MB | 104.8 MB/s | 121.8 MB/s | 1.16× | 52.1 MB/s | 71.1 MB/s | 1.37× |
-| 2 MB | 140.0 MB/s | 149.0 MB/s | 1.06× | 59.9 MB/s | 80.5 MB/s | 1.34× |
-| 4 MB | 173.1 MB/s | 166.8 MB/s | **0.96×** | 64.5 MB/s | 85.6 MB/s | 1.33× |
-| 8 MB | 196.6 MB/s | 179.1 MB/s | **0.91×** | 68.0 MB/s | 89.2 MB/s | 1.31× |
-| 16 MB | 208.7 MB/s | 185.9 MB/s | **0.89×** | 70.0 MB/s | 90.8 MB/s | 1.30× |
-| 32 MB | 206.6 MB/s | 184.7 MB/s | **0.89×** | 70.3 MB/s | 91.9 MB/s | 1.31× |
+| 1 MB | 103.9 MB/s | 121.9 MB/s | 1.17× | 54.1 MB/s | 71.3 MB/s | 1.32× |
+| 2 MB | 138.8 MB/s | 147.8 MB/s | 1.07× | 61.6 MB/s | 79.5 MB/s | 1.29× |
+| 4 MB | 173.0 MB/s | 164.1 MB/s | **0.95×** | 67.5 MB/s | 84.6 MB/s | 1.25× |
+| 8 MB | 198.6 MB/s | 179.3 MB/s | **0.90×** | 71.3 MB/s | 83.0 MB/s | 1.16× |
+| 16 MB | 207.0 MB/s | 184.0 MB/s | **0.89×** | 72.7 MB/s | 90.3 MB/s | 1.24× |
+| 32 MB | 213.3 MB/s | 188.5 MB/s | **0.88×** | 73.4 MB/s | 89.9 MB/s | 1.23× |
 
-Decode overtakes libFLAC at about 4 MB and settles ~11% faster; encode is
-flat at ~1.3×, which is the honest figure for it. The 32 MB probe below is
-the instrument for judging a *change*.
+Decode overtakes libFLAC at about 4 MB and settles ~11% faster; encode
+settles around 1.24× (the 8 MB row's `flac -8` figure is an outlier — the
+column is otherwise 84–90 MB/s). The 32 MB probe below is the instrument
+for judging a *change*.
 
 ### Sessions 6–7: parallelism and the array-typed decoder
 
@@ -130,7 +131,8 @@ with the corpus medians above — only with each other.
 | three-byte Rice window | 58.5 MB/s | 246.2 MB/s | 1.63× | **0.83×** |
 | MD5 off the critical path | 64.9 MB/s | 244.3 MB/s | 1.48× | 0.85× |
 | three LPC orders, not five | 71.7 MB/s | 246.2 MB/s | 1.34× | 0.84× |
-| float residual for emission | 73.7 MB/s | 244.3 MB/s | **1.32×** | 0.85× |
+| float residual for emission | 73.7 MB/s | 244.3 MB/s | 1.32× | 0.85× |
+| three autocorrelation lags per pass | 75.5 MB/s | 244.3 MB/s | **1.27×** | 0.85× |
 
 Every stage but one kept the corpus ratio at 39.580% and the output
 byte-identical to the verified encoder's; "three LPC orders" moved it to
@@ -171,6 +173,13 @@ worker now emits its own frame's bytes, and a `ByteArray` is O(1) to mark
 where `Array Int` channels are O(samples). `Flac/Spec/PcmBytes.lean` proves
 it rather than asserting it.
 
+**Three autocorrelation lags per pass.** Nine lags meant nine passes over
+the windowed block, each re-reading both operands of every product.
+`acorr3` reads `w[i]` and `w[i-lag]` and carries `w[i-lag-1]`/`w[i-lag-2]`
+in registers, so a (lag, sample) pair costs two thirds of a load instead
+of two; each lag still accumulates ascending in `i` from `+0.0`, so the
+sums stay bit-identical. Worth 6% of encode.
+
 **MD5 off the critical path.** The STREAMINFO digest is chained and cannot
 be split across workers, but it does not have to be *first*: it was 62 ms
 of a 550 ms encode, computed before the first frame task started. Spawned
@@ -185,24 +194,29 @@ three-byte extraction window (1.35×). Also neutral or worse: unrolling the
 float dot product with four accumulator chains (155 ms vs 83 ms — the
 per-tap `Nat` index arithmetic costs more than the shortened dependency
 chain saves), splitting it into two chains, a sliding register window,
+holding the coefficients in a `FloatArray` walked by a counter instead of
+a `List Float` walked structurally (a wash at order 4, *worse* at order 8),
 `>>>3`/`&&&7` in place of `/8`/`%8` (identical), a constructor-level
-`unzigzag` (identical), and lowering the sync-scan window below 1 MB.
+`unzigzag` (identical), and lowering the sync-scan window below 1 MB. The
+LPC dot product has now resisted five different attempts; treat ~5 cycles
+per tap as the floor.
 
 ### Where the remaining encode gap is
 
 Encode is 3.23 CPU-seconds for the 32 MB probe against 0.434 s of wall
 time (7.3× parallel on 4 performance plus 4 efficiency cores). Two items:
 
-1. **The runtime certificate: ~27% of encode wall.** Measured directly —
-   decoding the encoder's own output takes 0.119 s of encode's 0.434 s.
+1. **The runtime certificate: ~28% of encode wall.** Measured directly —
+   decoding the encoder's own output takes 0.119 s of encode's 0.424 s.
    Retiring it in favour of the statically verified emitter would take
-   encode to about **0.96×**, past the target, trading nothing. That is
+   encode to about **0.93×**, past the target, trading nothing. That is
    milestone M6b; `ARCHITECTURE.md` names its four stages, and the one
    thing *not* in the way is the searches — a chooser's output carries a
    decidable validity certificate by construction, so the round-trip
    theorem already holds for every chooser, `Float` included.
-2. **The candidate search: ~31% of encode work** (`lpcDotFf` 18%,
-   `acorrGo` 8%, the partition folds the rest). libFLAC's `-8` evaluates
+2. **The candidate search: ~37% of encode work** (`lpcDotFf` 24%,
+   autocorrelation 6%, the partition folds the rest). libFLAC's `-8`
+   evaluates
    exactly one LPC order per apodization window and one fixed order
    (`compression_levels_` and `process_subframe_` in
    `src/libFLAC/stream_encoder.c` — `do_exhaustive_model_search` is false

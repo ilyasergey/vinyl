@@ -847,11 +847,13 @@ push encode toward 1.1× — without giving up the compression win over
 | `3732892` three-byte Rice window | 58.5 | 246.2 | 1.63× | **0.83×** |
 | `9104522` MD5 off the critical path | 64.9 | 244.3 | 1.48× | 0.85× |
 | `8a4888d` three LPC orders, not five | 71.7 | 246.2 | 1.34× | 0.84× |
-| `86ff281` float residual for emission | 73.7 | 244.3 | **1.32×** | **0.85×** |
+| `86ff281` float residual for emission | 73.7 | 244.3 | 1.32× | 0.85× |
+| three autocorrelation lags per pass | 75.5 | 244.3 | **1.27×** | **0.85×** |
 
-Corpus medians moved 38.8 → 55.4 MB/s encode (gap 1.94× → **1.35×**) and
-82.7 → 121.7 MB/s decode (1.53× → **1.03×**). Ratio 39.580% → 39.634%,
-still ahead of `flac -8`'s 39.784%.
+Corpus medians moved 38.8 → 56.8 MB/s encode (gap 1.94× → **1.30×**) and
+82.7 → 121.4 MB/s decode (1.53× → **1.02×**). Ratio 39.580% → 39.634%,
+still ahead of `flac -8`'s 39.784%. Against file size, encode settles
+around **1.24×** and decode at **0.88×** from 8 MB up.
 
 **Decode is now faster than libFLAC above ~4 MB** — 0.96× at 4 MB, 0.89×
 (11% faster) from 8 MB up. Below that the residual is *process init*, not
@@ -907,6 +909,13 @@ remove). The size-scaling table is in `bench/README.md`.
    `lpcResidualArrF`/`diffArrFf` replace that, and `pushRiceRange` folds
    the zigzag magnitude straight off the float. One whole duplicate
    arithmetic path left the file.
+7. **Three autocorrelation lags per pass** (`acorr3`, shared by both
+   encoders). Nine lags meant nine passes each re-reading both operands;
+   the fused pass reads `w[i]` and `w[i-lag]` and carries the two older
+   history values in registers, so a (lag, sample) pair costs two thirds
+   of a load instead of two. Each lag still accumulates ascending in `i`
+   from `+0.0`, so the sums are bit-identical — confirmed by the corpus
+   ratio not moving. A/B: 71.0 → 75.5 MB/s, 6% of encode.
 
 **Measured and discarded (working tree restored):**
 
@@ -920,6 +929,12 @@ remove). The size-scaling table is in `bench/README.md`.
   either way), confirming the session-5 microbenchmark.
 - **A constructor-level `unzigzag`** (`Int.negSucc` + `&&&1` instead of
   `%`/`/` and `Int.neg`): identical.
+- **Coefficients in a `FloatArray`** walked by an increasing counter
+  against a decreasing sample index, instead of a `List Float` walked
+  structurally: a wash at order 4, *worse* at order 8 (93 ms vs 86 ms).
+  With the earlier unrolling, two-accumulator and sliding-window attempts
+  that makes **five** failed approaches to `lpcDotFf`; ~5 cycles per tap
+  is the floor and the next session should not spend time there.
 - **Decode task granularity** re-swept for the byte-emitting workers
   (1/2/4/8/16): 2 is best at both 1 MB and 32 MB, spread under 3%.
 - **Sync-scan window** below 1 MB (64K/16K/4K): no effect; the serial scan
@@ -943,9 +958,10 @@ cost of what remains is at the pure-Lean floor (`Lpc.dotAGo` must stay
 `Int` — it is the proven path, and converting `Int → Int64` per tap would
 cost what it saves).
 
-Encode is at 1.32× and the path to 1.1× is **one project, not a list**:
+Encode is at 1.27× (1.30× on the corpus medians, ~1.24× at large sizes)
+and the path to 1.1× is **one project, not a list**:
 retire the runtime certificate in favour of the statically verified
-emitter. Measured, that alone lands at ~0.96×. What is *not* in the way is
+emitter. Measured, that alone lands at ~0.93×. What is *not* in the way is
 the searches — a chooser's output carries a decidable validity certificate
 by construction and `safeChooser` checks it, so the round-trip theorem
 already holds for every chooser, `Float` included, and nothing about the
