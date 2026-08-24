@@ -1124,8 +1124,8 @@ private theorem list_two {α : Type} (l : List α) (d : α) (h : l.length = 2) :
   | [_] => simp at h
   | _ :: _ :: _ :: _ => simp at h
 
-private theorem getD_eq (a : Array (Array Int)) (i : Nat) :
-    a.getD i #[] = a.toList.getD i #[] := by
+private theorem getD_eq {α : Type} (a : Array α) (i : Nat) (d : α) :
+    a.getD i d = a.toList.getD i d := by
   unfold Array.getD
   split
   · rename_i h
@@ -1261,5 +1261,78 @@ theorem sim_frame (b : Nat) (strat : Bool) (num : Nat) (chs : Array (Array Int))
     chs.toList (chooseFrame b chs).subs rfl (chooseFrame_planOf b chs)
     (chooseFrame_blockSize b chs) (chooseFrame_code b chs)
     (chooseFrame_subs_ok b chs)
+
+/-! ## The decisions carry the round-trip certificate
+
+`Frame.ChannelAsg.orVerbatim` — what the reference encoder wraps every
+chooser in — keeps a choice only if it is `Valid`. These lemmas show the
+sanitised decisions always are, so `orVerbatim` is the identity on them and
+the fast encoder needs no check of its own. -/
+
+/-- `choosePlanF` answers `.constant` only behind its own all-equal guard. -/
+theorem choosePlanF_constant {b : Nat} {blk : Array Int} {blkF : FloatArray}
+    (h : choosePlanF b blk blkF = .constant) :
+    ∀ x ∈ blk.toList, x = blk.getD 0 0 := by
+  have hg : (blk.all fun x => x == blk.getD 0 0) = true := by
+    rw [choosePlanF] at h
+    split at h
+    · rename_i hc
+      exact hc
+    · exfalso
+      split at h
+      all_goals try split at h
+      all_goals try split at h
+      all_goals simp at h
+  intro x hx
+  have hxa : x ∈ blk := by simpa using hx
+  have := Array.all_eq_true_iff_forall_mem.1 hg x hxa
+  simpa using this
+
+/-- The cached block, as a list: the reference's scaled samples. -/
+theorem chooseSub_scaled_toList (b : Nat) (blk : Array Int) :
+    (chooseSub b blk).scaled.toList
+      = blk.toList.map (Flac.Bits.shiftDown (chooseSub b blk).wasted) := by
+  have hd := chooseSub_denotes b blk
+  unfold SubPrep.Denotes at hd
+  rw [hd]
+  split
+  · rename_i h
+    rw [h, Flac.Bits.map_shiftDown_zero]
+  · rw [Array.toList_map]
+
+/-- **One decision carries its certificate.** -/
+theorem chooseSub_cfg_valid {b : Nat} (hb : 0 < b) (blk : Array Int)
+    (hfit : ∀ x ∈ blk.toList, Flac.Bits.FitsSInt b x) :
+    (chooseSub b blk).cfg.Valid b blk.toList := by
+  have hw : (chooseSub b blk).wasted = wastedDetectF b blk := rfl
+  have hlt : (chooseSub b blk).wasted < b := by
+    rw [hw]; exact wastedDetectF_lt hb blk
+  have hdvd : ∀ x ∈ blk.toList,
+      ((2 ^ (chooseSub b blk).wasted : Nat) : Int) ∣ x := by
+    rw [hw]; exact wastedDetectF_dvd_mem b blk
+  have hsc := chooseSub_scaled_toList b blk
+  have hfit' : ∀ x ∈ blk.toList.map
+      (Flac.Bits.shiftDown (chooseSub b blk).wasted),
+      Flac.Bits.FitsSInt (b - (chooseSub b blk).wasted) x := by
+    intro x hx
+    obtain ⟨y, hy, hxy⟩ := List.mem_map.1 hx
+    rw [← hxy]
+    exact Flac.Heuristics.fitsSInt_shiftDown b _ hlt y (hfit y hy) (hdvd y hy)
+  have hlen : (chooseSub b blk).scaled.size
+      = (blk.toList.map (Flac.Bits.shiftDown (chooseSub b blk).wasted)).length := by
+    rw [← Array.length_toList, hsc]
+  refine ⟨hlt, hdvd, ?_⟩
+  show (subCfgOf (chooseSub b blk).plan).Valid (b - (chooseSub b blk).wasted)
+    (blk.toList.map (Flac.Bits.shiftDown (chooseSub b blk).wasted))
+  show (subCfgOf ((choosePlanF (b - (chooseSub b blk).wasted)
+      (chooseSub b blk).scaled (chooseSub b blk).scaledF).sanitize
+        (chooseSub b blk).scaled.size)).Valid _ _
+  rw [hlen]
+  refine subCfgOf_sanitize_valid _ hfit' ?_
+  intro hconst x hx
+  rw [← hsc] at hx
+  have hval := choosePlanF_constant hconst x hx
+  rw [← hsc, headD_eq_getD, ← getD_eq]
+  exact hval
 
 end Flac.Encode
