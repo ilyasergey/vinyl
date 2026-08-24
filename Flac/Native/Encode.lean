@@ -498,11 +498,10 @@ private def preparedLpc (blkF : FloatArray) (c : LpcChoice) :
 
 /-- Internal chooser result with an emission-ready residual when LPC
     wins. The public `choosePlan` projection remains API-compatible. -/
-private def choosePlanPrepared (b : Nat) (blk : Array Int) :
+private def choosePlanPrepared (b : Nat) (blk : Array Int) (blkF : FloatArray) :
     SubPlan × Option FloatArray :=
   if blk.all (fun x => x == blk.getD 0 0) then (.constant, none)
   else
-    let blkF := blockF blk
     match fixedSearchF b blkF, lpcChoiceF b blkF with
     | none, none => (.verbatim, none)
     | none, some lc =>
@@ -519,7 +518,77 @@ private def choosePlanPrepared (b : Nat) (blk : Array Int) :
     exact cost, LPC preferred on ties, verbatim when prediction does not
     pay), exactly as `Heuristics.defaultChooser` decides it. -/
 def choosePlan (b : Nat) (blk : Array Int) : SubPlan :=
-  (choosePlanPrepared b blk).1
+  (choosePlanPrepared b blk (blockF blk)).1
+
+def sumAbsArr (xs : Array Int) : Nat :=
+  xs.foldl (fun a x => a + x.natAbs) 0
+
+/-! ## Search / emission split
+
+`chooseSub`/`chooseFrame` make every heuristic decision a frame needs;
+`pushSubframeOf`/`pushFrameOf` then only *emit*. The bytes are unchanged —
+`pushFrame` is still emission after search — but each search is now a named
+function of its inputs, which is what lets the emission side be proven
+against `Flac.Emit` while the searches (`Float`, hence uncharacterizable)
+are only ever *applied*, never reasoned about. -/
+
+/-- One subframe's decision, carrying the arrays emission would otherwise
+    recompute: the wasted-bit-scaled samples, their `Float` image, and the
+    winning LPC predictor's residual. `⟨depth, wasted, plan⟩` is the
+    decision proper — the array mirror of `Subframe.SubCfg`. -/
+structure SubPrep where
+  depth : Nat
+  wasted : Nat
+  plan : SubPlan
+  scaled : Array Int
+  scaledF : FloatArray
+  res : Option FloatArray
+
+/-- The search for one subframe at depth `b`: wasted-bit detection, then
+    the plan search on the scaled block at the reduced depth. The array
+    mirror of `Heuristics.defaultSubCfg`. -/
+def chooseSub (b : Nat) (blk : Array Int) : SubPrep :=
+  let wa := wastedDetectF b blk
+  let scaled := if wa = 0 then blk else
+    let m : Int := ((p2 wa : Nat) : Int)
+    blk.map (· / m)
+  let scaledF := blockF scaled
+  let (plan, res) := choosePlanPrepared (b - wa) scaled scaledF
+  ⟨b, wa, plan, scaled, scaledF, res⟩
+
+/-- One frame's decisions: the 4-bit channel code, the block size, and one
+    `SubPrep` per subframe — the array mirror of `Frame.ChannelAsg` paired
+    with the `(depth, samples)` list `Frame.subframePlan` derives from it. -/
+structure FramePrep where
+  chCode : Nat
+  blockSize : Nat
+  subs : Array SubPrep
+
+/-- The per-frame search: stereo-mode decision by the sum-of-magnitudes
+    proxy (`Heuristics.stereoPick`) for two channels, independent coding
+    otherwise, then `chooseSub` per subframe at the decorrelated depth.
+    The array mirror of `Heuristics.defaultAsgChooser`. -/
+def chooseFrame (b : Nat) (chs : Array (Array Int)) : FramePrep :=
+  let bs := (chs.getD 0 #[]).size
+  if chs.size = 2 then
+    let l := chs.getD 0 #[]
+    let r := chs.getD 1 #[]
+    let sd := l.zipWith (fun a b => a - b) r
+    let md := l.zipWith (fun a b => sar (a + b) 1) r
+    let al := sumAbsArr l
+    let ar := sumAbsArr r
+    let sa := sumAbsArr sd
+    let am := sumAbsArr md
+    if al + ar ≤ al + sa ∧ al + ar ≤ sa + ar ∧ al + ar ≤ am + sa then
+      ⟨1, bs, #[chooseSub b l, chooseSub b r]⟩
+    else if al + sa ≤ sa + ar ∧ al + sa ≤ am + sa then
+      ⟨8, bs, #[chooseSub b l, chooseSub (b + 1) sd]⟩
+    else if sa + ar ≤ am + sa then
+      ⟨9, bs, #[chooseSub (b + 1) sd, chooseSub b r]⟩
+    else
+      ⟨10, bs, #[chooseSub b md, chooseSub (b + 1) sd]⟩
+  else
+    ⟨chs.size - 1, bs, chs.map (chooseSub b)⟩
 
 /-! ## Writers -/
 
@@ -571,26 +640,23 @@ def pushResidual (bw : BitWriter) (bs ord po : Nat) (ks : Array Nat)
     start := start + len
   return w
 
-/-- One subframe at bit depth `b`: wasted-bit detection, subframe search
-    on the scaled block, then the exact layout of `Subframe.write`. -/
-def pushSubframe (bw : BitWriter) (b : Nat) (blk : Array Int) : BitWriter := Id.run do
-  let wa := wastedDetectF b blk
-  let scaled := if wa = 0 then blk else
-    let m : Int := ((p2 wa : Nat) : Int)
-    blk.map (· / m)
-  let b' := b - wa
-  let scaledF := blockF scaled
-  let (plan, lpcRes) := choosePlanPrepared b' scaled
-  let mut w := (bw.push 1 0).push 6 plan.typeCode
-  w := if wa = 0 then w.push 1 0 else (w.push 1 1).pushUnary (wa - 1)
-  match plan with
+/-- One subframe, from its decision: the exact layout of
+    `Subframe.write`. Emission only — `p` already holds the search
+    result. -/
+def pushSubframeOf (bw : BitWriter) (p : SubPrep) : BitWriter := Id.run do
+  let b' := p.depth - p.wasted
+  let scaled := p.scaled
+  let mut w := (bw.push 1 0).push 6 p.plan.typeCode
+  w := if p.wasted = 0 then w.push 1 0
+       else (w.push 1 1).pushUnary (p.wasted - 1)
+  match p.plan with
   | .constant => return w.pushSInt b' (scaled.getD 0 0)
   | .verbatim =>
     for x in scaled do
       w := w.pushSInt b' x
     return w
   | .fixed ord po ks =>
-    let mut d := scaledF
+    let mut d := p.scaledF
     for i in [0 : ord] do
       w := w.pushSInt b' (scaled.getD i 0)
       d := diffArrFf d
@@ -602,52 +668,32 @@ def pushSubframe (bw : BitWriter) (b : Nat) (blk : Array Int) : BitWriter := Id.
     w := (w.push 4 (12 - 1)).pushSInt 5 (shift : Int)
     for cf in cs do
       w := w.pushSInt 12 cf
-    let res := match lpcRes with
+    let res := match p.res with
       | some cached => cached
-      | none => lpcResidualArrF (cs.map Heuristics.floatOfInt) shift scaledF
+      | none => lpcResidualArrF (cs.map Heuristics.floatOfInt) shift p.scaledF
     return pushResidual w scaled.size ord po ks res
 
-def sumAbsArr (xs : Array Int) : Nat :=
-  xs.foldl (fun a x => a + x.natAbs) 0
-
-/-- One frame: stereo-mode decision (`Heuristics.stereoPick`), canonical
-    header (blocksize code 7, sample rate from STREAMINFO), subframes,
-    byte-alignment, CRCs over the emitted bytes. `bw` must be
-    byte-aligned on entry (frames always are). -/
-def pushFrame (bw : BitWriter) (b : Nat) (strat : Bool) (num : Nat)
-    (chs : Array (Array Int)) : BitWriter := Id.run do
-  let bs := (chs.getD 0 #[]).size
-  -- (chCode, subframe plan as (depth, samples) pairs)
-  let (chCode, plan) : Nat × Array (Nat × Array Int) :=
-    if h : chs.size = 2 then
-      let l := chs.getD 0 #[]
-      let r := chs.getD 1 #[]
-      let sd := l.zipWith (fun a b => a - b) r
-      let md := l.zipWith (fun a b => sar (a + b) 1) r
-      let al := sumAbsArr l
-      let ar := sumAbsArr r
-      let sa := sumAbsArr sd
-      let am := sumAbsArr md
-      if al + ar ≤ al + sa ∧ al + ar ≤ sa + ar ∧ al + ar ≤ am + sa then
-        (1, #[(b, l), (b, r)])
-      else if al + sa ≤ sa + ar ∧ al + sa ≤ am + sa then
-        (8, #[(b, l), (b + 1, sd)])
-      else if sa + ar ≤ am + sa then
-        (9, #[(b + 1, sd), (b, r)])
-      else
-        (10, #[(b, md), (b + 1, sd)])
-    else
-      (chs.size - 1, chs.map ((b, ·)))
+/-- One frame, from its decisions: canonical header (blocksize code 7,
+    sample rate from STREAMINFO), subframes, byte-alignment, CRCs over the
+    emitted bytes. Emission only. `bw` must be byte-aligned on entry
+    (frames always are). -/
+def pushFrameOf (bw : BitWriter) (b : Nat) (strat : Bool) (num : Nat)
+    (fp : FramePrep) : BitWriter := Id.run do
   let start := bw.buf.size
   let mut w := (((bw.push 14 0x3FFE).push 1 0).push 1 (if strat then 1 else 0)).push 4 7
-  w := ((w.push 4 0).push 4 chCode).push 3 (Frame.bpsCode b)
+  w := ((w.push 4 0).push 4 fp.chCode).push 3 (Frame.bpsCode b)
   w := (w.push 1 0).pushUtf8 num
-  w := w.push 16 (bs - 1)
+  w := w.push 16 (fp.blockSize - 1)
   w := w.push 8 (Crc.crc8Range w.buf start w.buf.size).toNat
-  for p in plan do
-    w := pushSubframe w p.1 p.2
+  for p in fp.subs do
+    w := pushSubframeOf w p
   w := w.align
   return w.push 16 (Crc.crc16Range w.buf start w.buf.size).toNat
+
+/-- One frame: the search (`chooseFrame`), then emission (`pushFrameOf`). -/
+def pushFrame (bw : BitWriter) (b : Nat) (strat : Bool) (num : Nat)
+    (chs : Array (Array Int)) : BitWriter :=
+  pushFrameOf bw b strat num (chooseFrame b chs)
 
 /-! ## 16-bit PCM entry point -/
 
