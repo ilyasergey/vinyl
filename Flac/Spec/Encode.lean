@@ -1335,4 +1335,144 @@ theorem chooseSub_cfg_valid {b : Nat} (hb : 0 < b) (blk : Array Int)
   rw [← hsc, headD_eq_getD, ← getD_eq]
   exact hval
 
+/-! ## The frame's decisions carry the certificate
+
+`Frame.ChannelAsg.orVerbatim` — what the reference wraps every chooser in —
+keeps a choice only when it is `Valid`. Showing the decisions always are is
+what makes `orVerbatim` the identity on them, so the reference emits exactly
+what the fast encoder chose. -/
+
+private theorem mem_zipWith {α β γ : Type} {f : α → β → γ} :
+    ∀ {l : List α} {r : List β} {x : γ}, x ∈ List.zipWith f l r →
+      ∃ a ∈ l, ∃ b ∈ r, f a b = x := by
+  intro l
+  induction l with
+  | nil => intro r x hx; simp at hx
+  | cons a l ih =>
+    intro r x hx
+    match r with
+    | [] => simp at hx
+    | c :: r =>
+      rw [List.zipWith_cons_cons] at hx
+      rcases List.mem_cons.1 hx with h | h
+      · exact ⟨a, List.mem_cons_self .., c, List.mem_cons_self .., h.symm⟩
+      · obtain ⟨a', ha', b', hb', hfx⟩ := ih h
+        exact ⟨a', List.mem_cons_of_mem _ ha', b', List.mem_cons_of_mem _ hb', hfx⟩
+
+private theorem mem_zip_map_self {α β γ : Type} {f : α → β} {g : α → γ} :
+    ∀ {l : List α} {p : β × γ}, p ∈ (l.map f).zip (l.map g) →
+      ∃ a ∈ l, (f a, g a) = p := by
+  intro l
+  induction l with
+  | nil => intro p hp; simp at hp
+  | cons a l ih =>
+    intro p hp
+    rw [List.map_cons, List.map_cons, List.zip_cons_cons] at hp
+    rcases List.mem_cons.1 hp with h | h
+    · exact ⟨a, List.mem_cons_self .., h.symm⟩
+    · obtain ⟨a', ha', hfa⟩ := ih h
+      exact ⟨a', List.mem_cons_of_mem _ ha', hfa⟩
+
+private theorem getD_mem {α : Type} {l : List α} {i : Nat} (d : α)
+    (h : i < l.length) : l.getD i d ∈ l := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem h, Option.getD_some]
+  exact List.getElem_mem h
+
+private theorem side_fits_mem {b : Nat} {l r : Array Int}
+    (hl : ∀ x ∈ l.toList, Flac.Bits.FitsSInt b x)
+    (hr : ∀ x ∈ r.toList, Flac.Bits.FitsSInt b x) :
+    ∀ x ∈ (Flac.Stereo.sideA l r).toList, Flac.Bits.FitsSInt (b + 1) x := by
+  intro x hx
+  rw [Flac.Stereo.sideA_toList, Flac.Stereo.side] at hx
+  obtain ⟨u, hu, v, hv, huv⟩ := mem_zipWith hx
+  rw [← huv]
+  exact Flac.Stereo.side_fits b u v (hl u hu) (hr v hv)
+
+private theorem mid_fits_mem {b : Nat} {l r : Array Int}
+    (hl : ∀ x ∈ l.toList, Flac.Bits.FitsSInt b x)
+    (hr : ∀ x ∈ r.toList, Flac.Bits.FitsSInt b x) :
+    ∀ x ∈ (Flac.Stereo.midA l r).toList, Flac.Bits.FitsSInt b x := by
+  intro x hx
+  rw [Flac.Stereo.midA_toList, Flac.Stereo.mid] at hx
+  obtain ⟨u, hu, v, hv, huv⟩ := mem_zipWith hx
+  rw [← huv]
+  exact Flac.Stereo.mid_fits b u v (hl u hu) (hr v hv)
+
+/-- The four shapes `chooseFrame` can produce. Both independent branches —
+    two channels coded independently, and more than two channels — share one
+    description, which is what keeps this to four cases. -/
+private theorem chooseFrame_shape (b : Nat) (chs : Array (Array Int)) :
+    ((chooseFrame b chs).mode = .independent ∧
+        (chooseFrame b chs).subs = chs.toList.map fun c => (chooseSub b c, c))
+      ∨ (∃ l r, chs.toList = [l, r] ∧ (chooseFrame b chs).mode = .leftSide ∧
+          (chooseFrame b chs).subs = [(chooseSub b l, l),
+            (chooseSub (b + 1) (Flac.Stereo.sideA l r), Flac.Stereo.sideA l r)])
+      ∨ (∃ l r, chs.toList = [l, r] ∧ (chooseFrame b chs).mode = .rightSide ∧
+          (chooseFrame b chs).subs =
+            [(chooseSub (b + 1) (Flac.Stereo.sideA l r), Flac.Stereo.sideA l r),
+             (chooseSub b r, r)])
+      ∨ (∃ l r, chs.toList = [l, r] ∧ (chooseFrame b chs).mode = .midSide ∧
+          (chooseFrame b chs).subs =
+            [(chooseSub b (Flac.Stereo.midA l r), Flac.Stereo.midA l r),
+             (chooseSub (b + 1) (Flac.Stereo.sideA l r), Flac.Stereo.sideA l r)]) := by
+  rw [chooseFrame]
+  simp only []
+  split
+  · rename_i h2
+    have ht := toList_two chs h2
+    split
+    · exact Or.inl ⟨rfl, by rw [ht]; rfl⟩
+    · split
+      · exact Or.inr (Or.inl ⟨_, _, ht, rfl, rfl⟩)
+      · split
+        · exact Or.inr (Or.inr (Or.inl ⟨_, _, ht, rfl, rfl⟩))
+        · exact Or.inr (Or.inr (Or.inr ⟨_, _, ht, rfl, rfl⟩))
+  · exact Or.inl ⟨rfl, by rw [Array.toList_map]⟩
+
+/-- **The frame's decisions are valid**, so `orVerbatim` keeps them. -/
+theorem chooseFrame_asg_valid {b bs : Nat} (hb : 0 < b) (chs : Array (Array Int))
+    (hlen : ∀ c ∈ chs.toList, c.toList.length = bs)
+    (hfit : ∀ c ∈ chs.toList, ∀ x ∈ c.toList, Flac.Bits.FitsSInt b x)
+    (hn1 : 1 ≤ chs.size) (hn8 : chs.size ≤ 8) :
+    (chooseFrame b chs).asg.Valid b bs (chs.toList.map Array.toList) := by
+  have hall : ∀ c ∈ chs.toList.map Array.toList, c.length = bs := by
+    intro c hc
+    obtain ⟨a, ha, hac⟩ := List.mem_map.1 hc
+    rw [← hac]
+    exact hlen a ha
+  have hpair : ∀ (l r : Array Int), chs.toList = [l, r] →
+      (∀ x ∈ l.toList, Flac.Bits.FitsSInt b x) ∧
+        (∀ x ∈ r.toList, Flac.Bits.FitsSInt b x) := by
+    intro l r ht
+    exact ⟨hfit l (by rw [ht]; exact List.mem_cons_self ..),
+      hfit r (by rw [ht]; exact List.mem_cons_of_mem _ (List.mem_cons_self ..))⟩
+  refine ⟨hall, ?_⟩
+  rcases chooseFrame_shape b chs with ⟨hm, hs⟩ | ⟨l, r, ht, hm, hs⟩ |
+    ⟨l, r, ht, hm, hs⟩ | ⟨l, r, ht, hm, hs⟩
+  · rw [FramePrep.asg, hm, hs]
+    refine ⟨by simpa using hn1, by simpa using hn8, ?_, ?_⟩
+    · simp only [List.map_map, List.length_map]
+    · intro p hp
+      simp only [List.map_map] at hp
+      obtain ⟨c, hc, hpc⟩ := mem_zip_map_self hp
+      rw [← hpc]
+      exact chooseSub_cfg_valid hb c (hfit c hc)
+  · obtain ⟨hl, hr⟩ := hpair l r ht
+    rw [FramePrep.asg, hm, hs, ht]
+    refine ⟨chooseSub_cfg_valid hb _ hl, ?_⟩
+    rw [← Flac.Stereo.sideA_toList]
+    exact chooseSub_cfg_valid (by omega) _ (side_fits_mem hl hr)
+  · obtain ⟨hl, hr⟩ := hpair l r ht
+    rw [FramePrep.asg, hm, hs, ht]
+    refine ⟨?_, chooseSub_cfg_valid hb _ hr⟩
+    rw [← Flac.Stereo.sideA_toList]
+    exact chooseSub_cfg_valid (by omega) _ (side_fits_mem hl hr)
+  · obtain ⟨hl, hr⟩ := hpair l r ht
+    rw [FramePrep.asg, hm, hs, ht]
+    refine ⟨?_, ?_⟩
+    · rw [← Flac.Stereo.midA_toList]
+      exact chooseSub_cfg_valid hb _ (mid_fits_mem hl hr)
+    · rw [← Flac.Stereo.sideA_toList]
+      exact chooseSub_cfg_valid (by omega) _ (side_fits_mem hl hr)
+
 end Flac.Encode
