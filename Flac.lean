@@ -22,6 +22,7 @@ import Flac.Spec.Frame
 import Flac.Spec.Lpc
 import Flac.Spec.Heuristics
 import Flac.Spec.Emit
+import Flac.Spec.Encode
 import Flac.Spec.PcmBytes
 import Flac.Spec.Reader
 import Flac.Spec.Rice
