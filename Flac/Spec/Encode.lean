@@ -1092,4 +1092,174 @@ theorem wastedDetectF_dvd_mem (b : Nat) (blk : Array Int) :
   rw [← hgi]
   exact wastedDetectF_dvd b blk j
 
+/-! ## The chooser correspondence
+
+`chooseFrame` makes the decisions; `FramePrep.asg` names them as a
+`Frame.ChannelAsg`. These lemmas say the two describe the same frame: same
+channel code, same `(depth, config, samples)` plan, and each decision's
+cached block really is the wasted-bit-scaled image of the block it was made
+from. Nothing here reasons about a `Float` — the searches are only ever
+*applied*, on both sides of every equation. -/
+
+/-- The cached block is the scaled block: the fast code divides by
+    `(p2 w : Int)` and `Flac.Bits.shiftDown w` *is* division by `2 ^ w`. -/
+theorem chooseSub_denotes (b : Nat) (blk : Array Int) :
+    (chooseSub b blk).Denotes blk := by
+  simp only [chooseSub, SubPrep.Denotes]
+  split
+  · rfl
+  · congr 1
+    funext x
+    simp only [Flac.Bits.shiftDown, p2_eq]
+
+theorem chooseSub_emitOk (b : Nat) (blk : Array Int) :
+    (chooseSub b blk).plan.EmitOk (chooseSub b blk).scaled :=
+  emitOk_sanitize _ _
+
+private theorem list_two {α : Type} (l : List α) (d : α) (h : l.length = 2) :
+    l = [l.getD 0 d, l.getD 1 d] := by
+  match l with
+  | [_, _] => rfl
+  | [] => simp at h
+  | [_] => simp at h
+  | _ :: _ :: _ :: _ => simp at h
+
+private theorem getD_eq (a : Array (Array Int)) (i : Nat) :
+    a.getD i #[] = a.toList.getD i #[] := by
+  unfold Array.getD
+  split
+  · rename_i h
+    rw [List.getD_eq_getElem?_getD,
+      List.getElem?_eq_getElem (by simpa using h)]
+    rfl
+  · rename_i h
+    rw [List.getD_eq_getElem?_getD,
+      List.getElem?_eq_none (by simpa using Nat.le_of_not_lt h)]
+    rfl
+
+/-- Two channels, named the way both sides name them. -/
+private theorem toList_two (a : Array (Array Int)) (h : a.size = 2) :
+    a.toList = [a.getD 0 #[], a.getD 1 #[]] := by
+  rw [getD_eq, getD_eq]
+  exact list_two a.toList #[] (by simpa using h)
+
+@[simp] private theorem chooseSub_depth (b : Nat) (blk : Array Int) :
+    (chooseSub b blk).depth = b := rfl
+
+private theorem planOf_map (b : Nat) : ∀ cs : List (Array Int),
+    planOf (cs.map fun c => (chooseSub b c, c))
+      = (((cs.map fun c => (chooseSub b c, c)).map fun q => q.1.cfg).map
+          (fun c => (b, c))).zip cs := by
+  intro cs
+  induction cs with
+  | nil => rfl
+  | cons c cs ih =>
+    simp only [List.map_cons, planOf, List.zip_cons_cons, ih, chooseSub_depth]
+
+/-- The decisions denote exactly the reference's subframe plan. -/
+theorem chooseFrame_planOf (b : Nat) (chs : Array (Array Int)) :
+    planOf (chooseFrame b chs).subs
+      = Emit.W.planA b (chooseFrame b chs).asg chs.toList := by
+  rw [chooseFrame]
+  simp only []
+  split
+  · rename_i h2
+    rw [toList_two chs h2]
+    split
+    · simp only [FramePrep.asg, planOf, Emit.W.planA, List.map_cons,
+        List.map_nil, List.zip_cons_cons, List.zip_nil_right, chooseSub_depth]
+    · split
+      · simp only [FramePrep.asg, planOf, Emit.W.planA, Flac.Stereo.sideA,
+          chooseSub_depth]
+      · split
+        · simp only [FramePrep.asg, planOf, Emit.W.planA, Flac.Stereo.sideA,
+            chooseSub_depth]
+        · simp only [FramePrep.asg, planOf, Emit.W.planA, Flac.Stereo.sideA,
+            Flac.Stereo.midA, chooseSub_depth]
+  · simp only [FramePrep.asg, Array.toList_map, planOf_map, Emit.W.planA]
+
+/-- The header code the fast encoder writes is the reference's. -/
+theorem chooseFrame_code (b : Nat) (chs : Array (Array Int)) :
+    (chooseFrame b chs).code (chooseFrame b chs).subs.length
+      = (chooseFrame b chs).asg.code chs.size := by
+  rw [chooseFrame]
+  simp only []
+  split
+  · rename_i h2
+    split
+    · simp only [FramePrep.code, FramePrep.asg, Frame.ChannelAsg.code,
+        List.length_cons, List.length_nil]
+      omega
+    · split
+      · simp only [FramePrep.code, FramePrep.asg, Frame.ChannelAsg.code]
+      · split
+        · simp only [FramePrep.code, FramePrep.asg, Frame.ChannelAsg.code]
+        · simp only [FramePrep.code, FramePrep.asg, Frame.ChannelAsg.code]
+  · simp only [FramePrep.code, FramePrep.asg, Frame.ChannelAsg.code,
+      Array.toList_map, List.length_map, Array.length_toList]
+
+/-- Every decision is sound for emission. -/
+theorem chooseFrame_subs_ok (b : Nat) (chs : Array (Array Int)) :
+    ∀ q ∈ (chooseFrame b chs).subs,
+      q.1.Denotes q.2 ∧ q.1.plan.EmitOk q.1.scaled := by
+  have hpair : ∀ (d : Nat) (c : Array Int) (q : SubPrep × Array Int),
+      q = (chooseSub d c, c) → q.1.Denotes q.2 ∧ q.1.plan.EmitOk q.1.scaled := by
+    intro d c q hq
+    subst hq
+    exact ⟨chooseSub_denotes d c, chooseSub_emitOk d c⟩
+  have hcons : ∀ (d0 d1 : Nat) (c0 c1 : Array Int) (q : SubPrep × Array Int),
+      q ∈ [(chooseSub d0 c0, c0), (chooseSub d1 c1, c1)] →
+      q.1.Denotes q.2 ∧ q.1.plan.EmitOk q.1.scaled := by
+    intro d0 d1 c0 c1 q hq
+    rcases List.mem_cons.1 hq with h | h
+    · exact hpair _ _ q h
+    · rcases List.mem_cons.1 h with h' | h'
+      · exact hpair _ _ q h'
+      · simp at h'
+  rw [chooseFrame]
+  simp only []
+  split
+  · split
+    · exact hcons _ _ _ _
+    · split
+      · exact hcons _ _ _ _
+      · split
+        · exact hcons _ _ _ _
+        · exact hcons _ _ _ _
+  · intro q hq
+    simp only [Array.toList_map, List.mem_map] at hq
+    obtain ⟨c, _, hc⟩ := hq
+    exact hpair b c q hc.symm
+
+private theorem headD_eq_getD {α : Type} (l : List α) (d : α) :
+    l.headD d = l.getD 0 d := by
+  cases l <;> rfl
+
+private theorem headD_toList (a : Array (Array Int)) :
+    a.toList.headD #[] = a.getD 0 #[] := by
+  rw [headD_eq_getD, getD_eq]
+
+theorem chooseFrame_blockSize (b : Nat) (chs : Array (Array Int)) :
+    (chooseFrame b chs).blockSize = (chs.toList.headD #[]).size := by
+  rw [headD_toList, chooseFrame]
+  simp only []
+  split
+  · split
+    · rfl
+    · split
+      · rfl
+      · split <;> rfl
+  · rfl
+
+/-- **A whole frame.** The shipped encoder's frame — its own search, its own
+    writers — emits exactly what the verified emitter emits for the channel
+    assignment those decisions denote. -/
+theorem sim_frame (b : Nat) (strat : Bool) (num : Nat) (chs : Array (Array Int)) :
+    Simulates (fun bw => pushFrameOf bw b strat num (chooseFrame b chs))
+      (Emit.W.pushFrame b strat num (chooseFrame b chs).asg chs.toList) :=
+  sim_pushFrameOf b strat num (chooseFrame b chs) (chooseFrame b chs).asg
+    chs.toList (chooseFrame b chs).subs rfl (chooseFrame_planOf b chs)
+    (chooseFrame_blockSize b chs) (chooseFrame_code b chs)
+    (chooseFrame_subs_ok b chs)
+
 end Flac.Encode
