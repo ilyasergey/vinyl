@@ -246,8 +246,13 @@ in order and remain byte-identical to the serial verified encoder under
 the default heuristics — which differential tests check on every corpus
 file).
 
-Retiring that runtime decode without losing performance now has a precise
-cut, and it is worth being exact about what is and is not in the way.
+Retiring that runtime decode is now in progress, by a different route than
+the one this document used to describe. Rather than array-izing the *proven*
+emitter, `Flac/Native/Encode.lean` is being proven directly. The project
+owner chose that trade explicitly, accepting that a proof stack pinned to
+the fast encoder will be invalidated by future performance passes; in
+exchange it carries less performance risk, since the code being proven is
+already measured at 1.27× rather than hoped to reach it.
 
 **Not in the way: the searches.** They need no verification at all. A
 chooser's *output* carries a decidable validity certificate by
@@ -256,30 +261,65 @@ shift, coefficients and Rice parameters into legal range), and
 `EncoderCfg.safeChooser` checks it at runtime with a VERBATIM fallback.
 So the round-trip theorem already holds for *every* chooser — including
 one computing in `Float`, which is unprovable in Lean (its operations are
-`@[extern]` with no axiomatization). Search quality is a
+compiler intrinsics with no axiomatization). Search quality is a
 compression question, never a correctness one.
 
-**In the way: the plumbing.** `Flac/Native/Encode.lean` reimplements the
-bit writer, subframe layout, frame headers, CRC placement and stream
-assembly, and none of that is proven — while `Flac.Emit`, which *is*
-proven, can only be fed lists and only emits serially. So M6b is:
-(1) a byte→array input pipeline proven equal to
-`deinterleave ∘ pcm16OfByteList`; (2) array-side chunking proven equal to
-`Stream.chunkChannels`; (3) parallel frame emission proven equal to the
-serial `pushFrames` — and this last part is already well-supported,
-because `pushFrame_spec` says emission only *appends*
-(`(pushFrame … w).bits = w.bits ++ Frame.write …`), which is the same
-locality argument that licensed per-frame serialization on the decode
-side. The payoff is measured: decoding the encoder's own output takes
-0.119 s of encode's 0.434 s wall on a 32 MB probe, so retiring the
-certificate would take the encode gap from ~1.3× to roughly **0.96×** —
-past parity, trading nothing.
+Nor does `Float` block the *emission* theorem, for a reason worth stating
+precisely: `Float` operations are opaque but **deterministic**. A search and
+the chooser it instantiates need only be the same function applied to equal
+inputs, and `f x = f x` requires no lemma about `f`. What `Float` does
+forbid is a `Float` value reaching the *bytes*.
 
-A fourth, smaller stage belongs on that list: `W`'s own bit writer has the
-allocation problem the fast one had until recently — `W.flushGo` returns
-`ByteArray × Nat × Nat` (two `Prod` cells per bit push, plus a boxed
+**Which it was doing.** Until session 10 the encoder's residual bits came
+from `FloatArray`s: `pushResidual`/`pushRiceRange` folded float values into
+the stream, and `lpcResidualArrF`'s doc asserted the unprovable step
+outright — "every value is an exact integer, so the bytes emitted from it
+are the bytes an `Int` residual would emit". True, and exactly the claim the
+runtime certificate existed to cover; unprovable, because there are no
+equations to reason from. So emission moved to the exact `Int` residual
+(`Emit.fixedResA`/`lpcResA`), costing 5.6% of encode, and the Float
+emission path was deleted. Searches still run on `Float`: they only choose.
+
+**In the way, and now discharged: the writers.** `Flac/Spec/Encode.lean`
+relates the shipped `BitWriter` (a `UInt64` accumulator whose bits at or
+above the pending count are deliberately stale) to `Flac.Emit.W` (a `Nat`
+accumulator, masked at every step) by `Sim`: same bytes, same pending
+count, same pending bits. `Simulates` lifts that to writer transformers and
+composes, so each primitive is one structural induction. The simulation now
+reaches `Emit.W.pushFrame` — a whole frame including both CRCs, which line
+up because `sim_push_buf` says a value read off the writer's own buffer is
+the same on both sides *when the buffers are*.
+
+Two shapes made that possible, both free. `BitWriter.accPush` is one
+accumulator step shared by `push` and the hot residual loop, so the loop —
+which carries `buf`/`acc`/`n` unpacked to avoid allocating per sample — is
+*definitionally* pushing rather than inlining something to be discharged.
+And emission mirrors `Emit.W`'s recursion shapes, so no proof argues about
+`Std.Range.forIn`.
+
+**Still in the way.** Three things: a byte→array input bridge for
+`frameChannels`; the chooser correspondence (`planOf`, `SubPrep.Denotes`,
+`SubPlan.EmitOk`), whose real work is a fast array-side validity decider,
+since today's `Decidable` instances re-materialize residual lists; and
+stream assembly with the per-frame `Task` collapse, for which
+`pushFrame_spec` (emission only appends) is the same locality argument that
+licensed per-frame serialization on the decode side.
+
+The payoff is measured, not estimated: the certificate is 31% of encode on
+a 47 MB stereo probe, and `Int` emission cost 6.6%, so retiring it lands at
+≈0.75× today's encode — about 0.95× libFLAC. Until the chain closes, master
+keeps the certificate: the proven path is being built alongside it, and only
+the final commit flips `--encode` and deletes `pcm16Certified`.
+`Flac.encodePcm16Fast` keeps its signature and
+`Flac.Stream.decodePcm16_encodePcm16Fast` keeps its exact statement — the
+`Option` survives for the input well-formedness guard — so `pin_encode_fast`
+never moves.
+
+A smaller stage remains on `Flac.Emit.W`'s own bit writer: `W.flushGo`
+returns `ByteArray × Nat × Nat` (two `Prod` cells per bit push, plus a boxed
 scalar) and multiplies by `p2 k` where the fast writer shifts a `UInt64`.
-Its `Emits` lemmas need the same de-tupling treatment `flushBytes` got.
+That only matters for `--encode-slow`, which is no longer on the shipping
+path's critical route.
 
 One more by-construction safety device: heuristic outputs carry decidable
 validity certificates, and the encoder (`EncoderCfg.safeChooser`) checks

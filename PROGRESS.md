@@ -988,3 +988,103 @@ measured **113× slower** than the fast encoder for byte-identical output
    *appends* (`(pushFrame … w).bits = w.bits ++ Frame.write …`), which is
    the same locality argument that licensed per-frame serialization on the
    decode side this session.
+
+---
+
+## 2026-08-24 — Session 10: M6b — proving the fast encoder, route changed
+
+**Attempted:** the user chose to retire the runtime certificate by proving
+`Flac/Native/Encode.lean` *directly*, explicitly accepting that a proof stack
+pinned to the fast encoder will be invalidated by future performance passes.
+That replaces the recorded M6b plan (array-ize the already-proven
+`Flac.Emit` emitter). Tagged `certified-encoder-stable` at `a163b25` first.
+
+**Why the direct route is defensible.** It shares stages with the recorded
+plan (input pipeline, parallel frames) and differs only in proving the *fast*
+writer rather than speeding up the *proven* one — which carries strictly less
+performance risk, since the code being proven is already measured at 1.27×.
+And `Float` does not block it: Float operations are opaque but
+*deterministic*, so a search and the chooser it instantiates need only be the
+same function on equal inputs. `f x = f x` needs no Float lemma.
+
+**The finding that changed the cost.** The file's own header claimed "the
+bytes are always emitted from the exact `Int` path below". They were not:
+`pushResidual`/`pushRiceRange` took a `FloatArray` and folded its values
+into the stream, so *every residual bit was Float-derived*.
+`lpcResidualArrF`'s doc asserted the unprovable part outright — "every value
+is an exact integer, so the bytes emitted from it are the bytes an `Int`
+residual would emit". That is precisely the claim the runtime certificate was
+covering, and it can never be proven: Lean's `Float` operations are compiler
+intrinsics with no axiomatization, so there is nothing to reason from. Any
+emission theorem therefore *required* moving emission to `Int` first.
+
+**Landed** (47 MB stereo SQAM probe, `bench/real_data/pcm/sqam/33.pcm`,
+9-run interleaved medians; byte-identical output on all 37 corpus files at
+every step):
+
+| commit | change | vs tag |
+|---|---|---|
+| `9655cbd` | search/emission split (`chooseSub`/`chooseFrame` vs `pushSubframeOf`/`pushFrameOf`) | −0.5% |
+| `7f39546` | emit from `Emit.fixedResA`/`lpcResA`, delete the Float emission path | +5.6% |
+| `f1cec08` | emission reshaped to mirror `Emit.W` recursion for recursion | +6.9% |
+| `d573ed1` | shared `BitWriter.accPush`; hot-loop masks restored | +6.5% |
+| `ee44cab` | list-shaped partition loop | +6.6% |
+
+The +6.6% buys provable emission. The certificate it unblocks measures
+**31% of encode** on the same probe (0.201 s of 0.647 s), so retiring it
+still lands at ≈0.75× today's encode — about **0.95× libFLAC**, against the
+0.93× projected before this finding.
+
+`Flac/Spec/Encode.lean` (new, 571 lines, 34 theorems, no sorry/axioms):
+`Sim` relates `BitWriter` (UInt64 accumulator, stale bits above the pending
+count) to `Emit.W` (Nat accumulator, masked every step); `Simulates` lifts it
+to writer transformers and composes. `flush_sim` discharges the fast
+writer's deliberate sloppiness — it never masks, because every byte it emits
+is bits `[n-8, n)` and nothing at or above `n` is read. `sim_push` is the
+central step; `push_key` is factored out so the hot loop reuses it. Then all
+primitives, the sequence writers, `sim_pushRiceRange` (the per-sample loop),
+partitions, residuals, subframes, and `sim_pushFrameOf` — a whole frame,
+including both CRCs, via `sim_push_buf`: a value read off the writer's own
+buffer is the same on both sides *because* the buffers are.
+
+Two code changes were made purely to make statements provable, both free:
+- `BitWriter.accPush`, one accumulator step shared by `push` and the hot
+  residual loop, so the loop's two pushes are *definitionally* pushes rather
+  than an inlining to be discharged (re-adding the masks it drops cost
+  nothing measurable: +6.5% vs +6.7%);
+- emission reshaped to `Emit.W`'s recursion shapes, so every proof is a
+  structural induction instead of an argument about `Std.Range.forIn`.
+
+**Blocked:** nothing.
+
+**Next**, in order:
+1. **Input bridge** — `frameChannels bytes ch lo hi` equals the matching
+   window of `deinterleave ∘ pcm16OfByteList` composed with
+   `Stream.chunkChannels`. Shared with the abandoned plan.
+2. **Chooser correspondence** — `chooseFrame` produces a `FramePrep` with
+   `planOf qs = Emit.W.planA b asg chs`, `SubPrep.Denotes`, and
+   `SubPlan.EmitOk`. Note `EmitOk` should be *derivable*, not separately
+   checked: `(Rice.partSizes bs po ord).sum = bs - ord` under
+   `ResidualCfg.Valid`'s `dvd`/`ord_lt`, and `Valid.len` gives
+   `res.length = bs - ord`, while `k ≤ 32` follows from `Partition.Valid`'s
+   `k < m.escapeCode = 15`. So the existing certificate `safeChooser`
+   already checks implies everything emission needs — but the fast encoder
+   must run that check, and today's `Decidable` instances re-materialize
+   residual *lists*. A fast array-side decider proven equal to them is the
+   real work here.
+3. **Stream assembly and the Task collapse** — STREAMINFO prefix, then
+   per-frame concatenation. `pushFrame_spec` (emission only appends) is the
+   locality argument; `(Task.spawn f).get = f ()` holds by `rfl`, or a
+   `ByteStep`-style erased payload avoids even that.
+4. **Flip and delete** — only in the final commit: point `--encode` at the
+   proven path and drop `pcm16Certified`. `Flac.encodePcm16Fast` keeps its
+   signature and `Flac.Stream.decodePcm16_encodePcm16Fast` keeps its exact
+   statement; the `Option` survives for the input well-formedness guard, so
+   `pin_encode_fast` is untouched. Until then master keeps the certificate,
+   so the ratchet never regresses.
+
+**Toolchain note for future sessions:** no mathlib means no `set`,
+`conv_lhs`, `norm_num`, `ring`. Core `conv` provides `lhs`/`rhs`/`zeta`.
+`simp only [f]` zeta-reduces where `unfold f` leaves `have`s in the way, but
+loops on well-founded recursive definitions — `rw [f]` then `simp only []`
+unfolds exactly once.
