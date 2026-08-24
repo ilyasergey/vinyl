@@ -67,11 +67,16 @@ the legend, so the `-0`/`-5` presets stay visible for context.
 
 ![Throughput vs libFLAC](performance.png)
 
-Current five-run medians (2026-08-24): Vinyl encode 56.8 MB/s and Vinyl
-decode 121.4 MB/s, versus 107.3 MB/s for `flac -5` encode, 74.0 MB/s for
-`flac -8` encode, and 124.3 MB/s for libFLAC decode. That is a
-**1.02× decode gap** and a 1.89× encode gap against `flac -5` — **1.30×
+Current five-run medians (2026-08-24): Vinyl encode 58.4 MB/s and Vinyl
+decode 123.7 MB/s, versus 107.6 MB/s for `flac -5` encode, 74.5 MB/s for
+`flac -8` encode, and 124.8 MB/s for libFLAC decode. That is a
+**1.01× decode gap** and a 1.84× encode gap against `flac -5` — **1.27×
 against `flac -8`, the level whose compression Vinyl matches**.
+
+Repeating the whole run moves these medians by 2–3% (thermal state, page
+cache), which is why the gaps are quoted to two significant figures and
+why the stage tables further down use a 32 MB probe instead: a single
+large file resolves a 5% change, where the corpus medians do not.
 
 ### Read the corpus medians with the file size in mind
 

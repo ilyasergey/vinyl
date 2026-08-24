@@ -123,9 +123,12 @@ the certified heuristics choose well. Speed is therefore measured against
 
 | | Vinyl | libFLAC | gap |
 |---|---|---|---|
-| decode | 121.4 MB/s | 124.3 MB/s | **1.02×** |
-| encode | 56.8 MB/s | 74.0 MB/s (`flac -8`) | **1.30×** |
-| encode vs `flac -5` | 56.8 MB/s | 107.3 MB/s | 1.89× |
+| decode | 123.7 MB/s | 124.8 MB/s | **1.01×** |
+| encode | 58.4 MB/s | 74.5 MB/s (`flac -8`) | **1.27×** |
+| encode vs `flac -5` | 58.4 MB/s | 107.6 MB/s | 1.84× |
+
+Run-to-run spread on these medians is 2–3%, so read the gaps to two
+significant figures, and only ever against baselines from the *same* run.
 
 These corpus files are 1 MB each, so **process startup is charged to every
 measurement** — 3.1 ms of Lean runtime init against libFLAC's 2.7 ms, on

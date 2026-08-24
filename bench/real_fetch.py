@@ -11,10 +11,14 @@ The generated tree is::
 
 Examples::
 
+    # Default: the compact SQAM corpus only (explicit licence acknowledgement)
+    python3 bench/real_fetch.py --accept-ebu-terms
     python3 bench/real_fetch.py --corpus sqam --accept-ebu-terms
+    # Large optional corpus: 644.1 MiB of downloads, plus extracted FLAC/PCM
     python3 bench/real_fetch.py --corpus librispeech
     python3 bench/real_fetch.py --corpus all --accept-ebu-terms
     python3 bench/real_fetch.py --corpus sqam --accept-ebu-terms --offline
+    python3 bench/real_fetch.py --list-corpora
 
 The EBU permits SQAM use here as an R&D tool, but not other commercial use.
 Passing ``--accept-ebu-terms`` records an explicit acknowledgement; it does
@@ -123,6 +127,7 @@ ARCHIVES = {
         license="CC BY 4.0",
         published_checksum_kind="md5",
         published_checksum="32fa31d27d2e1cad72775fee3f4849a9",
+        expected_size=346_663_984,
     ),
     "librispeech-test-other": ArchiveSpec(
         suite="librispeech-test-other",
@@ -132,6 +137,7 @@ ARCHIVES = {
         license="CC BY 4.0",
         published_checksum_kind="md5",
         published_checksum="fb5a50374b501bb3bac4815ee91d3135",
+        expected_size=328_757_843,
     ),
 }
 

@@ -850,8 +850,9 @@ push encode toward 1.1× — without giving up the compression win over
 | `86ff281` float residual for emission | 73.7 | 244.3 | 1.32× | 0.85× |
 | three autocorrelation lags per pass | 75.5 | 244.3 | **1.27×** | **0.85×** |
 
-Corpus medians moved 38.8 → 56.8 MB/s encode (gap 1.94× → **1.30×**) and
-82.7 → 121.4 MB/s decode (1.53× → **1.02×**). Ratio 39.580% → 39.634%,
+Corpus medians moved 38.8 → 58.4 MB/s encode (gap 1.94× → **1.27×**) and
+82.7 → 123.7 MB/s decode (1.53× → **1.01×**); repeating the whole run
+moves these by 2–3%. Ratio 39.580% → 39.634%,
 still ahead of `flac -8`'s 39.784%. Against file size, encode settles
 around **1.24×** and decode at **0.88×** from 8 MB up.
 
