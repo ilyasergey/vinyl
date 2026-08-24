@@ -2651,6 +2651,32 @@ theorem pcm16Fast_eq (chs : List (List Int)) :
     ByteArray.empty_append,
     show chs.map (·.drop 0) = chs from by simp]
 
+/-- **Serializing the deinterleaved samples returns the original bytes.**
+    The heart of the byte-level round trip — and also what makes the
+    reference encoder's STREAMINFO digest a digest of the *input* bytes,
+    which the shipped encoder relies on. -/
+theorem pcm16Fast_deinterleave {ch : Nat} (hch : 0 < ch) (bytes : ByteArray)
+    (hsz : bytes.size % (2 * ch) = 0) :
+    pcm16Fast (deinterleave ch (pcm16OfByteList bytes.data.toList)) = bytes := by
+  have hlist : bytes.data.toList.length = bytes.size := Array.length_toList
+  obtain ⟨m, hm⟩ : ∃ m, bytes.size = m * (2 * ch) :=
+    ⟨bytes.size / (2 * ch),
+      (Nat.div_mul_cancel (Nat.dvd_of_mod_eq_zero hsz)).symm⟩
+  have hplen : (pcm16OfByteList bytes.data.toList).length = ch * m := by
+    rw [length_pcm16OfByteList, hlist, hm, Nat.mul_left_comm, Nat.mul_comm ch m]
+    omega
+  have hn : (pcm16OfByteList bytes.data.toList).length / ch = m := by
+    rw [hplen]
+    exact Nat.mul_div_cancel_left m hch
+  rw [pcm16Fast_eq]
+  unfold deinterleave interleave
+  rw [hn,
+    headD_deinterleaveN hch m _ (by rw [hplen, Nat.mul_comm]),
+    interleaveN_deinterleaveN ch m _ (by rw [hplen, Nat.mul_comm]),
+    byteListOfPcm16_pcm16OfByteList _
+      (by rw [hlist, hm, Nat.mul_left_comm]; omega),
+    toByteArray_toList_data]
+
 /-- **The byte-level guarantee**: whenever `encodePcm16Cfg` produces a
     FLAC file at all, decoding that file returns exactly the input PCM
     bytes — no hypotheses. -/
@@ -2666,27 +2692,7 @@ theorem decodePcm16_encodePcm16Cfg {cfg : Stream.EncoderCfg}
     have hdec := decode_encodeCheckedCfg h
     unfold decodePcm16
     simp only [hdec]
-    rw [if_pos (by trivial), pcm16Fast_eq]
-    have hlist : bytes.data.toList.length = bytes.size := Array.length_toList
-    obtain ⟨m, hm⟩ : ∃ m, bytes.size = m * (2 * ch) :=
-      ⟨bytes.size / (2 * ch),
-        (Nat.div_mul_cancel (Nat.dvd_of_mod_eq_zero hsz)).symm⟩
-    have hplen : (pcm16OfByteList bytes.data.toList).length = ch * m := by
-      rw [length_pcm16OfByteList, hlist, hm, Nat.mul_left_comm,
-        Nat.mul_comm ch m]
-      omega
-    have hn : (pcm16OfByteList bytes.data.toList).length / ch = m := by
-      rw [hplen]
-      exact Nat.mul_div_cancel_left m hch
-    show Except.ok (byteListOfPcm16 (interleave (deinterleave ch
-      (pcm16OfByteList bytes.data.toList)))).toByteArray = Except.ok bytes
-    unfold deinterleave interleave
-    rw [hn,
-      headD_deinterleaveN hch m _ (by rw [hplen, Nat.mul_comm]),
-      interleaveN_deinterleaveN ch m _ (by rw [hplen, Nat.mul_comm]),
-      byteListOfPcm16_pcm16OfByteList _
-        (by rw [hlist, hm, Nat.mul_left_comm]; omega),
-      toByteArray_toList_data]
+    rw [if_pos (by trivial), pcm16Fast_deinterleave hch bytes hsz]
 
 /-- Byte-level guarantee for the default-configuration encoder. -/
 theorem decodePcm16_encodePcm16 {ch : Nat} {bytes flac : ByteArray}

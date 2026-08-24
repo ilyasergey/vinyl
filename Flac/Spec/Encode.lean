@@ -2,6 +2,7 @@ import Flac.Native.Codec
 import Flac.Native.Encode
 import Flac.Spec.Decode
 import Flac.Spec.Emit
+import Flac.Spec.PcmBytes
 
 /-!
 # The shipped writer simulates the verified one
@@ -1634,5 +1635,24 @@ theorem pushFrames_concat (b : Nat) (varBlk : Bool) (blockSize' : Nat)
         rw [show i + (k + 1) = i + 1 + k from by omega,
           List.getD_cons_succ] at hb
         exact hb
+
+/-! ## The digest is a digest of the input
+
+The shipped encoder takes the STREAMINFO digest over the input bytes; the
+reference takes it over `Stream.pcmBytes` of the samples. Those are the same
+bytes — which is the last thing needed for the two streams to be equal
+byte for byte. -/
+
+theorem pcmBytes_deinterleave {ch : Nat} (hch : 0 < ch) (bytes : ByteArray)
+    (hsz : bytes.size % (2 * ch) = 0) :
+    Stream.pcmBytes 16 (Flac.deinterleave ch
+        (Flac.pcm16OfByteList bytes.data.toList)) = bytes := by
+  have hmap : ((Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList)).map
+      (fun x => x.toArray)).map Array.toList
+      = Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList) :=
+    map_toArray_toList _
+  show Stream.pcmBytesRange 16 _ 0 _ = _
+  rw [← Stream.pcm16FastA_eq_range, Flac.pcm16FastA_eq, hmap,
+    Flac.pcm16Fast_deinterleave hch bytes hsz]
 
 end Flac.Encode
