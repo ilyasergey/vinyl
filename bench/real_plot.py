@@ -17,6 +17,7 @@ swept: Vinyl's encoder and decoder are frame-parallel and libFLAC 1.5.0 takes
 `-j`.  libFLAC's decoder has no threading option and appears at `-j1` only.
 """
 import csv
+import math
 import os
 import re
 import statistics
@@ -159,7 +160,7 @@ def throughput_panel(ax, jobs, kind, gap_pair, gap_note=""):
         ax.plot(range(1, len(ys) + 1), ys, ms=3.5, **FAMILY[family],
                 label=f"{family} · {count} thread{'s' if count > 1 else ''}"
                       f" — median {statistics.median(ys):.3g} MB/s",
-                ls="--" if count != HEAD and "decode" not in family else "-")
+                ls="-" if count == max(threadsets[family]) else "--")
     ax.set_xlabel(f"benchmark units (each {kind}r sorted slowest → fastest)")
     ax.set_ylabel(f"{kind} throughput, raw MB/s (higher = faster)")
     ax.set_yscale("log")
@@ -188,16 +189,25 @@ def throughput_panel(ax, jobs, kind, gap_pair, gap_note=""):
                           ec="#cbd5e1", lw=0.8))
     ax.set_title(f"{kind.capitalize()} speed at {HEAD} threads")
     ax.grid(alpha=0.25, which="both")
-    ax.legend(fontsize=8, loc="upper left")
+    # Curves rise left to right, so the legend belongs top-left — but with a
+    # thread sweep there are enough entries to sit on the curves.  Give it its
+    # own headroom instead, measured in decades of the log axis.
+    plotted = sum(1 for j in jobs if j in speed)
+    ncol = 2 if plotted > 3 else 1
+    rows = -(-plotted // ncol)
+    lo, hi = min(allv) * 0.85, max(allv) * 1.1
+    ax.set_ylim(lo, hi * 10 ** (0.085 * rows))
+    ax.legend(fontsize=8, loc="upper left", ncol=ncol)
 
 
 fig2, (ax2, ax4) = plt.subplots(2, 1, figsize=(9, 9.5), dpi=150)
 throughput_panel(
     ax2,
-    [("vinyl", HEAD), ("flac -8", HEAD), ("flac -8", 1), ("flac -5", 1)],
+    [("vinyl", HEAD), ("vinyl", 1), ("flac -8", HEAD), ("flac -8", 1),
+     ("flac -5", 1)],
     "encode", (("vinyl", HEAD), ("flac -8", HEAD)), gap_note=" (thread-matched)")
 throughput_panel(
-    ax4, [("vinyl decode", HEAD), ("flac decode", 1)],
+    ax4, [("vinyl decode", HEAD), ("vinyl decode", 1), ("flac decode", 1)],
     "decode", (("vinyl decode", HEAD), ("flac decode", 1)))
 fig2.suptitle("Throughput — Vinyl (verified) vs libFLAC 1.5.0, real-audio corpora")
 fig2.tight_layout()

@@ -148,8 +148,11 @@ See [what the real corpus settled](#what-the-real-corpus-settled).
 
 **Top** — encode. **Bottom** — decode (the shipped buffered decoder). Per-file
 throughput on a log scale, sorted slowest→fastest per implementation; dashed
-lines mark the two medians the arrow spans, and every legend entry carries its
-thread count.
+horizontal lines mark the two medians the arrow spans, and every legend entry
+carries its thread count. Each parallel implementation is drawn **twice** —
+solid at eight threads, dashed at one — so the per-thread gap is legible
+straight off the figure: Vinyl's one-thread encode curve sits at the bottom,
+about 4× below `flac -8`'s.
 
 ![Throughput vs libFLAC](performance.png)
 
@@ -380,9 +383,11 @@ rather than an accounting preference.
 ### Speed
 
 Per-unit throughput, log scale, sorted slowest→fastest per implementation; a
-curve that sits higher is faster. Dashed lines mark the two medians the arrow
-spans, and every legend entry carries its thread count. **Top** — encode.
-**Bottom** — decode (the shipped buffered decoder).
+curve that sits higher is faster. Dashed horizontal lines mark the two medians
+the arrow spans, and every legend entry carries its thread count. Each parallel
+implementation is drawn **twice** — solid at eight threads, dashed at one — so
+the per-thread comparison and the thread-matched one are both on the same
+axes. **Top** — encode. **Bottom** — decode (the shipped buffered decoder).
 
 ![Throughput vs libFLAC on real audio](real_performance.png)
 
