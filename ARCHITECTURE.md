@@ -49,9 +49,9 @@ vinyl/
 │   │   ├── Reader.lean     # BitReader: buffered ByteArray bit reader
 │   │   │                   #   (word-level fast paths proven = the spec)
 │   │   ├── Decode.lean     # the shipped production decoder, Flac.decode
-│   │   ├── Encode.lean     # the fast encoder (arrays/Task-parallel frames;
-│   │   │                   #   unverified by design — certified per call)
-│   │   └── Codec.lean      # Flac.encode, checked + certified-fast encoders,
+│   │   ├── Encode.lean     # the fast encoder (arrays/Task-parallel frames);
+│   │   │                   #   proven to compute Stream.encode
+│   │   └── Codec.lean      # Flac.encode, checked + fast encoders,
 │   │                       #   PCM16 pipeline
 │   └── Spec/               # ALL theorems; no sorry, no axioms, ever
 │       ├── Bits.lean       # L0 round-trips, packing, withConsumed_spec
@@ -249,9 +249,10 @@ so `Flac.Stream.decodePcm16_encodePcm16Fast` follows from
 `decodePcm16_encodePcm16Cfg` with no runtime decode, no fallback, and no
 trust in `Flac.Encode`. Its statement did not change by a character — the
 `Option` survives for the input guard — so the grep-pinned capstone never
-moved. Retiring the certificate was worth 23% of encode: 0.564 s → 0.434 s
-on a 47 MB stereo probe, taking encode from 1.30× `flac -8` to about
-0.95×, while compression stayed byte-identical.
+moved. Retiring the certificate was worth 30% of encode on the 32 MB mono
+probe the bench history uses (68.5 → 97.7 MB/s, taking encode from 1.35×
+`flac -8` to **0.94×**) and 23% on a 47 MB stereo one (0.564 s → 0.434 s).
+Compression is unchanged: the output is byte-identical.
 
 **Why `Float` was never in the way.** Float operations are opaque but
 *deterministic*. A search and the chooser the reference is instantiated
@@ -264,7 +265,8 @@ sides of every equation in the chain and are only ever applied. What
 step ("every value is an exact integer, so the bytes emitted from it are
 the bytes an `Int` residual would emit"). That was precisely the claim the
 certificate existed to cover. Emission now goes through the exact `Int`
-residual (`Emit.fixedResA`/`lpcResA`), at 6% of encode.
+residual (`Emit.fixedResA`/`lpcResA`), at 8% of encode — the whole cost of
+provability was 10%, against the 30% the certificate gave back.
 
 **The chain, bottom to top** (all in `Flac/Spec/Encode.lean`):
 

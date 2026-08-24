@@ -43,6 +43,15 @@ listed here.
 - the encoder always emits the streamable subset: it does not produce
   uncommon block sizes/rates requiring explicit frame-header codes.
 
+The byte-level PCM16 entry point (`Flac.encodePcm16Fast`) checks the
+preconditions of the rows above at run time and returns `none` rather than
+guessing: 1–8 channels, a byte count that is a whole number of frames,
+`16 ≤ blockSize ≤ 65535` (RFC 9639 §9.1 for a fixed-blocksize stream),
+sample rate below 2²⁰ and sample count below 2³⁶ (the STREAMINFO field
+widths). Everything else the encoder needs — equal-length channels, samples
+in range for the bit depth — is a *theorem* about the derived audio
+(`Flac.Encode.audio_wellFormed`), not a scan.
+
 ## Conformance-corpus results
 
 On the [IETF FLAC conformance corpus](https://github.com/ietf-wg-cellar/flac-test-files)

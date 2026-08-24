@@ -1323,3 +1323,55 @@ rather than proof:
 3. De-tuple `Flac.Emit.W`'s bit writer, which only matters for
    `--encode-slow` now.
 4. M7: two-sided verification against RFC 9639.
+
+### Session 10, addendum — benchmarks rerun, figures and docs refreshed
+
+The figures in the entries above came from single passes on a machine that
+was not idle. Rerun properly (desktop apps closed, `BENCH_RUNS=15`, six
+passes for the corpus medians and two for the size sweep), and the picture
+is the same but the numbers are firmer:
+
+**Corpus medians** (committed `bench/results.csv`, the canonical pass):
+encode 70.7 MB/s against `flac -8`'s 74.7 (**1.06×**, from 1.27× at the
+tag), decode 123.6 against 124.9 (**1.01×**), `flac -5` 108.4 (1.53×).
+Compression unchanged at 39.6% versus `flac -8`'s 39.8% — the output is
+byte-identical, so only throughput could move.
+
+**Methodology correction.** `bench/README.md` claimed run-to-run spread of
+2–3% on these medians. That holds for decode (1.01–1.03× across six passes)
+but *not* for encode, which ranged 1.02–1.07×. Encoding is `Task`-parallel,
+so at 1 MB it loses far more to background load than single-threaded
+libFLAC does; a first attempt at these medians, taken with the desktop at
+load ~10, put Vinyl 8% low while libFLAC moved 1%. Both READMEs now say so,
+and point at the size sweep and the 32 MB probe for judging a change.
+
+**The 32 MB probe** (mono, 4096-sample blocks, `flac -8` at 92.3 MB/s) is
+the honest instrument, and it is now in `bench/README.md` as the session-10
+stage table:
+
+| stage | encode | gap (`-8`) |
+|---|---|---|
+| session 9 end | 75.3 MB/s | 1.23× |
+| `Int` residual emission | 69.2 MB/s | 1.33× |
+| plan sanitisation | 68.6 MB/s | 1.35× |
+| stage 3 complete | 68.8 MB/s | 1.34× |
+| self-certifying payloads | 68.5 MB/s | 1.35× |
+| **certificate retired** | 97.7 MB/s | **0.94×** |
+
+So the whole cost of provability was **10%** and the certificate paid
+**30%** back — and encode ends *ahead of* `flac -8` on a large file. The
+earlier "23%" figure was the 47 MB stereo probe; both are now quoted where
+they belong.
+
+**Size sweep**, same material, best of two passes per row: encode overtakes
+`flac -8` from 2 MB (0.99×) and settles at 0.94×; decode overtakes libFLAC
+from 4 MB and settles at 0.87×.
+
+Docs brought current: `README.md` (both tables, the spread caveat, the
+certificate narrative), `bench/README.md` (headline medians, size sweep,
+session-10 stage table, the "where the remaining work is" section — there is
+no encode *gap* on a large file any more), `ARCHITECTURE.md` (file tree,
+the 30%/23% figures), `COVERAGE.md` (the PCM16 entry point's runtime
+preconditions, which now match the block-size and channel rows it already
+claimed). `bench/performance.png` regenerated; `bench/compression.png`
+unchanged, as it must be for byte-identical output.

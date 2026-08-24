@@ -92,18 +92,25 @@ so the `-0`/`-5` presets stay visible for context.
 
 ![Throughput vs libFLAC](performance.png)
 
-Current five-run medians (2026-08-24): Vinyl encode 58.4 MB/s and Vinyl
-decode 123.7 MB/s, versus 107.6 MB/s for `flac -5` encode, 74.5 MB/s for
-`flac -8` encode, and 124.8 MB/s for libFLAC decode. That is a
-**1.01× decode gap** and a 1.84× encode gap against `flac -5` — **1.27×
-against the historical `flac -8` reference**.  Neither encode gap should be
-called compression-matched until the metadata-normalized real-corpus frontier
-has been measured.
+Current fifteen-run medians (2026-08-24, after M6b): Vinyl encode 70.7 MB/s
+and Vinyl decode 123.6 MB/s, versus 108.4 MB/s for `flac -5` encode,
+74.7 MB/s for `flac -8` encode, and 124.9 MB/s for libFLAC decode. That is
+a **1.01× decode gap** and a 1.53× encode gap against `flac -5` — **1.06×
+against the `flac -8` reference**, from 1.27× before the runtime certificate
+was retired. On files large enough that process startup does not dominate,
+encode is *ahead* of `flac -8` (0.94× at 32 MB; see the size sweep below).
+Neither encode gap should be called compression-matched until the
+metadata-normalized real-corpus frontier has been measured.
 
-Repeating the whole run moves these medians by 2–3% (thermal state, page
-cache), which is why the gaps are quoted to two significant figures and
-why the stage tables further down use a 32 MB probe instead: a single
-large file resolves a 5% change, where the corpus medians do not.
+Repeating the whole run moves these medians, and by different amounts in
+the two directions: across six passes the *decode* gap held within 1%
+(1.01–1.03×) while the *encode* gap ranged 1.02–1.07×. Encoding is
+`Task`-parallel, so at 1 MB it loses more to whatever else the machine is
+running than single-threaded libFLAC does — measure it on an otherwise idle
+machine, or don't quote the third digit. This is why the gaps are quoted to
+two significant figures and why the stage tables further down use a 32 MB
+probe instead: a single large file resolves a 5% change, where the corpus
+medians do not.
 
 ### Read the corpus medians with the file size in mind
 
@@ -119,17 +126,18 @@ Same material, medians against file size:
 
 | PCM | Vinyl decode | libFLAC | gap | Vinyl encode | `flac -8` | gap |
 |---|---|---|---|---|---|---|
-| 1 MB | 103.9 MB/s | 121.9 MB/s | 1.17× | 54.1 MB/s | 71.3 MB/s | 1.32× |
-| 2 MB | 138.8 MB/s | 147.8 MB/s | 1.07× | 61.6 MB/s | 79.5 MB/s | 1.29× |
-| 4 MB | 173.0 MB/s | 164.1 MB/s | **0.95×** | 67.5 MB/s | 84.6 MB/s | 1.25× |
-| 8 MB | 198.6 MB/s | 179.3 MB/s | **0.90×** | 71.3 MB/s | 83.0 MB/s | 1.16× |
-| 16 MB | 207.0 MB/s | 184.0 MB/s | **0.89×** | 72.7 MB/s | 90.3 MB/s | 1.24× |
-| 32 MB | 213.3 MB/s | 188.5 MB/s | **0.88×** | 73.4 MB/s | 89.9 MB/s | 1.23× |
+| 1 MB | 104.4 MB/s | 121.7 MB/s | 1.17× | 70.9 MB/s | 70.7 MB/s | **1.00×** |
+| 2 MB | 140.3 MB/s | 150.9 MB/s | 1.08× | 82.3 MB/s | 81.8 MB/s | **0.99×** |
+| 4 MB | 178.8 MB/s | 168.7 MB/s | **0.94×** | 89.6 MB/s | 87.0 MB/s | **0.97×** |
+| 8 MB | 198.7 MB/s | 178.6 MB/s | **0.90×** | 94.8 MB/s | 89.4 MB/s | **0.94×** |
+| 16 MB | 209.7 MB/s | 185.9 MB/s | **0.89×** | 95.9 MB/s | 90.5 MB/s | **0.94×** |
+| 32 MB | 217.2 MB/s | 189.6 MB/s | **0.87×** | 97.0 MB/s | 91.6 MB/s | **0.94×** |
 
-Decode overtakes libFLAC at about 4 MB and settles ~11% faster; encode
-settles around 1.24× (the 8 MB row's `flac -8` figure is an outlier — the
-column is otherwise 84–90 MB/s). The 32 MB probe below is the instrument
-for judging a *change*.
+Both directions overtake libFLAC once startup stops dominating: encode from
+2 MB, decode from 4 MB, settling ~6% and ~13% faster. Each row is the
+better of two passes, which is the least-contended estimate a working
+machine allows. The 32 MB probe below is the instrument for judging a
+*change*.
 
 ### Sessions 6–7: parallelism and the array-typed decoder
 
@@ -169,6 +177,38 @@ with the corpus medians above — only with each other.
 Every stage but one kept the corpus ratio at 39.580% and the output
 byte-identical to the verified encoder's; "three LPC orders" moved it to
 39.634%, still ahead of `flac -8`'s 39.784%.
+
+### Session 10: proving the encoder, and retiring its certificate
+
+Same 32 MB probe, `flac -8` at 92.3 MB/s on it. Every row is
+byte-identical to the previous one — the whole project was a proof project,
+and the only changes to what the encoder *computes* were forced by what can
+be proven at all.
+
+| stage | encode | decode | encode gap (`-8`) |
+|---|---|---|---|
+| session 9 end | 75.3 MB/s | 199.3 MB/s | 1.23× |
+| `Int` residual emission | 69.2 MB/s | 214.9 MB/s | 1.33× |
+| plan sanitisation | 68.6 MB/s | 213.0 MB/s | 1.35× |
+| stage 3 complete | 68.8 MB/s | 214.7 MB/s | 1.34× |
+| self-certifying payloads | 68.5 MB/s | 215.0 MB/s | 1.35× |
+| **certificate retired** | 97.7 MB/s | 215.8 MB/s | **0.94×** |
+
+The whole cost of provability was 10% — `Int` residual emission 8%, plan
+sanitisation and the rest under 1% each — and retiring the certificate paid
+30% back. Encode ends *ahead of* `flac -8` on this probe, at unchanged
+compression, which is what M6b was for.
+
+The one change that was not free is worth naming: residual bits used to
+come off the search's `FloatArray`s, and `lpcResidualArrF`'s own doc
+asserted the unprovable step ("every value is an exact integer, so the
+bytes emitted from it are the bytes an `Int` residual would emit"). That is
+precisely what the certificate was covering. `Float` is opaque in Lean —
+its operations are compiler intrinsics with no axiomatization — so a float
+in the *bytes* can never be reasoned about, and emission had to move to the
+exact `Int` residual first. Costing candidates in `Float` stays free,
+because a search that picks the wrong candidate loses compression, never
+correctness.
 
 **Exact float arithmetic in the searches — and now in emission.** A search
 only *chooses* a subframe, and every value it computes is an integer well
@@ -235,17 +275,19 @@ per tap as the floor.
 
 ### Where the remaining encode gap is
 
-Encode is 3.23 CPU-seconds for the 32 MB probe against 0.434 s of wall
-time (7.3× parallel on 4 performance plus 4 efficiency cores). Two items:
+There is no longer an encode *gap* on a large file — the encoder is 6%
+ahead of `flac -8` from 8 MB up — so what follows is where the remaining
+*work* is, for anyone pushing further.
 
-1. **The runtime certificate: ~28% of encode wall.** Measured directly —
-   decoding the encoder's own output takes 0.119 s of encode's 0.424 s.
-   Retiring it in favour of the statically verified emitter would take
-   encode to about **0.93×**, past the target, trading nothing. That is
-   milestone M6b; `ARCHITECTURE.md` names its four stages, and the one
-   thing *not* in the way is the searches — a chooser's output carries a
-   decidable validity certificate by construction, so the round-trip
-   theorem already holds for every chooser, `Float` included.
+1. **The runtime certificate is gone.** It was ~30% of encode wall:
+   decoding the encoder's own output to check it. Milestone M6b replaced it
+   with a proof (`Flac.Encode.encodePcm16_eq`), and `ARCHITECTURE.md` walks
+   the chain. What was never in the way is the searches — a chooser's
+   output carries a decidable validity certificate by construction, so the
+   round-trip theorem already held for every chooser, `Float` included; and
+   `Float` did not block the *emission* theorem either, because a search
+   and the chooser the reference is instantiated with need only be the same
+   function on equal inputs.
 2. **The candidate search: ~37% of encode work** (`lpcDotFf` 24%,
    autocorrelation 6%, the partition folds the rest). libFLAC's `-8`
    evaluates

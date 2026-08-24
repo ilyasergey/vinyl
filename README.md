@@ -94,7 +94,7 @@ encoder — its `Float` search, its `UInt64` bit writer, its per-frame
 workers — *computes* `Flac.Stream.encode` at the `EncoderCfg` whose chooser
 is its own search, so the byte-level round trip follows from the reference
 capstone with no runtime decode and no fallback. The runtime certificate
-that used to buy that guarantee is gone, and with it 23% of encode time.
+that used to buy that guarantee is gone, and with it 30% of encode time.
 M7 (two-sided verification against RFC 9639) is a stretch goal. See [`PLAN.md`](PLAN.md) §8 for the milestone-by-milestone
 roadmap and [`PROGRESS.md`](PROGRESS.md) for the session log. In short:
 bit-level I/O, CRCs, MD5, Rice coding, all subframe types (CONSTANT /
@@ -131,16 +131,21 @@ suite. To run the cross-check yourself on one file, see
 On the 37-file synthetic corpus of `bench/gen_corpus.py`, the encoder's
 overall compression ratio **beats `flac -8`** (39.6% vs 39.8% of raw) —
 the certified heuristics choose well. Speed is therefore measured against
-`flac -8`, the preset whose ratio Vinyl matches. Five-run medians:
+`flac -8`, the preset whose ratio Vinyl matches. Fifteen-run medians:
 
 | | Vinyl | libFLAC | gap |
 |---|---|---|---|
-| decode | 121.2 MB/s | 125.6 MB/s | **1.04×** |
-| encode | 74.3 MB/s | 74.9 MB/s (`flac -8`) | **1.01×** |
-| encode vs `flac -5` | 74.3 MB/s | 109.1 MB/s | 1.47× |
+| decode | 123.6 MB/s | 124.9 MB/s | **1.01×** |
+| encode | 70.7 MB/s | 74.7 MB/s (`flac -8`) | **1.06×** |
+| encode vs `flac -5` | 70.7 MB/s | 108.4 MB/s | 1.53× |
 
-Run-to-run spread on these medians is 2–3%, so read the gaps to two
-significant figures, and only ever against baselines from the *same* run.
+Run-to-run spread differs by direction: repeating the whole run moves the
+*decode* gap by ~1% but the *encode* gap by ~5% (1.02–1.07× across six
+passes). Encoding is `Task`-parallel, so at 1 MB it is far more sensitive
+to whatever else the machine is doing than single-threaded libFLAC is.
+Read these gaps to two significant figures, only ever against baselines
+from the same run — and prefer the size sweep below, or the 32 MB probe in
+[`bench/README.md`](bench/README.md), for judging a change.
 
 These corpus files are 1 MB each, so **process startup is charged to every
 measurement** — 3.1 ms of Lean runtime init against libFLAC's 2.7 ms, on
@@ -148,14 +153,18 @@ an 8–9 ms decode. Throughput against file size, same material, medians:
 
 | PCM | Vinyl decode | libFLAC | gap | Vinyl encode | `flac -8` | gap |
 |---|---|---|---|---|---|---|
-| 1 MB | 103.6 MB/s | 120.5 MB/s | 1.16× | 68.0 MB/s | 67.4 MB/s | **0.99×** |
-| 4 MB | 175.6 MB/s | 171.5 MB/s | **0.98×** | 89.8 MB/s | 86.7 MB/s | **0.97×** |
-| 8 MB | 199.1 MB/s | 183.5 MB/s | **0.92×** | 95.0 MB/s | 91.3 MB/s | **0.96×** |
-| 32 MB | 208.0 MB/s | 192.9 MB/s | **0.93×** | 95.1 MB/s | 90.8 MB/s | **0.95×** |
+| 1 MB | 104.4 MB/s | 121.7 MB/s | 1.17× | 70.9 MB/s | 70.7 MB/s | **1.00×** |
+| 2 MB | 140.3 MB/s | 150.9 MB/s | 1.08× | 82.3 MB/s | 81.8 MB/s | **0.99×** |
+| 4 MB | 178.8 MB/s | 168.7 MB/s | **0.94×** | 89.6 MB/s | 87.0 MB/s | **0.97×** |
+| 8 MB | 198.7 MB/s | 178.6 MB/s | **0.90×** | 94.8 MB/s | 89.4 MB/s | **0.94×** |
+| 16 MB | 209.7 MB/s | 185.9 MB/s | **0.89×** | 95.9 MB/s | 90.5 MB/s | **0.94×** |
+| 32 MB | 217.2 MB/s | 189.6 MB/s | **0.87×** | 97.0 MB/s | 91.6 MB/s | **0.94×** |
 
 So **both directions overtake libFLAC once process startup stops
-dominating**: the decoder from about 4 MB, the encoder at every size
-measured. Below 1 MB, Lean's fixed process init decides the comparison.
+dominating**: the encoder from 2 MB up, the decoder from 4 MB, both
+settling ~6% and ~13% faster respectively. At 1 MB Lean's fixed process
+init decides the comparison, which is exactly what the corpus medians
+above measure.
 
 Decoding gets there because frames decode *and serialize* in parallel —
 and provably so. A worker decoding the frame at a given bit position runs
@@ -174,7 +183,8 @@ performed was asserted in prose and unprovable, because it reasons through
 own output with the verified decoder and compare, falling back to the
 verified encoder on any mismatch — which is what made
 `decodePcm16_encodePcm16Fast` hypothesis-free without proving anything
-about the encoder. That cost 23% of encode time, and it is now a theorem
+about the encoder. That cost 30% of encode time on the 32 MB probe — the
+encoder went 68.5 → 97.7 MB/s when it came out — and it is now a theorem
 instead: `Flac.Encode.encodePcm16_eq`. The capstone's *statement* did not
 change by a character; only its proof did, and what it rests on shrank.
 
