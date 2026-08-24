@@ -75,9 +75,8 @@ separately by differential testing against libFLAC (below).
 
 ## Status
 
-Milestones M0–M5 are complete and M6 (performance under the theorem
-ratchet) has largely landed: every decoder fast path is proven equal to
-its bit-level specification, *including* frame-parallel decoding
+Every decoder fast path is proven equal to its bit-level specification,
+*including* frame-parallel decoding
 ([`readFramesFast_eq`](Flac/Spec/Decode.lean#L2119)), parallel PCM
 serialization ([`pcm16FastPar_eq`](Flac/Spec/Decode.lean#L2638)), and
 frame-parallel *serialization* — where each frame worker emits its own
@@ -88,15 +87,18 @@ exactly the interleaved PCM of the decoded samples. That last one
 serializer performed was asserted in prose and unprovable, because it
 reasons through `Task`.
 
-**M6b has landed too: the shipped encoder is proven, not certified.**
+**The shipped encoder is proven, not certified.**
 [`Flac.Encode.encodePcm16_eq`](Flac/Spec/Encode.lean) proves the fast
 encoder — its `Float` search, its `UInt64` bit writer, its per-frame
 workers — *computes* `Flac.Stream.encode` at the `EncoderCfg` whose chooser
 is its own search, so the byte-level round trip follows from the reference
 capstone with no runtime decode and no fallback. The runtime certificate
 that used to buy that guarantee is gone, and with it 30% of encode time.
-M7 (two-sided verification against RFC 9639) is a stretch goal. See [`PLAN.md`](PLAN.md) §8 for the milestone-by-milestone
-roadmap and [`PROGRESS.md`](PROGRESS.md) for the session log. In short:
+
+What is left is speed under the same proof obligations, and — as a stretch
+goal — two-sided verification against RFC 9639, deriving the decoder's accept
+set from the prose rather than from Vinyl's own reference model. See
+[`PROGRESS.md`](PROGRESS.md) for the session log. In short:
 bit-level I/O, CRCs, MD5, Rice coding, all subframe types (CONSTANT /
 VERBATIM / FIXED / LPC), 1–8 channels with stereo decorrelation, wasted
 bits, and the buffered production decoder are all done and under the
