@@ -1807,4 +1807,32 @@ theorem audio_wellFormed {ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
     rw [hbps]
     exact deinterleave_fits hch bytes c hc
 
+/-- The reference's chunk count is the shipped encoder's frame count. -/
+theorem chunkChannels_length {nn : Nat} (hnn : 0 < nn) :
+    ∀ chs : List (List Int), (Stream.chunkChannels nn chs).length
+      = ((chs.headD []).length + nn - 1) / nn := by
+  intro chs
+  fun_induction Stream.chunkChannels nn chs with
+  | case1 chs h =>
+    rcases h with h | h
+    · rw [h]
+      simp only [List.length_nil]
+      rw [Nat.div_eq_of_lt (by omega)]
+    · omega
+  | case2 chs h ih =>
+    rw [not_or] at h
+    have hm : 0 < (chs.headD []).length := by omega
+    rw [List.length_cons, ih, Stream.headD_dropAll]
+    rcases Nat.le_total nn (chs.headD []).length with hle | hle
+    · rw [show (chs.headD []).length - nn + nn - 1
+          = (chs.headD []).length - 1 from by omega,
+        show (chs.headD []).length + nn - 1
+          = (chs.headD []).length - 1 + nn from by omega,
+        Nat.add_div_right _ hnn]
+    · rw [show (chs.headD []).length - nn + nn - 1 = nn - 1 from by omega,
+        Nat.div_eq_of_lt (by omega),
+        show (chs.headD []).length + nn - 1
+          = (chs.headD []).length - 1 + nn from by omega,
+        Nat.add_div_right _ hnn, Nat.div_eq_of_lt (by omega)]
+
 end Flac.Encode

@@ -863,6 +863,16 @@ def frameBytesPcm (blockSize ch bps : Nat) (varBlk : Bool)
   (pushFrame (BitWriter.empty ((hi - lo) * ch * 2 + 64)) bps varBlk
     (if varBlk then f * blockSize else f) (frameChannels bytes ch lo hi)).buf
 
+/-- The digest worker's payload, on the same principle as `FrameStep`: any
+    value of this type carries the equation, so collecting it needs no fact
+    about `Task`. -/
+structure Md5Step (bytes : ByteArray) where
+  digest : ByteArray
+  ok : digest = Md5.md5 bytes
+
+@[inline] def md5Step (bytes : ByteArray) : Md5Step bytes :=
+  ⟨Md5.md5 bytes, rfl⟩
+
 /-- A frame worker's payload: its bytes, with the erased proof that they are
     the bytes `frameBytesPcm` produces for that index. *Any* value of this
     type carries the equation, so the consumer needs no fact about how the
@@ -907,11 +917,11 @@ def encodePcm16 (blockSize ch sr : Nat) (bytes : ByteArray) : ByteArray :=
     -- collected below, it overlaps the frame workers instead: it was
     -- 62 ms of a 550 ms 32 MB encode, all of it serial, because the
     -- STREAMINFO digest was computed before the first frame task started.
-    let md5Task := Task.spawn fun _ => Md5.md5 bytes
+    let md5Task := Task.spawn fun _ => md5Step bytes
     let frameTasks := if blockSize = 0 then [] else
       (List.range ((n + blockSize - 1) / blockSize)).map fun f =>
         Task.spawn fun _ => frameStep blockSize ch n bytes f
-    let md5 := md5Task.get
+    let md5 := md5Task.get.digest
     -- the marker and STREAMINFO, in `Emit.W.pushStreamPrefix`'s order. The
     -- digest goes in as one 128-bit field rather than sixteen bytes: once
     -- per stream either way, and it is then literally the reference's push.
