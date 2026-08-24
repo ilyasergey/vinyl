@@ -740,58 +740,5 @@ theorem decodeBytes_spec (bytes out : ByteArray) (bps : Nat) :
     · rw [if_neg hmk] at h; exact absurd h (by simp)
 
 
-/-! ### The encoder's runtime certificate
-
-`pcm16Certified` now runs the frame-parallel byte decoder rather than a
-decode followed by a serial serialization, which is where ~27% of encode
-went. Its obligation is unchanged and one-directional: a `true` verdict
-must imply `decodePcm16 out = .ok bytes`. -/
-
-theorem pcm16CertifiedSlow_ok {bytes out : ByteArray}
-    (h : Flac.pcm16CertifiedSlow bytes out = true) :
-    Flac.decodePcm16 out = .ok bytes := by
-  unfold Flac.pcm16CertifiedSlow at h
-  rw [← Flac.decodePcm16A_eq]
-  split at h
-  case h_1 back hdec => rw [hdec, of_decide_eq_true h]
-  case h_2 => cases h
-
-/-- **Byte-level guarantee for the fast encoder** — no hypotheses, and no
-    trust in `Flac.Encode`: the wrapper certifies each call by running the
-    verified decoder on the produced bytes (falling back to the verified
-    encoder), so a `some` result is correct by construction whichever path
-    produced it. -/
-theorem pcm16Certified_ok {bytes out : ByteArray}
-    (h : Flac.pcm16Certified bytes out = true) :
-    Flac.decodePcm16 out = .ok bytes := by
-  unfold Flac.pcm16Certified at h
-  split at h
-  case h_2 => exact pcm16CertifiedSlow_ok h
-  case h_1 back bps hdec =>
-    split at h
-    case isFalse => exact pcm16CertifiedSlow_ok h
-    case isTrue hbps =>
-      subst hbps
-      obtain ⟨chs, sr, harr, hback⟩ := decodeBytes_spec out back 16 hdec
-      rw [← Flac.decodePcm16A_eq]
-      unfold Flac.decodePcm16A
-      rw [harr]
-      show (if (16 : Nat) = 16 then _ else _) = _
-      rw [if_pos rfl, Flac.pcm16FastPar_eq, pcm16FastA_eq_range, ← hback,
-        of_decide_eq_true h]
-
-theorem decodePcm16_encodePcm16Fast {blockSize ch sr : Nat}
-    {bytes flac : ByteArray}
-    (h : Flac.encodePcm16Fast blockSize ch sr bytes = some flac) :
-    Flac.decodePcm16 flac = .ok bytes := by
-  unfold Flac.encodePcm16Fast Flac.encodePcm16FastGo at h
-  split at h
-  case isFalse => cases h
-  case isTrue =>
-    split at h
-    case isTrue hc =>
-      cases h
-      exact pcm16Certified_ok hc
-    case isFalse => exact Flac.decodePcm16_encodePcm16Cfg h
 
 end Flac.Stream

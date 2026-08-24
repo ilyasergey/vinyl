@@ -210,9 +210,13 @@ def e2eTests : TestM Unit := do
 `Flac.Encode` runs its candidate searches in exact `Float` arithmetic over
 unboxed `FloatArray`, `Flac.Heuristics` runs them in `Int` over lists.
 Every value involved is an integer well inside `2^53`, so the two must
-*choose the same subframes* and emit identical bytes. That is not a
-theorem (the fast encoder is unverified by design — each call is certified
-by the verified decoder instead), so it is pinned here as a test. -/
+*choose the same subframes* and emit identical bytes.
+
+That much is still not a theorem, and cannot be: it is a claim about what
+`Float` computes. `Flac.Encode.encodePcm16_eq` proves the fast encoder
+computes `Stream.encode` at the chooser its *own* search denotes, which
+needs no such claim; whether that search agrees with the `Int` one is a
+compression question, and it is pinned here as a test. -/
 
 def fastMirrorTests : TestM Unit := do
   let mkPcm (f : Nat → Int) (n : Nat) : ByteArray :=
@@ -374,7 +378,7 @@ def usage : String :=
   "vinyl - a formally verified FLAC codec (see README.md)\n\n" ++
   "  vinyl --encode <in.pcm> <out.flac> <blockSize> <channels>\n" ++
   "      encode raw interleaved signed 16-bit little-endian PCM\n" ++
-  "      (fast encoder; every call certified by the verified decoder)\n" ++
+  "      (fast encoder; proven to compute the reference encoder)\n" ++
   "  vinyl --encode-slow <in.pcm> <out.flac> <blockSize> <channels>\n" ++
   "      encode with the fully verified encoder (the fast path's fallback)\n" ++
   "  vinyl --decode <in.flac> <out.pcm>\n" ++
@@ -394,13 +398,13 @@ def cliMain (args : List String) : IO UInt32 := do
     return 0
   if let ["--encode", inFile, outFile, bs, ch] := args then
     let bytes ← IO.FS.readBinFile inFile
-    -- the fast byte-level encoder, certified per call: whenever it returns
+    -- the fast byte-level encoder, proven: whenever it returns
     -- bytes, `Flac.decodePcm16_encodePcm16Fast` guarantees decoding
     -- returns the input bytes exactly — no hypotheses
     match Flac.encodePcm16Fast bs.toNat! ch.toNat! 44100 bytes with
     | some flacBytes =>
       IO.FS.writeBinFile outFile flacBytes
-      IO.println s!"encoded {bytes.size / (2 * ch.toNat!)} samples x {ch} channels (certified: round-trip guaranteed by Flac.decodePcm16_encodePcm16Fast)"
+      IO.println s!"encoded {bytes.size / (2 * ch.toNat!)} samples x {ch} channels (round-trip guaranteed by Flac.Stream.decodePcm16_encodePcm16Fast)"
       return 0
     | none =>
       IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, or channels/blockSize out of range)"

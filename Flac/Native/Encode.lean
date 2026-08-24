@@ -4,18 +4,20 @@ import Flac.Native.Crc
 import Flac.Native.Emit
 
 /-!
-# The fast encoder (UNVERIFIED BY DESIGN — certified per call)
+# The fast encoder — proven, not certified
 
 An `Array`/`ByteArray` reimplementation of exactly the stream the verified
 encoder emits under the default heuristics: same subframe searches, same
-Rice partitioning, same tie-breaking, byte-for-byte. Like
-`Flac/Native/Heuristics.lean`, nothing here carries a proof obligation:
-the shipping wrappers (`Flac.encodePcm16Fast` in `Flac.Native.Codec`)
-*certify each call at runtime* by decoding the produced bytes with the
-verified decoder and comparing against the input, falling back to the
-verified encoder on any mismatch — so the byte-level round-trip theorem
-(`Flac.decodePcm16_encodePcm16Fast`) holds with no hypotheses and no new
-trusted code.
+Rice partitioning, same tie-breaking, byte-for-byte.
+
+That "byte-for-byte" is now a theorem. `Flac.Encode.encodePcm16_eq` proves
+this file's output *is* `Flac.Stream.encode`'s, at the `EncoderCfg` whose
+chooser is this file's own search (`fastChooser`), so the byte-level
+round-trip theorem `Flac.Stream.decodePcm16_encodePcm16Fast` holds with no
+hypotheses, no runtime certificate, and no trust in the code here. The
+searches are still never characterised — `Float` is opaque — they simply
+appear on both sides of every equation. `Flac/Spec/Encode.lean` has the
+whole chain.
 
 Everything hot avoids `Nat.pow`/`Nat.shiftLeft` (GMP-backed even for
 word-sized values) in favour of the `p2` table and `>>>`/`&&&`/`*`.

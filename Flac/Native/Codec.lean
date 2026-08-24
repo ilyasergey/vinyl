@@ -190,53 +190,27 @@ def decodePcm16A (flac : ByteArray) : Except String ByteArray :=
     if bps = 16 then .ok (pcm16FastPar chs)
     else .error "not 16-bit audio"
 
-/-! ## The certified fast encoder
+/-! ## The fast encoder, proven
 
-`Flac.Encode` is unverified by design (like the heuristics), so every call
-is certified at runtime instead: decode the produced bytes with the
-*verified* decoder and compare with the input; on any mismatch fall back
-to the verified encoder. `Flac.decodePcm16_encodePcm16Fast` is therefore
-hypothesis-free — no unverified code is trusted. -/
+`Flac.Encode` is unverified by design (like the heuristics) — but it is now
+*proven*, not certified per call. `Flac.Encode.encodePcm16_eq` shows it
+computes `Flac.Stream.encode` at the chooser its own search denotes, so the
+byte-level round trip `Flac.Stream.decodePcm16_encodePcm16Fast` follows from
+the reference capstone with no runtime decode and no fallback.
 
-/-- The certificate via the sample path: decode to `Array Int` channels,
-    serialize, compare. The fallback. -/
-def pcm16CertifiedSlow (bytes out : ByteArray) : Bool :=
-  match decodePcm16A out with
-  | .ok back => decide (back = bytes)
-  | .error _ => false
+What used to be here — decode the produced bytes with the verified decoder,
+compare with the input, fall back to the verified encoder on mismatch — cost
+31% of encode. The five conditions it silently covered are now O(1) guards
+below; everything else `Stream.encode` checks at run time is discharged by a
+theorem (`Flac.Encode.audio_wellFormed`). -/
 
-/-- The runtime certificate: do the produced bytes decode (under the
-    *verified* decoder) to exactly the input PCM?
-
-    Runs `Flac.Decode.decodeBytes`, which serializes each frame in the
-    worker that decoded it — the certificate is ~27% of encode, and this
-    is the same 1.7x that frame-parallel serialization bought the shipped
-    decoder. `Flac.Stream.pcm16FastA_eq_range` is what lets its bytes
-    stand in for `decodePcm16`'s: the two serializers agree for *every*
-    `Int`, because `Int.toInt64` is reduction mod `2^64` and `2^16` divides
-    `2^64`. A stream the fused path declines takes the sample path. -/
-def pcm16Certified (bytes out : ByteArray) : Bool :=
-  match Decode.decodeBytes out with
-  | some (back, bps) =>
-    if bps = 16 then decide (back = bytes) else pcm16CertifiedSlow bytes out
-  | none => pcm16CertifiedSlow bytes out
-
-/-- Keep the fast output only with a valid certificate; otherwise encode
-    with the verified encoder. -/
-def encodePcm16FastGo (blockSize ch sampleRate : Nat) (bytes out : ByteArray) :
-    Option ByteArray :=
-  if pcm16Certified bytes out then some out
-  else encodePcm16Cfg ⟨blockSize, false, Heuristics.defaultAsgChooser 16⟩
-    ch sampleRate bytes
-
-/-- **The fast byte-level encoder**, certified per call. `some` results
-    carry the round-trip guarantee (`Flac.decodePcm16_encodePcm16Fast`). -/
+/-- **The fast byte-level encoder.** `some` results carry the round-trip
+    guarantee (`Flac.Stream.decodePcm16_encodePcm16Fast`). -/
 def encodePcm16Fast (blockSize ch sampleRate : Nat) (bytes : ByteArray) :
     Option ByteArray :=
   if 0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧ sampleRate < 2 ^ 20
       ∧ bytes.size / (2 * ch) < 2 ^ 36 ∧ 16 ≤ blockSize ∧ blockSize ≤ 65535 then
-    encodePcm16FastGo blockSize ch sampleRate bytes
-      (Encode.encodePcm16 blockSize ch sampleRate bytes)
+    some (Encode.encodePcm16 blockSize ch sampleRate bytes)
   else none
 
 end Flac

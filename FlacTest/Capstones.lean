@@ -63,8 +63,8 @@ theorem pin_encodePcm16 :
       Flac.encodePcm16 ch bytes = some flac → Flac.decodePcm16 flac = .ok bytes :=
   @Flac.decodePcm16_encodePcm16
 
-/-- **What `vinyl --encode` runs**: the fast (unverified) encoder, certified
-    per call, with no hypothesis and no trust in `Flac.Encode`. -/
+/-- **What `vinyl --encode` runs**: the fast encoder, *proven* to compute the
+    reference encoder, with no hypothesis and no trust in `Flac.Encode`. -/
 theorem pin_encode_fast :
     ∀ {blockSize ch sr : Nat} {bytes flac : ByteArray},
       Flac.encodePcm16Fast blockSize ch sr bytes = some flac →

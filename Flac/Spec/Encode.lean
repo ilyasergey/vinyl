@@ -1835,4 +1835,280 @@ theorem chunkChannels_length {nn : Nat} (hnn : 0 < nn) :
           = (chs.headD []).length - 1 + nn from by omega,
         Nat.add_div_right _ hnn, Nat.div_eq_of_lt (by omega)]
 
+/-! ## Frame `k` is frame `k`
+
+The shipped worker reads its window straight out of the PCM bytes; the
+reference takes the `k`-th chunk of the deinterleaved channels. -/
+
+private theorem takeAll_len_eq {chs : List (List Int)} {n lo m : Nat}
+    (hlen : ∀ c ∈ chs, c.length = n) (hlo : lo ≤ n) :
+    Stream.takeAll (min (lo + m) n - lo) (Stream.dropAll lo chs)
+      = Stream.takeAll m (Stream.dropAll lo chs) := by
+  simp only [Stream.takeAll, Stream.dropAll, List.map_map, Function.comp_def]
+  refine List.map_congr_left ?_
+  intro c hc
+  rw [take_min (c.drop lo) m, take_min (c.drop lo) (min (lo + m) n - lo),
+    List.length_drop, hlen c hc]
+  congr 1
+  omega
+
+private theorem size_div_two (ch : Nat) (bytes : ByteArray) :
+    (Flac.pcm16OfByteList bytes.data.toList).length / ch
+      = bytes.size / (2 * ch) := by
+  rw [Flac.length_pcm16OfByteList, Array.length_toList,
+    show bytes.data.size = bytes.size from rfl, Nat.div_div_eq_div_mul]
+
+/-- The window a frame worker reads is the reference's frame, as arrays. -/
+theorem frameChannels_frame {ch blockSize : Nat} (hch : 0 < ch)
+    (bytes : ByteArray) (hsz : bytes.size % (2 * ch) = 0) (k : Nat)
+    (hk : k * blockSize ≤ bytes.size / (2 * ch)) :
+    (frameChannels bytes ch (k * blockSize)
+        (min (k * blockSize + blockSize) (bytes.size / (2 * ch)))).toList
+      = (Stream.takeAll blockSize (Stream.dropAll (k * blockSize)
+          (Flac.deinterleave ch
+            (Flac.pcm16OfByteList bytes.data.toList)))).map List.toArray := by
+  have hev : bytes.size % 2 = 0 := by
+    obtain ⟨q, hq⟩ := Nat.dvd_of_mod_eq_zero hsz
+    rw [hq, Nat.mul_assoc]
+    exact Nat.mul_mod_right 2 _
+  have hdiv := size_div_two ch bytes
+  have hsplit : min (k * blockSize + blockSize) (bytes.size / (2 * ch))
+      = k * blockSize + (min (k * blockSize + blockSize)
+          (bytes.size / (2 * ch)) - k * blockSize) := by omega
+  rw [hsplit, frameChannels_eq bytes hev hch _ _ (by rw [hdiv]; omega)]
+  congr 1
+  refine takeAll_len_eq (n := bytes.size / (2 * ch)) ?_ hk
+  intro c hc
+  rw [deinterleave_lengths hch _ c hc, hdiv]
+
+private theorem mem_takeAll_dropAll {chs : List (List Int)} {lo m : Nat}
+    {c : List Int} (hc : c ∈ Stream.takeAll m (Stream.dropAll lo chs)) :
+    ∃ d ∈ chs, c = (d.drop lo).take m := by
+  simp only [Stream.takeAll, Stream.dropAll, List.map_map, Function.comp_def,
+    List.mem_map] at hc
+  obtain ⟨d, hd, hdc⟩ := hc
+  exact ⟨d, hd, hdc.symm⟩
+
+private theorem length_takeAll_dropAll {chs : List (List Int)} {n lo m : Nat}
+    (hlen : ∀ c ∈ chs, c.length = n) :
+    ∀ c ∈ Stream.takeAll m (Stream.dropAll lo chs), c.length = min m (n - lo) := by
+  intro c hc
+  obtain ⟨d, hd, hdc⟩ := mem_takeAll_dropAll hc
+  rw [hdc, List.length_take, List.length_drop, hlen d hd]
+
+private theorem count_takeAll_dropAll (chs : List (List Int)) (lo m : Nat) :
+    (Stream.takeAll m (Stream.dropAll lo chs)).length = chs.length := by
+  simp [Stream.takeAll, Stream.dropAll]
+
+private theorem headD_mem {α : Type} {l : List α} (d : α) (h : 0 < l.length) :
+    l.headD d ∈ l := by
+  match l with
+  | [] => simp at h
+  | _ :: _ => exact List.mem_cons_self ..
+
+/-- **Frame `k` is frame `k`.** The shipped worker's bytes are the bytes the
+    verified emitter appends for the reference's `k`-th chunk. -/
+theorem frameBytesPcm_eq {blockSize ch : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
+    (bytes : ByteArray) (hsz : bytes.size % (2 * ch) = 0) (k : Nat)
+    (hk : k * blockSize ≤ bytes.size / (2 * ch)) :
+    frameBytesPcm blockSize ch 16 false bytes (bytes.size / (2 * ch)) k
+      = (Emit.W.pushFrame 16 false k
+          ((Stream.EncoderCfg.mk blockSize false (fastChooser 16)).safeChooser 16
+            (Stream.takeAll blockSize (Stream.dropAll (k * blockSize)
+              (Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList)))))
+          ((Stream.takeAll blockSize (Stream.dropAll (k * blockSize)
+              (Flac.deinterleave ch
+                (Flac.pcm16OfByteList bytes.data.toList)))).map List.toArray)
+          (Emit.W.empty 0)).buf := by
+  have hdiv := size_div_two ch bytes
+  have hchlen : ∀ c ∈ Flac.deinterleave ch
+      (Flac.pcm16OfByteList bytes.data.toList),
+      c.length = bytes.size / (2 * ch) := by
+    intro c hc
+    rw [deinterleave_lengths hch _ c hc, hdiv]
+  have hfc := frameChannels_frame hch bytes hsz k hk
+  have harr : ((Stream.takeAll blockSize (Stream.dropAll (k * blockSize)
+      (Flac.deinterleave ch
+        (Flac.pcm16OfByteList bytes.data.toList)))).map List.toArray).toArray
+      = frameChannels bytes ch (k * blockSize)
+          (min (k * blockSize + blockSize) (bytes.size / (2 * ch))) := by
+    rw [← hfc, Array.toArray_toList]
+  have hcount : (Stream.takeAll blockSize (Stream.dropAll (k * blockSize)
+      (Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList)))).length
+      = ch := by
+    rw [count_takeAll_dropAll,
+      length_deinterleave (ch := ch) (Flac.pcm16OfByteList bytes.data.toList)]
+  have hulen := length_takeAll_dropAll (m := blockSize) (lo := k * blockSize) hchlen
+  have hhd := hulen _ (headD_mem [] (by rw [hcount]; omega))
+  have hlen : ∀ c ∈ Stream.takeAll blockSize (Stream.dropAll (k * blockSize)
+      (Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList))),
+      c.length = ((Stream.takeAll blockSize (Stream.dropAll (k * blockSize)
+        (Flac.deinterleave ch
+          (Flac.pcm16OfByteList bytes.data.toList)))).headD []).length := by
+    intro c hc
+    rw [hulen c hc, hhd]
+  have hfit : ∀ c ∈ Stream.takeAll blockSize (Stream.dropAll (k * blockSize)
+      (Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList))),
+      ∀ x ∈ c, Flac.Bits.FitsSInt 16 x := by
+    intro c hc x hx
+    obtain ⟨d, hd, hdc⟩ := mem_takeAll_dropAll hc
+    rw [hdc] at hx
+    exact deinterleave_fits hch bytes d hd x
+      (List.mem_of_mem_drop (List.mem_of_mem_take hx))
+  have hchooser : (Stream.EncoderCfg.mk blockSize false (fastChooser 16)).safeChooser
+        16 (Stream.takeAll blockSize (Stream.dropAll (k * blockSize)
+          (Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList))))
+      = (chooseFrame 16 (frameChannels bytes ch (k * blockSize)
+          (min (k * blockSize + blockSize) (bytes.size / (2 * ch))))).asg := by
+    rw [safeChooser_fastChooser (by omega) blockSize false _ hlen hfit
+      (by rw [hcount]; omega) (by rw [hcount]; omega)]
+    show (chooseFrame 16 (_ : List (Array Int)).toArray).asg = _
+    rw [harr]
+  have hsim := sim_frame 16 false k (frameChannels bytes ch (k * blockSize)
+      (min (k * blockSize + blockSize) (bytes.size / (2 * ch))))
+    (BitWriter.empty ((min (k * blockSize + blockSize) (bytes.size / (2 * ch))
+      - k * blockSize) * ch * 2 + 64)) (Emit.W.empty 0) (sim_empty _ 0)
+  show (pushFrameOf (BitWriter.empty _) 16 false k (chooseFrame 16 _)).buf = _
+  rw [hsim.1, hchooser, hfc]
+
+/-! ## The whole stream -/
+
+theorem numSamples_eq {ch : Nat} (hch : 0 < ch) (bytes : ByteArray) (sr : Nat) :
+    (Stream.Audio.mk (Flac.deinterleave ch
+      (Flac.pcm16OfByteList bytes.data.toList)) 16 sr).numSamples
+      = bytes.size / (2 * ch) := by
+  show ((Flac.deinterleave ch
+    (Flac.pcm16OfByteList bytes.data.toList)).headD []).length = _
+  rw [headD_eq_getD, length_getD_deinterleave hch _ (by omega),
+    size_div_two ch bytes]
+
+/-- The marker and STREAMINFO the shipped encoder writes are the reference's
+    prefix. The digest matches by `pcmBytes_deinterleave`; every other field
+    is the same push of the same number. -/
+theorem sim_prefix {blockSize ch sr : Nat} (hch : 0 < ch) (bytes : ByteArray)
+    (hsz : bytes.size % (2 * ch) = 0) (cap : Nat) :
+    Sim ((((((((((((((BitWriter.empty 64).push 32 0x664C6143).push 1 1).push 7
+              0).push 24 34).push 16 blockSize).push 16 blockSize).push 24
+              0).push 24 0).push 20 sr).push 3 (ch - 1)).push 5 (16 - 1)).pushBits
+              36 (bytes.size / (2 * ch))).pushBits 128
+              (Stream.md5Nat (Md5.md5 bytes)))
+      (Emit.W.pushStreamPrefix ⟨blockSize, false, fastChooser 16⟩
+        ⟨Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList), 16, sr⟩
+        (Emit.W.empty cap)) := by
+  have hmd5 : Stream.md5Nat (Md5.md5 bytes)
+      = Stream.md5Nat (Md5.md5 (Stream.pcmBytes 16 (Flac.deinterleave ch
+          (Flac.pcm16OfByteList bytes.data.toList)))) := by
+    rw [pcmBytes_deinterleave hch bytes hsz]
+  have hns := numSamples_eq hch bytes sr
+  have hcl : (Flac.deinterleave ch
+      (Flac.pcm16OfByteList bytes.data.toList)).length = ch :=
+    length_deinterleave _
+  simp only [Emit.W.pushStreamPrefix, Emit.W.pushStreamInfo]
+  rw [hmd5, hns, hcl]
+  exact sim_pushBits 128 _ _ _ (sim_pushBits 36 _ _ _
+    (sim_push (k := 5) (v := 16 - 1) (by omega) _ _
+      (sim_push (k := 3) (v := ch - 1) (by omega) _ _
+        (sim_push (k := 20) (v := sr) (by omega) _ _
+          (sim_push (k := 24) (v := 0) (by omega) _ _
+            (sim_push (k := 24) (v := 0) (by omega) _ _
+              (sim_push (k := 16) (v := blockSize) (by omega) _ _
+                (sim_push (k := 16) (v := blockSize) (by omega) _ _
+                  (sim_push (k := 24) (v := 34) (by omega) _ _
+                    (sim_push (k := 7) (v := 0) (by omega) _ _
+                      (sim_push (k := 1) (v := 1) (by omega) _ _
+                        (sim_push (k := 32) (v := 0x664C6143) (by omega) _ _
+                          (sim_empty 64 cap)))))))))))))
+
+/-- **The shipped encoder computes the reference encoder.** Its `Float`
+    search, its `UInt64` writer, its per-frame workers — all of it produces
+    exactly the bytes `Flac.Stream.encode` produces for the audio the PCM
+    pipeline derives, with the search itself as the chooser. -/
+theorem encodePcm16_eq {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
+    (hbs : 0 < blockSize) (bytes : ByteArray)
+    (hsz : bytes.size % (2 * ch) = 0) :
+    encodePcm16 blockSize ch sr bytes
+      = Stream.encode ⟨blockSize, false, fastChooser 16⟩
+          ⟨Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList),
+            16, sr⟩ := by
+  have hns := numSamples_eq hch bytes sr
+  have hsp := sim_prefix (blockSize := blockSize) (sr := sr) hch bytes hsz
+    (64 + 2 * (Flac.deinterleave ch
+      (Flac.pcm16OfByteList bytes.data.toList)).length
+      * (Stream.Audio.mk (Flac.deinterleave ch
+          (Flac.pcm16OfByteList bytes.data.toList)) 16 sr).numSamples)
+  have hcount : (Stream.chunkChannels blockSize (Flac.deinterleave ch
+      (Flac.pcm16OfByteList bytes.data.toList))).length
+      = (bytes.size / (2 * ch) + blockSize - 1) / blockSize := by
+    rw [chunkChannels_length hbs,
+      show ((Flac.deinterleave ch
+        (Flac.pcm16OfByteList bytes.data.toList)).headD []).length
+        = bytes.size / (2 * ch) from hns]
+  rw [← Emit.encode_eq]
+  show encodePcm16 blockSize ch sr bytes = (Emit.W.pushStream _ _ (Emit.W.empty _)).buf
+  rw [encodePcm16]
+  simp only []
+  rw [if_neg (show ¬(ch = 0) from by omega),
+    if_neg (show ¬(blockSize = 0) from by omega)]
+  refine (pushFrames_concat 16 false blockSize
+    ((Stream.EncoderCfg.mk blockSize false (fastChooser 16)).safeChooser 16)
+    blockSize ch (bytes.size / (2 * ch)) bytes _ _ 0 _ _ hsp.1 ?_ ?_ ?_).symm
+  · rw [Emit.emits_pending_mod (Emit.emits_pushStreamPrefix _ _) _ rfl]
+    exact (Nat.dvd_iff_mod_eq_zero ..).1 (Emit.streamPrefixBits_length_dvd _ _)
+  · rw [hcount, List.length_map, List.length_range]
+  · intro k hk
+    rw [hcount] at hk
+    have hkb : k * blockSize ≤ bytes.size / (2 * ch) := by
+      have h1 : (k + 1) * blockSize ≤ bytes.size / (2 * ch) + blockSize - 1 :=
+        (Nat.le_div_iff_mul_le hbs).1 hk
+      rw [Nat.succ_mul] at h1
+      omega
+    rw [Nat.zero_add, chunkChannels_getD blockSize _ k (by rw [hcount]; omega)]
+    exact frameBytesPcm_eq hch hch8 bytes hsz k hkb
+
+/-- The shipped encoder *is* the checked reference encoder at the fast
+    chooser: every runtime check the reference performs is discharged by a
+    theorem, so a `some` needs only the O(1) guards. -/
+theorem encodePcm16Cfg_fast {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
+    (bytes : ByteArray) (hsz : bytes.size % (2 * ch) = 0) (hsr : sr < 2 ^ 20)
+    (hn : bytes.size / (2 * ch) < 2 ^ 36) (hbs16 : 16 ≤ blockSize)
+    (hbs : blockSize ≤ 65535) :
+    Flac.encodePcm16Cfg ⟨blockSize, false, fastChooser 16⟩ ch sr bytes
+      = some (encodePcm16 blockSize ch sr bytes) := by
+  unfold Flac.encodePcm16Cfg
+  rw [if_pos ⟨hch, hsz⟩]
+  unfold Flac.encodeCheckedCfg
+  rw [if_pos ⟨audio_wellFormed hch hch8 bytes hsr hn, hbs16, hbs⟩,
+    encodePcm16_eq hch hch8 (by omega) bytes hsz]
+
+/-- **The byte-level guarantee for the shipped encoder, with no runtime
+    certificate**: decoding what it produced returns exactly the input PCM. -/
+theorem decodePcm16_encodePcm16_direct {blockSize ch sr : Nat} (hch : 0 < ch)
+    (hch8 : ch ≤ 8) (bytes : ByteArray) (hsz : bytes.size % (2 * ch) = 0)
+    (hsr : sr < 2 ^ 20) (hn : bytes.size / (2 * ch) < 2 ^ 36)
+    (hbs16 : 16 ≤ blockSize) (hbs : blockSize ≤ 65535) :
+    Flac.decodePcm16 (encodePcm16 blockSize ch sr bytes) = .ok bytes :=
+  Flac.decodePcm16_encodePcm16Cfg
+    (encodePcm16Cfg_fast hch hch8 bytes hsz hsr hn hbs16 hbs)
+
 end Flac.Encode
+
+namespace Flac.Stream
+
+/-- **The shipped encoder's byte-level guarantee**: whenever
+    `Flac.encodePcm16Fast` produces a FLAC file at all, decoding that file
+    returns exactly the input PCM bytes. No hypotheses, no runtime
+    certificate, and no trust in `Flac.Encode` — it is proven. -/
+theorem decodePcm16_encodePcm16Fast {blockSize ch sr : Nat}
+    {bytes flac : ByteArray}
+    (h : Flac.encodePcm16Fast blockSize ch sr bytes = some flac) :
+    Flac.decodePcm16 flac = .ok bytes := by
+  unfold Flac.encodePcm16Fast at h
+  split at h
+  case isFalse => cases h
+  case isTrue hg =>
+    obtain ⟨hch, hch8, hsz, hsr, hn, hbs16, hbs⟩ := hg
+    cases h
+    exact Flac.Encode.decodePcm16_encodePcm16_direct hch hch8 bytes hsz hsr hn
+      hbs16 hbs
+
+end Flac.Stream
