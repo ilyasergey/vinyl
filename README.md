@@ -184,20 +184,25 @@ above. **Top** — encode. **Bottom** — decode, the shipped buffered decoder.
 
 What the curves say:
 
-- **The gap is a constant factor, not a content effect.** Every curve is
-  essentially flat across 143 units of very different material — orchestra,
-  solo instrument, clean and noisy speech — so the ×2.2 encode gap at eight
-  threads and the ×2.7 gap at one hold at essentially every quantile, not just
-  in aggregate. The upturn at the right edge is the handful of artificial and
-  alignment units, where all implementations speed up together.
+- **The encode gap is bimodal by content, not one constant factor.** Vinyl's
+  curves are flat across 143 units of very different material; libFLAC's both
+  have a step near unit 70, and that step is the corpus boundary — SQAM's
+  stereo 44.1 kHz music is `flac -8`'s slow group, because stereo is where it
+  pays an exhaustive mid/side decision that Vinyl's heuristic decides directly.
+  So the gap is ~1.6× on SQAM against ~2.6× on LibriSpeech's mono speech, and
+  the ×2.2 aggregate is a mixture rather than a factor that holds pointwise
+  (quantile against quantile it runs 1.7–2.4). The upturn at the right edge of
+  Vinyl's curves is the handful of artificial and alignment units, where all
+  implementations speed up together.
 - **Decode at eight threads is the one place Vinyl is ahead on wall clock.**
   Its curve sits above `flac -d`'s over almost the whole corpus — ×1.12,
   213 MB/s against 191 MB/s — and libFLAC has nothing to answer with: its
   decoder takes no `-j`, which is why it appears once rather than twice.
-- **Per core it is ~2.7× behind on encode and ~3.9× on decode** — the
-  single-thread curves sit a near-constant distance below libFLAC's on both
-  panels. Two comparable factors rather than one bad path points at
-  per-operation cost, pure Lean against `int32` SIMD.
+- **Per core it is ~2.7× behind on encode and ~4.0× on decode.** Decode really
+  is a near-constant distance below libFLAC across the corpus (4.0× at the
+  slow end, 3.5× at the fast end); encode is the mixture above. Two comparable
+  factors rather than one bad path points at per-operation cost, pure Lean
+  against `int32` SIMD.
 
 Thread-scaling curves and speedup-against-ideal plots, per-corpus tables, the
 corpus descriptions, the optimization history, and regeneration instructions:

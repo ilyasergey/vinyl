@@ -56,23 +56,26 @@ is what every table, every figure's dashed levels and legend, and every prose
 checking which is which.
 
 The alternative is the *per-unit median*: sort the units by throughput, take the
-middle one, divide. It is not used, and the difference is not cosmetic — on real
-audio at eight threads it reads ×2.43 where the corpus rate reads ×2.22:
+middle one, divide. It is not used. On the current run it reads ×2.13 where the
+corpus rate reads ×2.18 — a 2% difference, but not a stable one: on the run
+published one commit earlier it read ×2.43 against ×2.22, 9% the *other* way.
 
 | encode, 8 threads | vinyl | `flac -8` | gap |
 |---|---:|---:|---:|
-| corpus rate, ΣMB ÷ Σs | 146.9 MB/s | 326.2 MB/s | **2.22×** |
-| per-unit median | 144.5 MB/s | 351.5 MB/s | 2.43× |
-| per-unit mean | 148.2 MB/s | 313.8 MB/s | 2.12× |
-| coefficient of variation | 0.13 | 0.21 | |
+| corpus rate, ΣMB ÷ Σs | 146.4 MB/s | 319.6 MB/s | **2.18×** |
+| per-unit median | 145.3 MB/s | 310.0 MB/s | 2.13× |
+| per-unit mean | 149.4 MB/s | 308.1 MB/s | 2.06× |
+| coefficient of variation | 0.15 | 0.21 | |
 
-A corpus rate is a harmonic mean weighted by bytes, so it is pulled toward the
-units that take the longest; a median weights every unit alike. The two agree
-when a distribution is tight and diverge when it is not, and libFLAC's is twice
-as spread as Vinyl's here — its median sits *above* its mean, a left tail of
-slow units. Those slow units are the SQAM stereo tracks, which is also where
-Vinyl is least far behind (1.71× on that suite against 2.58× and 2.61× on the
-two LibriSpeech ones), so equal-per-unit weighting flatters Vinyl by ~10%.
+The mechanism is SQAM's weight. It is **70 of 143 units but only 33% of the
+bytes**, so equal-per-unit weighting gives it half the say and byte weighting a
+third — and SQAM is exactly where the two encoders diverge most (gap 1.64× there
+against 2.57× and 2.58× on the two LibriSpeech suites, because `flac -8` pays an
+exhaustive mid/side decision on stereo that Vinyl's heuristic decides directly).
+A corpus rate is also a harmonic mean, so it is pulled toward whichever units
+take longest. Those two effects act in opposite directions and neither is small
+enough to ignore, which is why their sum changed sign between two runs of the
+same suite.
 
 Corpus rate wins the tie for three reasons, in order of weight:
 
@@ -81,9 +84,10 @@ Corpus rate wins the tie for three reasons, in order of weight:
    ([what a benchmark unit is](#what-a-benchmark-unit-is)). Regroup the same
    audio differently and the median gap moves while the corpus gap barely does.
    A headline must not depend on how the corpus was cut up.
-2. **It is the wall clock.** Encoding this corpus really does take 2.22× longer.
+2. **It is the wall clock.** Encoding this corpus really does take 2.18× longer.
 3. **It is already the ratchet.** The thread-scaling tables, the parallel
-   speedup figures and the M6 targets in `PROGRESS.md` are all corpus rates.
+   speedup figures and the performance targets in `PROGRESS.md` are all corpus
+   rates.
 
 Per-unit medians are still worth reading — for *ratio*, where the median unit
 says something the byte-weighted total hides, and as the distribution context
