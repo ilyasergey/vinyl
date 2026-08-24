@@ -1,6 +1,7 @@
 import Flac.Native.Heuristics
 import Flac.Native.Md5
 import Flac.Native.Crc
+import Flac.Native.Emit
 
 /-!
 # The fast encoder (UNVERIFIED BY DESIGN — certified per call)
@@ -120,8 +121,16 @@ end BitWriter
 
 ### Why the searches run on `Float`
 
-A candidate search only *chooses* a subframe; the bytes are always emitted
-from the exact `Int` path below. Every quantity a search computes is an
+A candidate search only *chooses* a subframe; every bit is emitted from
+the exact `Int` residual (`Emit.fixedResA` / `Emit.lpcResA`, written by
+`pushResidual`). That boundary is load-bearing, and it is what makes
+emission provable: a `Float` in the emitted bytes could never be reasoned
+about, since Lean's `Float` operations are compiler intrinsics with no
+axiomatization — there are no equations to rewrite with. Costing
+candidates in `Float` stays free, because a search that picks the wrong
+candidate loses compression, never correctness.
+
+Every quantity a search computes is an
 integer well inside `2^53`, and IEEE-754 doubles represent those exactly,
 so running the searches over unboxed `FloatArray` picks the same subframe
 *bit for bit* while replacing `lean_int_mul`/`lean_int_add` on boxed
@@ -263,33 +272,6 @@ private def lpcPartitionSearchFf (cs : List Float) (shift : Nat) (xs : FloatArra
       if hlo : cs.length ≤ lo then
         sums := sums.push (lpcFoldRange xs cs inv lo stop h hlo ff0).toUInt64.toNat
   return partitionSearchSumsF bs ord pomax sums
-
-/-- First differences over floats — exact, and the form emission uses
-    (order-4 differences of 18-bit samples stay below `2^23`). -/
-def diffArrFf (xs : FloatArray) : FloatArray := Id.run do
-  if xs.size = 0 then return FloatArray.empty
-  let mut out := FloatArray.emptyWithCapacity (xs.size - 1)
-  for h : i in [1 : xs.size] do
-    have h1 : i < xs.size := h.2.1
-    have h2 : i - 1 < xs.size := by omega
-    out := out.push (xs[i] - xs[i - 1])
-  return out
-
-/-- The winning LPC candidate's residual, materialized once for emission.
-    Same arithmetic as `lpcPartitionSearchFf` visits, in the same order —
-    every value is an exact integer, so the bytes emitted from it are the
-    bytes an `Int` residual would emit. -/
-def lpcResidualArrF (cs : List Float) (shift : Nat) (xs : FloatArray) :
-    FloatArray := Id.run do
-  let ord := cs.length
-  if xs.size ≤ ord then return FloatArray.empty
-  let inv := invPow2 shift
-  let mut out := FloatArray.emptyWithCapacity (xs.size - ord)
-  for h : i in [ord : xs.size] do
-    have hlo : cs.length ≤ i := by simpa only [ord] using h.1
-    have hhi : i < xs.size := h.2.1
-    out := out.push (xs[i] - sarF (lpcDotFf xs cs i hlo (Nat.le_of_lt hhi) ff0) inv)
-  return out
 
 /-! ### The fused fixed-order pass
 
@@ -489,36 +471,28 @@ def SubPlan.typeCode : SubPlan → Nat
   | .fixed ord _ _ => 8 + ord
   | .lpc cs _ _ _ => 32 + (cs.length - 1)
 
-/-- Attach the chosen LPC residual so emission can reuse it instead of
-    running the winning predictor for a second time. -/
-private def preparedLpc (blkF : FloatArray) (c : LpcChoice) :
-    SubPlan × Option FloatArray :=
-  (.lpc c.cs c.shift c.po c.ks,
-    some (lpcResidualArrF (c.cs.map Heuristics.floatOfInt) c.shift blkF))
-
-/-- Internal chooser result with an emission-ready residual when LPC
-    wins. The public `choosePlan` projection remains API-compatible. -/
-private def choosePlanPrepared (b : Nat) (blk : Array Int) (blkF : FloatArray) :
-    SubPlan × Option FloatArray :=
-  if blk.all (fun x => x == blk.getD 0 0) then (.constant, none)
-  else
-    match fixedSearchF b blkF, lpcChoiceF b blkF with
-    | none, none => (.verbatim, none)
-    | none, some lc =>
-      if lc.cost < b * blk.size then preparedLpc blkF lc else (.verbatim, none)
-    | some ((ord, po, ks), cost), none =>
-      if cost < b * blk.size then (.fixed ord po ks, none) else (.verbatim, none)
-    | some ((ord, po, ks), cost), some lc =>
-      if lc.cost ≤ cost then
-        if lc.cost < b * blk.size then preparedLpc blkF lc else (.verbatim, none)
-      else
-        if cost < b * blk.size then (.fixed ord po ks, none) else (.verbatim, none)
-
 /-- The default subframe chooser (constant detection, fixed vs LPC by
     exact cost, LPC preferred on ties, verbatim when prediction does not
-    pay), exactly as `Heuristics.defaultChooser` decides it. -/
+    pay), exactly as `Heuristics.defaultChooser` decides it. Takes the
+    block's `Float` image, which the caller has already built. -/
+def choosePlanF (b : Nat) (blk : Array Int) (blkF : FloatArray) : SubPlan :=
+  if blk.all (fun x => x == blk.getD 0 0) then .constant
+  else
+    match fixedSearchF b blkF, lpcChoiceF b blkF with
+    | none, none => .verbatim
+    | none, some lc =>
+      if lc.cost < b * blk.size then .lpc lc.cs lc.shift lc.po lc.ks else .verbatim
+    | some ((ord, po, ks), cost), none =>
+      if cost < b * blk.size then .fixed ord po ks else .verbatim
+    | some ((ord, po, ks), cost), some lc =>
+      if lc.cost ≤ cost then
+        if lc.cost < b * blk.size then .lpc lc.cs lc.shift lc.po lc.ks else .verbatim
+      else
+        if cost < b * blk.size then .fixed ord po ks else .verbatim
+
+@[inherit_doc choosePlanF]
 def choosePlan (b : Nat) (blk : Array Int) : SubPlan :=
-  (choosePlanPrepared b blk (blockF blk)).1
+  choosePlanF b blk (blockF blk)
 
 def sumAbsArr (xs : Array Int) : Nat :=
   xs.foldl (fun a x => a + x.natAbs) 0
@@ -532,9 +506,9 @@ function of its inputs, which is what lets the emission side be proven
 against `Flac.Emit` while the searches (`Float`, hence uncharacterizable)
 are only ever *applied*, never reasoned about. -/
 
-/-- One subframe's decision, carrying the arrays emission would otherwise
-    recompute: the wasted-bit-scaled samples, their `Float` image, and the
-    winning LPC predictor's residual. `⟨depth, wasted, plan⟩` is the
+/-- One subframe's decision, plus the two arrays it was made from: the
+    wasted-bit-scaled samples and their `Float` image (the search reads
+    the latter; emission reads the former). `⟨depth, wasted, plan⟩` is the
     decision proper — the array mirror of `Subframe.SubCfg`. -/
 structure SubPrep where
   depth : Nat
@@ -542,7 +516,6 @@ structure SubPrep where
   plan : SubPlan
   scaled : Array Int
   scaledF : FloatArray
-  res : Option FloatArray
 
 /-- The search for one subframe at depth `b`: wasted-bit detection, then
     the plan search on the scaled block at the reduced depth. The array
@@ -553,8 +526,7 @@ def chooseSub (b : Nat) (blk : Array Int) : SubPrep :=
     let m : Int := ((p2 wa : Nat) : Int)
     blk.map (· / m)
   let scaledF := blockF scaled
-  let (plan, res) := choosePlanPrepared (b - wa) scaled scaledF
-  ⟨b, wa, plan, scaled, scaledF, res⟩
+  ⟨b, wa, choosePlanF (b - wa) scaled scaledF, scaled, scaledF⟩
 
 /-- One frame's decisions: the 4-bit channel code, the block size, and one
     `SubPrep` per subframe — the array mirror of `Frame.ChannelAsg` paired
@@ -599,26 +571,25 @@ def chooseFrame (b : Nat) (chs : Array (Array Int)) : FramePrep :=
     field does not). One `BitWriter` is built per partition, on exit.
 
     `mask = 2^k - 1` is hoisted by the caller. `q ≥ 32` (a residual more
-    than 32·2^k from zero) is rare enough to hand back to `pushRice`. -/
-def pushRiceRange (k mask : Nat) (res : FloatArray) :
+    than 32·2^k from zero) is rare enough to hand back to `pushRice`.
+
+    The residual is an exact `Array Int`: every bit a subframe emits comes
+    from this path, never from the `Float` search arrays. -/
+def pushRiceRange (k mask : Nat) (res : Array Int) :
     (i stop : Nat) → (buf : ByteArray) → (acc : UInt64) → (n : Nat) → BitWriter
   | i, stop, buf, acc, n =>
     if h : i < stop then
-      -- the folded (zigzag) magnitude read straight off the exact float
-      -- residual: `foldF` is `0 ≤ x ↦ 2x`, `x < 0 ↦ -2x - 1`, and every
-      -- value is an integer below `2^19`, so this is the `Int` form's `u`
-      let u := (foldF (if hi : i < res.size then res[i] else ff0)).toUInt64.toNat
+      let x := res.getD i 0
+      let u := if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1
       let q := u >>> k
       if q < 32 then
-        -- unary quotient: `q` zero bits then a one bit — the low `q+1`
-        -- bits of the value 1
         let acc1 := (acc <<< UInt64.ofNat (q + 1)) ||| 1
         let n1 := n + q + 1
         let buf1 := BitWriter.flushBytes buf acc1 n1
-        -- then the `k` remainder bits
         let acc2 := (acc1 <<< UInt64.ofNat k) ||| UInt64.ofNat (u &&& mask)
         let n2 := n1 % 8 + k
-        pushRiceRange k mask res (i + 1) stop (BitWriter.flushBytes buf1 acc2 n2) acc2 (n2 % 8)
+        pushRiceRange k mask res (i + 1) stop
+          (BitWriter.flushBytes buf1 acc2 n2) acc2 (n2 % 8)
       else
         let w := (BitWriter.mk buf acc n).pushRiceFolded k u
         pushRiceRange k mask res (i + 1) stop w.buf w.acc w.n
@@ -628,7 +599,7 @@ def pushRiceRange (k mask : Nat) (res : FloatArray) :
 /-- Partitioned coded residual (method RICE, the only one the default
     heuristics emit). -/
 def pushResidual (bw : BitWriter) (bs ord po : Nat) (ks : Array Nat)
-    (res : FloatArray) : BitWriter := Id.run do
+    (res : Array Int) : BitWriter := Id.run do
   let mut w := (bw.push 2 0).push 4 po
   let c := bs / p2 po
   let mut start := 0
@@ -656,11 +627,9 @@ def pushSubframeOf (bw : BitWriter) (p : SubPrep) : BitWriter := Id.run do
       w := w.pushSInt b' x
     return w
   | .fixed ord po ks =>
-    let mut d := p.scaledF
     for i in [0 : ord] do
       w := w.pushSInt b' (scaled.getD i 0)
-      d := diffArrFf d
-    return pushResidual w scaled.size ord po ks d
+    return pushResidual w scaled.size ord po ks (Emit.fixedResA ord scaled)
   | .lpc cs shift po ks =>
     let ord := cs.length
     for i in [0 : ord] do
@@ -668,10 +637,7 @@ def pushSubframeOf (bw : BitWriter) (p : SubPrep) : BitWriter := Id.run do
     w := (w.push 4 (12 - 1)).pushSInt 5 (shift : Int)
     for cf in cs do
       w := w.pushSInt 12 cf
-    let res := match p.res with
-      | some cached => cached
-      | none => lpcResidualArrF (cs.map Heuristics.floatOfInt) shift p.scaledF
-    return pushResidual w scaled.size ord po ks res
+    return pushResidual w scaled.size ord po ks (Emit.lpcResA cs shift scaled)
 
 /-- One frame, from its decisions: canonical header (blocksize code 7,
     sample rate from STREAMINFO), subframes, byte-alignment, CRCs over the
