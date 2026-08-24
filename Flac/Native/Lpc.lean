@@ -92,6 +92,116 @@ private def dotAGetD : List Int → Array Int → Nat → Int
     else
       dotAGetD cs out i
 
+/-! ### Straight-line dot products
+
+`dotAGo` walks a `List Int` once per sample: two dependent loads per
+tap on top of the multiply-accumulate. On the emission path that was the
+largest single cost in encode.
+
+Two earlier shapes were measured and rejected. Dispatching a
+specialisation *per sample* walks the same cons cells it removes (27.0 →
+25.3 MB/s), and a chain of `dotAGo{k}` functions passing `out`, k taps,
+`n`, `hn` and `acc` spills at nine arguments on arm64 (27.7 → 26.7). What
+works is what `Flac.Encode.lpcFold{n}` already did on the search side: a
+self-recursive loop with the taps loop-invariant and a straight-line
+body. These are the bodies; `Flac.Emit.lpcResGo{k}` are the loops. -/
+
+/-- `dotA` at 1 tap, straight-line.
+
+    The taps are parameters, so after inlining into a residual loop they are
+    loop-invariant and stay in registers; matching `i` as `m + 1` keeps the
+    hot path free of `Nat` subtraction. Equal to `dotA` by
+    `Flac.Spec.Lpc.dot1At_eq`. -/
+@[inline] def dot1At (xs : Array Int) (c0 : Int) : Nat → Int
+  | m + 1 =>
+    if h : m + 1 ≤ xs.size then 0 + c0 * xs[m]'(by omega)
+    else dotA [c0] xs (m)
+  | i => dotA [c0] xs (i - 1)
+
+/-- `dotA` at 2 taps, straight-line.
+
+    The taps are parameters, so after inlining into a residual loop they are
+    loop-invariant and stay in registers; matching `i` as `m + 2` keeps the
+    hot path free of `Nat` subtraction. Equal to `dotA` by
+    `Flac.Spec.Lpc.dot2At_eq`. -/
+@[inline] def dot2At (xs : Array Int) (c0 c1 : Int) : Nat → Int
+  | m + 2 =>
+    if h : m + 2 ≤ xs.size then 0 + c0 * xs[m + 1]'(by omega) + c1 * xs[m]'(by omega)
+    else dotA [c0, c1] xs (m + 1)
+  | i => dotA [c0, c1] xs (i - 1)
+
+/-- `dotA` at 3 taps, straight-line.
+
+    The taps are parameters, so after inlining into a residual loop they are
+    loop-invariant and stay in registers; matching `i` as `m + 3` keeps the
+    hot path free of `Nat` subtraction. Equal to `dotA` by
+    `Flac.Spec.Lpc.dot3At_eq`. -/
+@[inline] def dot3At (xs : Array Int) (c0 c1 c2 : Int) : Nat → Int
+  | m + 3 =>
+    if h : m + 3 ≤ xs.size then 0 + c0 * xs[m + 2]'(by omega) + c1 * xs[m + 1]'(by omega) + c2 * xs[m]'(by omega)
+    else dotA [c0, c1, c2] xs (m + 2)
+  | i => dotA [c0, c1, c2] xs (i - 1)
+
+/-- `dotA` at 4 taps, straight-line.
+
+    The taps are parameters, so after inlining into a residual loop they are
+    loop-invariant and stay in registers; matching `i` as `m + 4` keeps the
+    hot path free of `Nat` subtraction. Equal to `dotA` by
+    `Flac.Spec.Lpc.dot4At_eq`. -/
+@[inline] def dot4At (xs : Array Int) (c0 c1 c2 c3 : Int) : Nat → Int
+  | m + 4 =>
+    if h : m + 4 ≤ xs.size then 0 + c0 * xs[m + 3]'(by omega) + c1 * xs[m + 2]'(by omega) + c2 * xs[m + 1]'(by omega) + c3 * xs[m]'(by omega)
+    else dotA [c0, c1, c2, c3] xs (m + 3)
+  | i => dotA [c0, c1, c2, c3] xs (i - 1)
+
+/-- `dotA` at 5 taps, straight-line.
+
+    The taps are parameters, so after inlining into a residual loop they are
+    loop-invariant and stay in registers; matching `i` as `m + 5` keeps the
+    hot path free of `Nat` subtraction. Equal to `dotA` by
+    `Flac.Spec.Lpc.dot5At_eq`. -/
+@[inline] def dot5At (xs : Array Int) (c0 c1 c2 c3 c4 : Int) : Nat → Int
+  | m + 5 =>
+    if h : m + 5 ≤ xs.size then 0 + c0 * xs[m + 4]'(by omega) + c1 * xs[m + 3]'(by omega) + c2 * xs[m + 2]'(by omega) + c3 * xs[m + 1]'(by omega) + c4 * xs[m]'(by omega)
+    else dotA [c0, c1, c2, c3, c4] xs (m + 4)
+  | i => dotA [c0, c1, c2, c3, c4] xs (i - 1)
+
+/-- `dotA` at 6 taps, straight-line.
+
+    The taps are parameters, so after inlining into a residual loop they are
+    loop-invariant and stay in registers; matching `i` as `m + 6` keeps the
+    hot path free of `Nat` subtraction. Equal to `dotA` by
+    `Flac.Spec.Lpc.dot6At_eq`. -/
+@[inline] def dot6At (xs : Array Int) (c0 c1 c2 c3 c4 c5 : Int) : Nat → Int
+  | m + 6 =>
+    if h : m + 6 ≤ xs.size then 0 + c0 * xs[m + 5]'(by omega) + c1 * xs[m + 4]'(by omega) + c2 * xs[m + 3]'(by omega) + c3 * xs[m + 2]'(by omega) + c4 * xs[m + 1]'(by omega) + c5 * xs[m]'(by omega)
+    else dotA [c0, c1, c2, c3, c4, c5] xs (m + 5)
+  | i => dotA [c0, c1, c2, c3, c4, c5] xs (i - 1)
+
+/-- `dotA` at 7 taps, straight-line.
+
+    The taps are parameters, so after inlining into a residual loop they are
+    loop-invariant and stay in registers; matching `i` as `m + 7` keeps the
+    hot path free of `Nat` subtraction. Equal to `dotA` by
+    `Flac.Spec.Lpc.dot7At_eq`. -/
+@[inline] def dot7At (xs : Array Int) (c0 c1 c2 c3 c4 c5 c6 : Int) : Nat → Int
+  | m + 7 =>
+    if h : m + 7 ≤ xs.size then 0 + c0 * xs[m + 6]'(by omega) + c1 * xs[m + 5]'(by omega) + c2 * xs[m + 4]'(by omega) + c3 * xs[m + 3]'(by omega) + c4 * xs[m + 2]'(by omega) + c5 * xs[m + 1]'(by omega) + c6 * xs[m]'(by omega)
+    else dotA [c0, c1, c2, c3, c4, c5, c6] xs (m + 6)
+  | i => dotA [c0, c1, c2, c3, c4, c5, c6] xs (i - 1)
+
+/-- `dotA` at 8 taps, straight-line.
+
+    The taps are parameters, so after inlining into a residual loop they are
+    loop-invariant and stay in registers; matching `i` as `m + 8` keeps the
+    hot path free of `Nat` subtraction. Equal to `dotA` by
+    `Flac.Spec.Lpc.dot8At_eq`. -/
+@[inline] def dot8At (xs : Array Int) (c0 c1 c2 c3 c4 c5 c6 c7 : Int) : Nat → Int
+  | m + 8 =>
+    if h : m + 8 ≤ xs.size then 0 + c0 * xs[m + 7]'(by omega) + c1 * xs[m + 6]'(by omega) + c2 * xs[m + 5]'(by omega) + c3 * xs[m + 4]'(by omega) + c4 * xs[m + 3]'(by omega) + c5 * xs[m + 2]'(by omega) + c6 * xs[m + 1]'(by omega) + c7 * xs[m]'(by omega)
+    else dotA [c0, c1, c2, c3, c4, c5, c6, c7] xs (m + 7)
+  | i => dotA [c0, c1, c2, c3, c4, c5, c6, c7] xs (i - 1)
+
 /-- `predict` against the tail of the decoded prefix. -/
 @[inline] def predictA (cs : List Int) (shift : Nat) (out : Array Int) : Int :=
   sar (dotAGo out cs out.size (Nat.le_refl _) 0) shift

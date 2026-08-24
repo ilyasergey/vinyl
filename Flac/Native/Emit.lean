@@ -151,10 +151,86 @@ def lpcResGo (cs : List Int) (shift : Nat) (xs : Array Int) :
     lpcResGo cs shift xs (i + 1) rem
       (out.push (xs.getD i 0 - Flac.Bits.sar (Lpc.dotA cs xs (i - 1)) shift))
 
-/-- `Lpc.residual` over arrays. -/
+/-! ### Tap-specialised residual loops
+
+One loop per coefficient count, so the specialisation is chosen **once per
+subframe** by `lpcResA` and the taps are loop-invariant parameters that stay in
+registers for the whole block. `Flac.Spec.Emit.lpcResGo{k}_eq` proves each is
+`lpcResGo` at a fixed coefficient list. -/
+
+def lpcResGo1 (c0 : Int) (shift : Nat) (xs : Array Int) :
+    (i rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | i, rem + 1, out =>
+    lpcResGo1 c0 shift xs (i + 1) rem
+      (out.push (xs.getD i 0 - Flac.Bits.sar (Lpc.dot1At xs c0 i) shift))
+
+def lpcResGo2 (c0 c1 : Int) (shift : Nat) (xs : Array Int) :
+    (i rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | i, rem + 1, out =>
+    lpcResGo2 c0 c1 shift xs (i + 1) rem
+      (out.push (xs.getD i 0 - Flac.Bits.sar (Lpc.dot2At xs c0 c1 i) shift))
+
+def lpcResGo3 (c0 c1 c2 : Int) (shift : Nat) (xs : Array Int) :
+    (i rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | i, rem + 1, out =>
+    lpcResGo3 c0 c1 c2 shift xs (i + 1) rem
+      (out.push (xs.getD i 0 - Flac.Bits.sar (Lpc.dot3At xs c0 c1 c2 i) shift))
+
+def lpcResGo4 (c0 c1 c2 c3 : Int) (shift : Nat) (xs : Array Int) :
+    (i rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | i, rem + 1, out =>
+    lpcResGo4 c0 c1 c2 c3 shift xs (i + 1) rem
+      (out.push (xs.getD i 0 - Flac.Bits.sar (Lpc.dot4At xs c0 c1 c2 c3 i) shift))
+
+def lpcResGo5 (c0 c1 c2 c3 c4 : Int) (shift : Nat) (xs : Array Int) :
+    (i rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | i, rem + 1, out =>
+    lpcResGo5 c0 c1 c2 c3 c4 shift xs (i + 1) rem
+      (out.push (xs.getD i 0 - Flac.Bits.sar (Lpc.dot5At xs c0 c1 c2 c3 c4 i) shift))
+
+def lpcResGo6 (c0 c1 c2 c3 c4 c5 : Int) (shift : Nat) (xs : Array Int) :
+    (i rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | i, rem + 1, out =>
+    lpcResGo6 c0 c1 c2 c3 c4 c5 shift xs (i + 1) rem
+      (out.push (xs.getD i 0 - Flac.Bits.sar (Lpc.dot6At xs c0 c1 c2 c3 c4 c5 i) shift))
+
+def lpcResGo7 (c0 c1 c2 c3 c4 c5 c6 : Int) (shift : Nat) (xs : Array Int) :
+    (i rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | i, rem + 1, out =>
+    lpcResGo7 c0 c1 c2 c3 c4 c5 c6 shift xs (i + 1) rem
+      (out.push (xs.getD i 0 - Flac.Bits.sar (Lpc.dot7At xs c0 c1 c2 c3 c4 c5 c6 i) shift))
+
+def lpcResGo8 (c0 c1 c2 c3 c4 c5 c6 c7 : Int) (shift : Nat) (xs : Array Int) :
+    (i rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | i, rem + 1, out =>
+    lpcResGo8 c0 c1 c2 c3 c4 c5 c6 c7 shift xs (i + 1) rem
+      (out.push (xs.getD i 0 - Flac.Bits.sar (Lpc.dot8At xs c0 c1 c2 c3 c4 c5 c6 c7 i) shift))
+
+/-- `Lpc.residual` over arrays, dispatching the tap walk once per subframe. -/
 def lpcResA (cs : List Int) (shift : Nat) (xs : Array Int) : Array Int :=
-  lpcResGo cs shift xs cs.length (xs.size - cs.length)
-    (Array.emptyWithCapacity (xs.size - cs.length))
+  let i := cs.length
+  let rem := xs.size - cs.length
+  let out := Array.emptyWithCapacity rem
+  match cs with
+  | [c0] => lpcResGo1 c0 shift xs i rem out
+  | [c0, c1] => lpcResGo2 c0 c1 shift xs i rem out
+  | [c0, c1, c2] => lpcResGo3 c0 c1 c2 shift xs i rem out
+  | [c0, c1, c2, c3] => lpcResGo4 c0 c1 c2 c3 shift xs i rem out
+  | [c0, c1, c2, c3, c4] => lpcResGo5 c0 c1 c2 c3 c4 shift xs i rem out
+  | [c0, c1, c2, c3, c4, c5] => lpcResGo6 c0 c1 c2 c3 c4 c5 shift xs i rem out
+  | [c0, c1, c2, c3, c4, c5, c6] =>
+    lpcResGo7 c0 c1 c2 c3 c4 c5 c6 shift xs i rem out
+  | [c0, c1, c2, c3, c4, c5, c6, c7] =>
+    lpcResGo8 c0 c1 c2 c3 c4 c5 c6 c7 shift xs i rem out
+  | cs' => lpcResGo cs' shift xs i rem out
 
 namespace W
 

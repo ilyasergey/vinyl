@@ -104,6 +104,235 @@ theorem dotA_take (out : Array Int) :
     rw [dotAGo_eq]
     simp
 
+/-- PROBE -/
+private theorem dotAGo_unfold1 (out : Array Int) (c0 : Int) (m : Nat)
+    (h : m + 1 ≤ out.size) (acc : Int) :
+    dotAGo out [c0] (m + 1) h acc = acc + c0 * out[m]'(by omega) := by
+  simp only [dotAGo]
+
+private theorem dotA_unfold1 (xs : Array Int) (c0 : Int) (m : Nat)
+    (h : m + 1 ≤ xs.size) :
+    dotA [c0] xs (m) = 0 + c0 * xs[m]'(by omega) := by
+  have h1 : m < xs.size := by omega
+  simp only [dotA, dif_pos h1]
+  exact dotAGo_unfold1 xs c0 m h 0
+
+theorem dot1At_eq (xs : Array Int) (c0 : Int) (i : Nat) :
+    dot1At xs c0 i = dotA [c0] xs (i - 1) := by
+  match i with
+  | 0 => rfl
+  | m + 1 =>
+    show dot1At xs c0 (m + 1) = dotA [c0] xs (m)
+    -- reduce the match on `m + 1` first, or `split` picks it over the
+    -- bounds test
+    simp only [dot1At]
+    split
+    · next h => rw [dotA_unfold1 xs c0 m h]
+    · rfl
+
+private theorem dotAGo_unfold2 (out : Array Int) (c0 c1 : Int) (m : Nat)
+    (h : m + 2 ≤ out.size) (acc : Int) :
+    dotAGo out [c0, c1] (m + 2) h acc = acc + c0 * out[m + 1]'(by omega) + c1 * out[m]'(by omega) := by
+  simp only [dotAGo]
+
+private theorem dotA_unfold2 (xs : Array Int) (c0 c1 : Int) (m : Nat)
+    (h : m + 2 ≤ xs.size) :
+    dotA [c0, c1] xs (m + 1) = 0 + c0 * xs[m + 1]'(by omega) + c1 * xs[m]'(by omega) := by
+  have h1 : m + 1 < xs.size := by omega
+  simp only [dotA, dif_pos h1]
+  exact dotAGo_unfold2 xs c0 c1 m h 0
+
+theorem dot2At_eq (xs : Array Int) (c0 c1 : Int) (i : Nat) :
+    dot2At xs c0 c1 i = dotA [c0, c1] xs (i - 1) := by
+  match i with
+  | 0 => rfl
+  | 1 => rfl
+  | m + 2 =>
+    show dot2At xs c0 c1 (m + 2) = dotA [c0, c1] xs (m + 1)
+    -- reduce the match on `m + 2` first, or `split` picks it over the
+    -- bounds test
+    simp only [dot2At]
+    split
+    · next h => rw [dotA_unfold2 xs c0 c1 m h]
+    · rfl
+
+private theorem dotAGo_unfold3 (out : Array Int) (c0 c1 c2 : Int) (m : Nat)
+    (h : m + 3 ≤ out.size) (acc : Int) :
+    dotAGo out [c0, c1, c2] (m + 3) h acc = acc + c0 * out[m + 2]'(by omega) + c1 * out[m + 1]'(by omega) + c2 * out[m]'(by omega) := by
+  simp only [dotAGo]
+
+private theorem dotA_unfold3 (xs : Array Int) (c0 c1 c2 : Int) (m : Nat)
+    (h : m + 3 ≤ xs.size) :
+    dotA [c0, c1, c2] xs (m + 2) = 0 + c0 * xs[m + 2]'(by omega) + c1 * xs[m + 1]'(by omega) + c2 * xs[m]'(by omega) := by
+  have h1 : m + 2 < xs.size := by omega
+  simp only [dotA, dif_pos h1]
+  exact dotAGo_unfold3 xs c0 c1 c2 m h 0
+
+theorem dot3At_eq (xs : Array Int) (c0 c1 c2 : Int) (i : Nat) :
+    dot3At xs c0 c1 c2 i = dotA [c0, c1, c2] xs (i - 1) := by
+  match i with
+  | 0 => rfl
+  | 1 => rfl
+  | 2 => rfl
+  | m + 3 =>
+    show dot3At xs c0 c1 c2 (m + 3) = dotA [c0, c1, c2] xs (m + 2)
+    -- reduce the match on `m + 3` first, or `split` picks it over the
+    -- bounds test
+    simp only [dot3At]
+    split
+    · next h => rw [dotA_unfold3 xs c0 c1 c2 m h]
+    · rfl
+
+private theorem dotAGo_unfold4 (out : Array Int) (c0 c1 c2 c3 : Int) (m : Nat)
+    (h : m + 4 ≤ out.size) (acc : Int) :
+    dotAGo out [c0, c1, c2, c3] (m + 4) h acc = acc + c0 * out[m + 3]'(by omega) + c1 * out[m + 2]'(by omega) + c2 * out[m + 1]'(by omega) + c3 * out[m]'(by omega) := by
+  simp only [dotAGo]
+
+private theorem dotA_unfold4 (xs : Array Int) (c0 c1 c2 c3 : Int) (m : Nat)
+    (h : m + 4 ≤ xs.size) :
+    dotA [c0, c1, c2, c3] xs (m + 3) = 0 + c0 * xs[m + 3]'(by omega) + c1 * xs[m + 2]'(by omega) + c2 * xs[m + 1]'(by omega) + c3 * xs[m]'(by omega) := by
+  have h1 : m + 3 < xs.size := by omega
+  simp only [dotA, dif_pos h1]
+  exact dotAGo_unfold4 xs c0 c1 c2 c3 m h 0
+
+theorem dot4At_eq (xs : Array Int) (c0 c1 c2 c3 : Int) (i : Nat) :
+    dot4At xs c0 c1 c2 c3 i = dotA [c0, c1, c2, c3] xs (i - 1) := by
+  match i with
+  | 0 => rfl
+  | 1 => rfl
+  | 2 => rfl
+  | 3 => rfl
+  | m + 4 =>
+    show dot4At xs c0 c1 c2 c3 (m + 4) = dotA [c0, c1, c2, c3] xs (m + 3)
+    -- reduce the match on `m + 4` first, or `split` picks it over the
+    -- bounds test
+    simp only [dot4At]
+    split
+    · next h => rw [dotA_unfold4 xs c0 c1 c2 c3 m h]
+    · rfl
+
+private theorem dotAGo_unfold5 (out : Array Int) (c0 c1 c2 c3 c4 : Int) (m : Nat)
+    (h : m + 5 ≤ out.size) (acc : Int) :
+    dotAGo out [c0, c1, c2, c3, c4] (m + 5) h acc = acc + c0 * out[m + 4]'(by omega) + c1 * out[m + 3]'(by omega) + c2 * out[m + 2]'(by omega) + c3 * out[m + 1]'(by omega) + c4 * out[m]'(by omega) := by
+  simp only [dotAGo]
+
+private theorem dotA_unfold5 (xs : Array Int) (c0 c1 c2 c3 c4 : Int) (m : Nat)
+    (h : m + 5 ≤ xs.size) :
+    dotA [c0, c1, c2, c3, c4] xs (m + 4) = 0 + c0 * xs[m + 4]'(by omega) + c1 * xs[m + 3]'(by omega) + c2 * xs[m + 2]'(by omega) + c3 * xs[m + 1]'(by omega) + c4 * xs[m]'(by omega) := by
+  have h1 : m + 4 < xs.size := by omega
+  simp only [dotA, dif_pos h1]
+  exact dotAGo_unfold5 xs c0 c1 c2 c3 c4 m h 0
+
+theorem dot5At_eq (xs : Array Int) (c0 c1 c2 c3 c4 : Int) (i : Nat) :
+    dot5At xs c0 c1 c2 c3 c4 i = dotA [c0, c1, c2, c3, c4] xs (i - 1) := by
+  match i with
+  | 0 => rfl
+  | 1 => rfl
+  | 2 => rfl
+  | 3 => rfl
+  | 4 => rfl
+  | m + 5 =>
+    show dot5At xs c0 c1 c2 c3 c4 (m + 5) = dotA [c0, c1, c2, c3, c4] xs (m + 4)
+    -- reduce the match on `m + 5` first, or `split` picks it over the
+    -- bounds test
+    simp only [dot5At]
+    split
+    · next h => rw [dotA_unfold5 xs c0 c1 c2 c3 c4 m h]
+    · rfl
+
+private theorem dotAGo_unfold6 (out : Array Int) (c0 c1 c2 c3 c4 c5 : Int) (m : Nat)
+    (h : m + 6 ≤ out.size) (acc : Int) :
+    dotAGo out [c0, c1, c2, c3, c4, c5] (m + 6) h acc = acc + c0 * out[m + 5]'(by omega) + c1 * out[m + 4]'(by omega) + c2 * out[m + 3]'(by omega) + c3 * out[m + 2]'(by omega) + c4 * out[m + 1]'(by omega) + c5 * out[m]'(by omega) := by
+  simp only [dotAGo]
+
+private theorem dotA_unfold6 (xs : Array Int) (c0 c1 c2 c3 c4 c5 : Int) (m : Nat)
+    (h : m + 6 ≤ xs.size) :
+    dotA [c0, c1, c2, c3, c4, c5] xs (m + 5) = 0 + c0 * xs[m + 5]'(by omega) + c1 * xs[m + 4]'(by omega) + c2 * xs[m + 3]'(by omega) + c3 * xs[m + 2]'(by omega) + c4 * xs[m + 1]'(by omega) + c5 * xs[m]'(by omega) := by
+  have h1 : m + 5 < xs.size := by omega
+  simp only [dotA, dif_pos h1]
+  exact dotAGo_unfold6 xs c0 c1 c2 c3 c4 c5 m h 0
+
+theorem dot6At_eq (xs : Array Int) (c0 c1 c2 c3 c4 c5 : Int) (i : Nat) :
+    dot6At xs c0 c1 c2 c3 c4 c5 i = dotA [c0, c1, c2, c3, c4, c5] xs (i - 1) := by
+  match i with
+  | 0 => rfl
+  | 1 => rfl
+  | 2 => rfl
+  | 3 => rfl
+  | 4 => rfl
+  | 5 => rfl
+  | m + 6 =>
+    show dot6At xs c0 c1 c2 c3 c4 c5 (m + 6) = dotA [c0, c1, c2, c3, c4, c5] xs (m + 5)
+    -- reduce the match on `m + 6` first, or `split` picks it over the
+    -- bounds test
+    simp only [dot6At]
+    split
+    · next h => rw [dotA_unfold6 xs c0 c1 c2 c3 c4 c5 m h]
+    · rfl
+
+private theorem dotAGo_unfold7 (out : Array Int) (c0 c1 c2 c3 c4 c5 c6 : Int) (m : Nat)
+    (h : m + 7 ≤ out.size) (acc : Int) :
+    dotAGo out [c0, c1, c2, c3, c4, c5, c6] (m + 7) h acc = acc + c0 * out[m + 6]'(by omega) + c1 * out[m + 5]'(by omega) + c2 * out[m + 4]'(by omega) + c3 * out[m + 3]'(by omega) + c4 * out[m + 2]'(by omega) + c5 * out[m + 1]'(by omega) + c6 * out[m]'(by omega) := by
+  simp only [dotAGo]
+
+private theorem dotA_unfold7 (xs : Array Int) (c0 c1 c2 c3 c4 c5 c6 : Int) (m : Nat)
+    (h : m + 7 ≤ xs.size) :
+    dotA [c0, c1, c2, c3, c4, c5, c6] xs (m + 6) = 0 + c0 * xs[m + 6]'(by omega) + c1 * xs[m + 5]'(by omega) + c2 * xs[m + 4]'(by omega) + c3 * xs[m + 3]'(by omega) + c4 * xs[m + 2]'(by omega) + c5 * xs[m + 1]'(by omega) + c6 * xs[m]'(by omega) := by
+  have h1 : m + 6 < xs.size := by omega
+  simp only [dotA, dif_pos h1]
+  exact dotAGo_unfold7 xs c0 c1 c2 c3 c4 c5 c6 m h 0
+
+theorem dot7At_eq (xs : Array Int) (c0 c1 c2 c3 c4 c5 c6 : Int) (i : Nat) :
+    dot7At xs c0 c1 c2 c3 c4 c5 c6 i = dotA [c0, c1, c2, c3, c4, c5, c6] xs (i - 1) := by
+  match i with
+  | 0 => rfl
+  | 1 => rfl
+  | 2 => rfl
+  | 3 => rfl
+  | 4 => rfl
+  | 5 => rfl
+  | 6 => rfl
+  | m + 7 =>
+    show dot7At xs c0 c1 c2 c3 c4 c5 c6 (m + 7) = dotA [c0, c1, c2, c3, c4, c5, c6] xs (m + 6)
+    -- reduce the match on `m + 7` first, or `split` picks it over the
+    -- bounds test
+    simp only [dot7At]
+    split
+    · next h => rw [dotA_unfold7 xs c0 c1 c2 c3 c4 c5 c6 m h]
+    · rfl
+
+private theorem dotAGo_unfold8 (out : Array Int) (c0 c1 c2 c3 c4 c5 c6 c7 : Int) (m : Nat)
+    (h : m + 8 ≤ out.size) (acc : Int) :
+    dotAGo out [c0, c1, c2, c3, c4, c5, c6, c7] (m + 8) h acc = acc + c0 * out[m + 7]'(by omega) + c1 * out[m + 6]'(by omega) + c2 * out[m + 5]'(by omega) + c3 * out[m + 4]'(by omega) + c4 * out[m + 3]'(by omega) + c5 * out[m + 2]'(by omega) + c6 * out[m + 1]'(by omega) + c7 * out[m]'(by omega) := by
+  simp only [dotAGo]
+
+private theorem dotA_unfold8 (xs : Array Int) (c0 c1 c2 c3 c4 c5 c6 c7 : Int) (m : Nat)
+    (h : m + 8 ≤ xs.size) :
+    dotA [c0, c1, c2, c3, c4, c5, c6, c7] xs (m + 7) = 0 + c0 * xs[m + 7]'(by omega) + c1 * xs[m + 6]'(by omega) + c2 * xs[m + 5]'(by omega) + c3 * xs[m + 4]'(by omega) + c4 * xs[m + 3]'(by omega) + c5 * xs[m + 2]'(by omega) + c6 * xs[m + 1]'(by omega) + c7 * xs[m]'(by omega) := by
+  have h1 : m + 7 < xs.size := by omega
+  simp only [dotA, dif_pos h1]
+  exact dotAGo_unfold8 xs c0 c1 c2 c3 c4 c5 c6 c7 m h 0
+
+theorem dot8At_eq (xs : Array Int) (c0 c1 c2 c3 c4 c5 c6 c7 : Int) (i : Nat) :
+    dot8At xs c0 c1 c2 c3 c4 c5 c6 c7 i = dotA [c0, c1, c2, c3, c4, c5, c6, c7] xs (i - 1) := by
+  match i with
+  | 0 => rfl
+  | 1 => rfl
+  | 2 => rfl
+  | 3 => rfl
+  | 4 => rfl
+  | 5 => rfl
+  | 6 => rfl
+  | 7 => rfl
+  | m + 8 =>
+    show dot8At xs c0 c1 c2 c3 c4 c5 c6 c7 (m + 8) = dotA [c0, c1, c2, c3, c4, c5, c6, c7] xs (m + 7)
+    -- reduce the match on `m + 8` first, or `split` picks it over the
+    -- bounds test
+    simp only [dot8At]
+    split
+    · next h => rw [dotA_unfold8 xs c0 c1 c2 c3 c4 c5 c6 c7 m h]
+    · rfl
+
 theorem predictA_eq (cs : List Int) (shift : Nat) (out : Array Int) :
     predictA cs shift out = predict cs shift out.toList.reverse := by
   unfold predictA predict

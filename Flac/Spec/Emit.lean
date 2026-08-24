@@ -604,9 +604,128 @@ theorem lpcResGo_toList (cs : List Int) (shift : Nat) (xs : Array Int) :
       take_succ_reverse xs hi]
     rfl
 
+
+/-! ### The tap-specialised residual loops are `lpcResGo` at a fixed list -/
+
+private theorem lpcResGo1_eq (c0 : Int) (shift : Nat) (xs : Array Int) :
+    ∀ (rem i : Nat) (out : Array Int),
+      Flac.Emit.lpcResGo1 c0 shift xs i rem out
+        = Flac.Emit.lpcResGo [c0] shift xs i rem out := by
+  intro rem
+  induction rem with
+  | zero => intro i out; rfl
+  | succ rem ih =>
+    intro i out
+    simp only [Flac.Emit.lpcResGo1, Flac.Emit.lpcResGo, Lpc.dot1At_eq]
+    exact ih _ _
+
+private theorem lpcResGo2_eq (c0 c1 : Int) (shift : Nat) (xs : Array Int) :
+    ∀ (rem i : Nat) (out : Array Int),
+      Flac.Emit.lpcResGo2 c0 c1 shift xs i rem out
+        = Flac.Emit.lpcResGo [c0, c1] shift xs i rem out := by
+  intro rem
+  induction rem with
+  | zero => intro i out; rfl
+  | succ rem ih =>
+    intro i out
+    simp only [Flac.Emit.lpcResGo2, Flac.Emit.lpcResGo, Lpc.dot2At_eq]
+    exact ih _ _
+
+private theorem lpcResGo3_eq (c0 c1 c2 : Int) (shift : Nat) (xs : Array Int) :
+    ∀ (rem i : Nat) (out : Array Int),
+      Flac.Emit.lpcResGo3 c0 c1 c2 shift xs i rem out
+        = Flac.Emit.lpcResGo [c0, c1, c2] shift xs i rem out := by
+  intro rem
+  induction rem with
+  | zero => intro i out; rfl
+  | succ rem ih =>
+    intro i out
+    simp only [Flac.Emit.lpcResGo3, Flac.Emit.lpcResGo, Lpc.dot3At_eq]
+    exact ih _ _
+
+private theorem lpcResGo4_eq (c0 c1 c2 c3 : Int) (shift : Nat) (xs : Array Int) :
+    ∀ (rem i : Nat) (out : Array Int),
+      Flac.Emit.lpcResGo4 c0 c1 c2 c3 shift xs i rem out
+        = Flac.Emit.lpcResGo [c0, c1, c2, c3] shift xs i rem out := by
+  intro rem
+  induction rem with
+  | zero => intro i out; rfl
+  | succ rem ih =>
+    intro i out
+    simp only [Flac.Emit.lpcResGo4, Flac.Emit.lpcResGo, Lpc.dot4At_eq]
+    exact ih _ _
+
+private theorem lpcResGo5_eq (c0 c1 c2 c3 c4 : Int) (shift : Nat) (xs : Array Int) :
+    ∀ (rem i : Nat) (out : Array Int),
+      Flac.Emit.lpcResGo5 c0 c1 c2 c3 c4 shift xs i rem out
+        = Flac.Emit.lpcResGo [c0, c1, c2, c3, c4] shift xs i rem out := by
+  intro rem
+  induction rem with
+  | zero => intro i out; rfl
+  | succ rem ih =>
+    intro i out
+    simp only [Flac.Emit.lpcResGo5, Flac.Emit.lpcResGo, Lpc.dot5At_eq]
+    exact ih _ _
+
+private theorem lpcResGo6_eq (c0 c1 c2 c3 c4 c5 : Int) (shift : Nat) (xs : Array Int) :
+    ∀ (rem i : Nat) (out : Array Int),
+      Flac.Emit.lpcResGo6 c0 c1 c2 c3 c4 c5 shift xs i rem out
+        = Flac.Emit.lpcResGo [c0, c1, c2, c3, c4, c5] shift xs i rem out := by
+  intro rem
+  induction rem with
+  | zero => intro i out; rfl
+  | succ rem ih =>
+    intro i out
+    simp only [Flac.Emit.lpcResGo6, Flac.Emit.lpcResGo, Lpc.dot6At_eq]
+    exact ih _ _
+
+private theorem lpcResGo7_eq (c0 c1 c2 c3 c4 c5 c6 : Int) (shift : Nat) (xs : Array Int) :
+    ∀ (rem i : Nat) (out : Array Int),
+      Flac.Emit.lpcResGo7 c0 c1 c2 c3 c4 c5 c6 shift xs i rem out
+        = Flac.Emit.lpcResGo [c0, c1, c2, c3, c4, c5, c6] shift xs i rem out := by
+  intro rem
+  induction rem with
+  | zero => intro i out; rfl
+  | succ rem ih =>
+    intro i out
+    simp only [Flac.Emit.lpcResGo7, Flac.Emit.lpcResGo, Lpc.dot7At_eq]
+    exact ih _ _
+
+private theorem lpcResGo8_eq (c0 c1 c2 c3 c4 c5 c6 c7 : Int) (shift : Nat) (xs : Array Int) :
+    ∀ (rem i : Nat) (out : Array Int),
+      Flac.Emit.lpcResGo8 c0 c1 c2 c3 c4 c5 c6 c7 shift xs i rem out
+        = Flac.Emit.lpcResGo [c0, c1, c2, c3, c4, c5, c6, c7] shift xs i rem out := by
+  intro rem
+  induction rem with
+  | zero => intro i out; rfl
+  | succ rem ih =>
+    intro i out
+    simp only [Flac.Emit.lpcResGo8, Flac.Emit.lpcResGo, Lpc.dot8At_eq]
+    exact ih _ _
+
+/-- The dispatching `lpcResA` is the generic loop it replaced. -/
+theorem lpcResA_generic (cs : List Int) (shift : Nat) (xs : Array Int) :
+    Flac.Emit.lpcResA cs shift xs
+      = Flac.Emit.lpcResGo cs shift xs cs.length (xs.size - cs.length)
+          (Array.emptyWithCapacity (xs.size - cs.length)) := by
+  unfold Flac.Emit.lpcResA
+  match cs with
+  | [] => rfl
+  | [c0] => exact lpcResGo1_eq _ _ _ _ _ _
+  | [c0, c1] => exact lpcResGo2_eq _ _ _ _ _ _ _
+  | [c0, c1, c2] => exact lpcResGo3_eq _ _ _ _ _ _ _ _
+  | [c0, c1, c2, c3] => exact lpcResGo4_eq _ _ _ _ _ _ _ _ _
+  | [c0, c1, c2, c3, c4] => exact lpcResGo5_eq _ _ _ _ _ _ _ _ _ _
+  | [c0, c1, c2, c3, c4, c5] => exact lpcResGo6_eq _ _ _ _ _ _ _ _ _ _ _
+  | [c0, c1, c2, c3, c4, c5, c6] => exact lpcResGo7_eq _ _ _ _ _ _ _ _ _ _ _ _
+  | [c0, c1, c2, c3, c4, c5, c6, c7] =>
+    exact lpcResGo8_eq _ _ _ _ _ _ _ _ _ _ _ _ _
+  | _ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: _ => rfl
+
 theorem lpcResA_toList (cs : List Int) (shift : Nat) (xs : Array Int) :
     (Flac.Emit.lpcResA cs shift xs).toList = Lpc.residual cs shift xs.toList := by
-  unfold Flac.Emit.lpcResA Lpc.residual
+  rw [lpcResA_generic]
+  unfold Lpc.residual
   by_cases h : cs.length ≤ xs.size
   · rw [lpcResGo_toList cs shift xs (xs.size - cs.length) cs.length _ (by omega)
       (by omega)]
