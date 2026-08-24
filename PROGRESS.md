@@ -1867,3 +1867,54 @@ of that induction), `fixedFoldTail` (~7.5%, already the right shape),
 
 **2× is met on the synthetic corpus (1.62×) and 2.18× on real audio** — about
 1.09× short, which is now one or two wins rather than a wall.
+
+---
+
+## 2026-08-24 — Session 16: fusing the Rice hot loop's two flushes
+
+**Landed:** `pushRiceRange` pushed the unary field, flushed, pushed the
+`k`-bit remainder, flushed again. `flushBytes` emits byte `[j, j+8)` of its
+accumulator, and shifting the accumulator left by `k` moves that byte to
+`[j+k, j+k+8)`, so **one** flush at `n₁ + k` emits exactly the bytes the two
+flushes did. +3.3% per thread (30.4 → 31.4 MB/s), output bit-identical.
+
+The guard placement is the design decision. The fusion needs the byte still
+inside the 64-bit word: `n < 8` and `q < 32` give `n₁ ≤ 39`, so `k ≤ 25`
+suffices. Testing that per sample would have spent much of the win, so
+`pushPartsR` tests it **once per partition**. Every partition the encoder emits
+has `k ≤ 14` (`rice4`), so the split path is unreachable in practice but keeps
+the loop total across the `k ≤ 32` that `sim_pushRiceRange` admits. Hoisting
+the guard also removed a case from the proof.
+
+`sim_pushRiceRange` is untouched — `pushRiceRange` stays the form the
+simulation argument is stated against, and the call site rewrites through
+`pushRiceRangeF_eq`. Three new lemmas in `Flac/Spec/Encode.lean`:
+`shift_byte` (the byte read at `j+b` from a shifted accumulator is the byte
+read at `j` from the original, on the existing `byte_seg`/`mask_toNat`),
+`flushBytes_fuse` (strong induction peeling eight bits, each step peeling the
+same byte off both sides), `pushRiceRangeF_eq` (induction on partition
+length).
+
+**Position after eight changes (18.8 → 31.4 MB/s per thread, 1.67×):**
+
+| corpus rate, 8 threads | vinyl | `flac -8` | gap |
+|---|---|---|---|
+| real audio | 157 MB/s | 331 MB/s | **2.11×** |
+| synthetic | 111 MB/s | 176 MB/s | **1.58×** |
+
+Per thread real is 2.6× (30 vs 78). Decode 220 MB/s, 1.15× ahead of libFLAC's
+only configuration. Scaling 1→8 is 5.20× against libFLAC's 4.26×. Compression
+unchanged at 47.9% real / 40.6% synthetic. **Encode at eight threads is now
+2.01× single-threaded `flac -8`** and slightly ahead of single-threaded
+`flac -5` (157 vs 142), which still compresses better.
+
+**Two Lean notes:** `split` picks the `cases ch` match equation over an `ite`
+in the same goal, so the branch needs `dsimp only` and an explicit `by_cases`;
+and `refine ih … ?_` left the writer arguments as metavariables where `exact`
+with the full expected type did not.
+
+**Against the 2× goal: synthetic met at 1.58×, real audio 2.11×** — 1.06×
+short, i.e. 157 → 166 MB/s. Remaining: `fixedFoldTail` (~7.5%, already the
+right shape; only lever is fewer fixed orders, which trades ratio),
+`acorr3`/`acorr1` (~8%), `FloatArray` construction (~8%, where the window
+probe showed the cost is the array build not the arithmetic), `crc16` (~4%).

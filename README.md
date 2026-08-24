@@ -147,7 +147,7 @@ Wall-clock throughput at equal thread counts, as a ratio against libFLAC
 |---:|---|---|
 | 1 | 2.4× / 2.7× slower | 2.6× / 3.9× slower |
 | 4 | 1.9× / 2.5× slower | 1.2× / 1.2× slower |
-| 8 | **1.6× / 2.2× slower** | **1.06× slower / 1.12× faster** |
+| 8 | **1.6× / 2.1× slower** | **1.08× slower / 1.15× faster** |
 
 | compression, coded frames | Vinyl | `flac -5` | `flac -8` |
 |---|---|---|---|
@@ -166,7 +166,7 @@ Three things worth taking from that:
   2.4× and 4.1×. Both codecs take a thread count — `vinyl -j N` and
   `flac -j N` — so the comparison can be made at parity.
 - **Decoding gets faster with more threads, and that is where Vinyl wins on
-  wall clock**: 213 MB/s against libFLAC's 191 MB/s on real audio at eight
+  wall clock**: 220 MB/s against libFLAC's 192 MB/s on real audio at eight
   threads. libFLAC has no threaded decoder to answer with, so its decode row
   is a single value at any thread count.
 
@@ -196,7 +196,7 @@ What the curves say:
   implementations speed up together.
 - **Decode at eight threads is the one place Vinyl is ahead on wall clock.**
   Its curve sits above `flac -d`'s over almost the whole corpus — ×1.12,
-  213 MB/s against 191 MB/s — and libFLAC has nothing to answer with: its
+  220 MB/s against 192 MB/s — and libFLAC has nothing to answer with: its
   decoder takes no `-j`, which is why it appears once rather than twice.
 - **Per core it is ~2.7× behind on encode and ~4.0× on decode.** Decode really
   is a near-constant distance below libFLAC across the corpus (4.0× at the
