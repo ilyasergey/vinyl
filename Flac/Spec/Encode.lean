@@ -172,14 +172,15 @@ private theorem sim_of_flush {bw : BitWriter} {w : Emit.W} {aF : UInt64}
         = (Emit.W.flushGo w.buf aS mF).2.1 % 2 ^ (Emit.W.flushGo w.buf aS mF).2.2
     rw [flushGo_pending]; exact ha
 
-/-- The shipped `push` simulates the verified `push`, for every field width
-    the encoder uses. -/
-theorem sim_push {k v : Nat} (hk : k ≤ 32) :
-    Simulates (fun bw => bw.push k v) (fun w => w.push k v) := by
-  intro bw w h
+/-- The two accumulators agree on the low `n + k` bits — the whole content
+    of a `push`, and reusable by the hot loop, which inlines the flush. -/
+private theorem push_key {bw : BitWriter} {w : Emit.W} (h : Sim bw w) (v : Nat)
+    {k : Nat} (hk : k ≤ 32) :
+    ((bw.acc <<< UInt64.ofNat k)
+        ||| (UInt64.ofNat v &&& ((1 <<< UInt64.ofNat k) - 1))).toNat % 2 ^ (w.n + k)
+      = (w.acc * p2 k + (v &&& (p2 k - 1))) % 2 ^ (w.n + k) := by
   obtain ⟨hbuf, hn, hn8, hacc⟩ := h
   have hkk : (UInt64.ofNat k).toNat % 64 = k := toNat_ofNat_small (by omega)
-  -- the fast accumulator, as a `Nat`
   have hfast : ((bw.acc <<< UInt64.ofNat k)
       ||| (UInt64.ofNat v &&& ((1 <<< UInt64.ofNat k) - 1))).toNat
       = bw.acc.toNat % 2 ^ (64 - k) * 2 ^ k + v % 2 ^ k := by
@@ -193,16 +194,19 @@ theorem sim_push {k v : Nat} (hk : k ≤ 32) :
       ← Nat.shiftLeft_eq (bw.acc.toNat % 2 ^ (64 - k)) k,
       ← Nat.shiftLeft_add_eq_or_of_lt (Nat.mod_lt _ (Nat.two_pow_pos k)) _,
       Nat.shiftLeft_eq]
-  -- both accumulators agree on the low `n + k` bits
-  have hkey : ((bw.acc <<< UInt64.ofNat k)
-      ||| (UInt64.ofNat v &&& ((1 <<< UInt64.ofNat k) - 1))).toNat % 2 ^ (w.n + k)
-      = (w.acc * p2 k + (v &&& (p2 k - 1))) % 2 ^ (w.n + k) := by
-    rw [hfast, p2_eq, Nat.and_two_pow_sub_one_eq_mod,
-      split_mod (Nat.mod_lt _ (Nat.two_pow_pos k)),
-      split_mod (Nat.mod_lt _ (Nat.two_pow_pos k)),
-      Nat.mod_mod_of_dvd _ (Nat.pow_dvd_pow 2 (show w.n ≤ 64 - k from by omega)),
-      hacc]
-  exact sim_of_flush hbuf (by rw [hn]) (by omega) hkey
+  rw [hfast, p2_eq, Nat.and_two_pow_sub_one_eq_mod,
+    split_mod (Nat.mod_lt _ (Nat.two_pow_pos k)),
+    split_mod (Nat.mod_lt _ (Nat.two_pow_pos k)),
+    Nat.mod_mod_of_dvd _ (Nat.pow_dvd_pow 2 (show w.n ≤ 64 - k from by omega)),
+    hacc]
+
+/-- The shipped `push` simulates the verified `push`, for every field width
+    the encoder uses. -/
+theorem sim_push {k v : Nat} (hk : k ≤ 32) :
+    Simulates (fun bw => bw.push k v) (fun w => w.push k v) := by
+  intro bw w h
+  exact sim_of_flush h.1 (by rw [h.2.1]) (by have := h.2.2.1; omega)
+    (push_key h v hk)
 
 /-! ## Derived primitives
 
@@ -260,5 +264,121 @@ theorem sim_pushRiceFolded {k : Nat} (hk : k ≤ 32) (u : Nat) :
       (fun w => (w.pushUnary (u >>> k)).push k (u &&& (p2 k - 1))) := by
   intro bw w h
   exact sim_push hk _ _ (sim_pushUnary _ _ _ h)
+
+/-! ## Sequence writers -/
+
+theorem sim_pushSIntSeg (b : Nat) (xs : Array Int) (start len : Nat) :
+    Simulates (BitWriter.pushSIntSeg b xs start len)
+      (Emit.W.pushSIntSeg b xs start len) := by
+  induction len generalizing start with
+  | zero => intro bw w h; exact h
+  | succ len ih =>
+    intro bw w h
+    show Sim (BitWriter.pushSIntSeg b xs start (len + 1) bw)
+      (Emit.W.pushSIntSeg b xs start (len + 1) w)
+    unfold BitWriter.pushSIntSeg Emit.W.pushSIntSeg
+    by_cases hs : start < xs.size
+    · rw [if_pos hs, if_pos hs]
+      exact ih (start + 1) _ _ (sim_pushSInt b _ _ _ h)
+    · rw [if_neg hs, if_neg hs]
+      exact h
+
+theorem sim_pushSIntList (b : Nat) (cs : List Int) :
+    Simulates (BitWriter.pushSIntList b cs) (Emit.W.pushSIntList b cs) := by
+  induction cs with
+  | nil => intro bw w h; exact h
+  | cons c cs ih =>
+    intro bw w h
+    show Sim (BitWriter.pushSIntList b (c :: cs) bw)
+      (Emit.W.pushSIntList b (c :: cs) w)
+    unfold BitWriter.pushSIntList Emit.W.pushSIntList
+    exact ih _ _ (sim_pushSInt b c _ _ h)
+
+theorem sim_pushConts (v k : Nat) :
+    Simulates (BitWriter.pushConts v k) (Emit.W.pushConts v k) := by
+  induction k with
+  | zero => intro bw w h; exact h
+  | succ k ih =>
+    intro bw w h
+    show Sim (BitWriter.pushConts v (k + 1) bw) (Emit.W.pushConts v (k + 1) w)
+    unfold BitWriter.pushConts Emit.W.pushConts
+    exact ih _ _ (sim_push (by omega) _ _ h)
+
+theorem sim_pushUtf8 (v : Nat) :
+    Simulates (fun bw => bw.pushUtf8 v) (Emit.W.pushUtf8 v) := by
+  intro bw w h
+  show Sim (bw.pushUtf8 v) (Emit.W.pushUtf8 v w)
+  unfold BitWriter.pushUtf8 Emit.W.pushUtf8
+  split
+  · exact sim_push (by omega) _ _ h
+  · split
+    · exact sim_pushConts v 1 _ _ (sim_push (by omega) _ _ h)
+    · split
+      · exact sim_pushConts v 2 _ _ (sim_push (by omega) _ _ h)
+      · split
+        · exact sim_pushConts v 3 _ _ (sim_push (by omega) _ _ h)
+        · split
+          · exact sim_pushConts v 4 _ _ (sim_push (by omega) _ _ h)
+          · split
+            · exact sim_pushConts v 5 _ _ (sim_push (by omega) _ _ h)
+            · exact sim_pushConts v 6 _ _ (sim_push (by omega) _ _ h)
+
+/-! ## The unpacked residual writer
+
+`pushRiceRange` is the encoder's hot loop: it carries `buf`/`acc`/`n` as
+three parameters rather than a `BitWriter`, so the per-sample path allocates
+nothing. It stays provable because it goes through the same accumulator step
+`push` does (`BitWriter.accPush`), which makes each of its two pushes
+*definitionally* a `push` — there is no inlining left to discharge. -/
+
+/-- The model writer masks the pushed value itself, so pre-masking is
+    invisible. The hot loop hands it the unmasked magnitude. -/
+private theorem W_push_mask (w : Emit.W) (k v : Nat) :
+    Emit.W.push w k (v &&& (p2 k - 1)) = Emit.W.push w k v := by
+  unfold Emit.W.push
+  rw [p2_eq, Nat.and_two_pow_sub_one_eq_mod, Nat.and_two_pow_sub_one_eq_mod,
+    Nat.mod_mod]
+
+/-- The hot loop simulates `Emit.W.pushRiceSeg`. The partition never runs
+    past the residual (`start + len ≤ res.size`), which is what lets the
+    fast loop test only `i < stop` where the model also tests the array
+    bound. -/
+theorem sim_pushRiceRange {k : Nat} (hk : k ≤ 32) (res : Array Int) :
+    ∀ (len start : Nat), start + len ≤ res.size →
+      ∀ bw w, Sim bw w →
+        Sim (pushRiceRange k (p2 k - 1) res start (start + len) bw.buf bw.acc bw.n)
+          (Emit.W.pushRiceSeg k res start len w) := by
+  intro len
+  induction len with
+  | zero =>
+    intro start _ bw w h
+    rw [pushRiceRange]
+    simp only []
+    rw [dif_neg (by omega)]
+    exact h
+  | succ len ih =>
+    intro start hlen bw w h
+    have hsize : start < res.size := by omega
+    have hzz : (if 0 ≤ res.getD start 0 then 2 * (res.getD start 0).toNat
+        else 2 * (-res.getD start 0).toNat - 1)
+          = Rice.zigzag (res.getD start 0) := rfl
+    rw [pushRiceRange]
+    simp only []
+    rw [dif_pos (show start < start + (len + 1) from by omega), hzz,
+      show start + (len + 1) = start + 1 + len from by omega]
+    simp only [Emit.W.pushRiceSeg]
+    rw [if_pos hsize]
+    by_cases hq : Rice.zigzag (res.getD start 0) >>> k < 32
+    · rw [if_pos hq]
+      have hw : Emit.W.pushRice w k (res.getD start 0)
+          = (w.push (Rice.zigzag (res.getD start 0) >>> k + 1) 1).push k
+              (Rice.zigzag (res.getD start 0)) := by
+        rw [Emit.W.pushRice, W_push_mask, Emit.W.pushUnary, dif_pos hq]
+      rw [hw]
+      exact ih (start + 1) (by omega) _ _
+        (sim_push hk _ _ (sim_push (show _ + 1 ≤ 32 from by omega) bw w h))
+    · rw [if_neg hq]
+      exact ih (start + 1) (by omega) _ _
+        (sim_push hk _ _ (sim_pushUnary _ _ _ h))
 
 end Flac.Encode

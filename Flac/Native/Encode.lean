@@ -58,12 +58,19 @@ def flushBytes (buf : ByteArray) (acc : UInt64) (n : Nat) : ByteArray :=
 termination_by n
 decreasing_by omega
 
+/-- Shift the low `k` bits of `v` into the accumulator, MSB first. The one
+    accumulator step: `push` and the hot residual loop (`pushRiceRange`,
+    which carries `buf`/`acc`/`n` unpacked) both go through it, so the
+    latter is *definitionally* a `push` and needs no separate proof. -/
+@[inline] def accPush (acc : UInt64) (k v : Nat) : UInt64 :=
+  let kk := UInt64.ofNat k
+  (acc <<< kk) ||| (UInt64.ofNat v &&& ((1 <<< kk) - 1))
+
 /-- Push the low `k` bits of `v`, MSB first. Requires `k ≤ 32` so the
     accumulator never overflows (`n + k ≤ 39`); use `pushBits` for wider
     fields. -/
 def push (bw : BitWriter) (k : Nat) (v : Nat) : BitWriter :=
-  let kk := UInt64.ofNat k
-  let acc := (bw.acc <<< kk) ||| (UInt64.ofNat v &&& ((1 <<< kk) - 1))
+  let acc := accPush bw.acc k v
   let n := bw.n + k
   ⟨flushBytes bw.buf acc n, acc, n % 8⟩
 
@@ -600,10 +607,10 @@ def pushRiceRange (k mask : Nat) (res : Array Int) :
       let u := if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1
       let q := u >>> k
       if q < 32 then
-        let acc1 := (acc <<< UInt64.ofNat (q + 1)) ||| 1
-        let n1 := n + q + 1
+        let acc1 := BitWriter.accPush acc (q + 1) 1
+        let n1 := n + (q + 1)
         let buf1 := BitWriter.flushBytes buf acc1 n1
-        let acc2 := (acc1 <<< UInt64.ofNat k) ||| UInt64.ofNat (u &&& mask)
+        let acc2 := BitWriter.accPush acc1 k u
         let n2 := n1 % 8 + k
         pushRiceRange k mask res (i + 1) stop
           (BitWriter.flushBytes buf1 acc2 n2) acc2 (n2 % 8)
