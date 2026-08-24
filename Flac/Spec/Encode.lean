@@ -204,4 +204,61 @@ theorem sim_push {k v : Nat} (hk : k ≤ 32) :
       hacc]
   exact sim_of_flush hbuf (by rw [hn]) (by omega) hkey
 
+/-! ## Derived primitives
+
+Each fast primitive is the same recursion as its `Emit.W` counterpart, so
+each proof is the corresponding structural induction over `sim_push`. -/
+
+theorem sim_pushBits (k v : Nat) :
+    Simulates (fun bw => bw.pushBits k v) (fun w => w.pushBits k v) := by
+  induction k using Nat.strongRecOn generalizing v with
+  | ind k ih =>
+    intro bw w h
+    show Sim (bw.pushBits k v) (w.pushBits k v)
+    unfold BitWriter.pushBits Emit.W.pushBits
+    by_cases hk : k ≤ 32
+    · rw [dif_pos hk, dif_pos hk]
+      exact sim_push hk bw w h
+    · rw [dif_neg hk, dif_neg hk]
+      exact sim_push (by omega) _ _ (ih (k - 32) (by omega) (v >>> 32) bw w h)
+
+theorem sim_pushUnary (q : Nat) :
+    Simulates (fun bw => bw.pushUnary q) (fun w => w.pushUnary q) := by
+  induction q using Nat.strongRecOn with
+  | ind q ih =>
+    intro bw w h
+    show Sim (bw.pushUnary q) (w.pushUnary q)
+    unfold BitWriter.pushUnary Emit.W.pushUnary
+    by_cases hq : q < 32
+    · rw [dif_pos hq, dif_pos hq]
+      exact sim_push (by omega) bw w h
+    · rw [dif_neg hq, dif_neg hq]
+      exact ih (q - 32) (by omega) _ _ (sim_push (by omega) bw w h)
+
+theorem sim_pushSInt (k : Nat) (x : Int) :
+    Simulates (fun bw => bw.pushSInt k x) (fun w => w.pushSInt k x) :=
+  sim_pushBits k _
+
+/-- Byte alignment: the fast writer reads its own pending count, and the
+    simulation is what says that count is the verified writer's. -/
+theorem sim_align :
+    Simulates BitWriter.align (fun w => w.push ((8 - w.n % 8) % 8) 0) := by
+  intro bw w h
+  show Sim (bw.push ((8 - bw.n % 8) % 8) 0) _
+  rw [h.2.1]
+  exact sim_push (by omega) bw w h
+
+theorem sim_pushRice {k : Nat} (hk : k ≤ 32) (x : Int) :
+    Simulates (fun bw => bw.pushRice k x) (fun w => w.pushRice k x) := by
+  intro bw w h
+  exact sim_push hk _ _ (sim_pushUnary _ _ _ h)
+
+/-- The rare wide-quotient path of `pushRiceRange`: an already-folded
+    magnitude, so there is no `zigzag` left to match. -/
+theorem sim_pushRiceFolded {k : Nat} (hk : k ≤ 32) (u : Nat) :
+    Simulates (fun bw => bw.pushRiceFolded k u)
+      (fun w => (w.pushUnary (u >>> k)).push k (u &&& (p2 k - 1))) := by
+  intro bw w h
+  exact sim_push hk _ _ (sim_pushUnary _ _ _ h)
+
 end Flac.Encode

@@ -100,20 +100,37 @@ def pushRice (bw : BitWriter) (k : Nat) (x : Int) : BitWriter :=
 def pushRiceFolded (bw : BitWriter) (k u : Nat) : BitWriter :=
   (bw.pushUnary (u >>> k)).push k (u &&& (p2 k - 1))
 
+/-- Continuation bytes of a coded number (the shape of
+    `Emit.W.pushConts`). -/
+def pushConts (v : Nat) : (k : Nat) → BitWriter → BitWriter
+  | 0, bw => bw
+  | k + 1, bw => pushConts v k (bw.push 8 (0x80 + v / p2 (6 * k) % 64))
+
 /-- Coded number (mirrors `Flac.Utf8Num.write`). -/
-def pushUtf8 (bw : BitWriter) (v : Nat) : BitWriter := Id.run do
-  let conts (bw : BitWriter) (k : Nat) : BitWriter := Id.run do
-    let mut w := bw
-    for j in [0 : k] do
-      w := w.push 8 (0x80 + (v >>> (6 * (k - 1 - j))) % 64)
-    return w
-  if v < p2 7 then return bw.push 8 v
-  else if v < p2 11 then return conts ((bw.push 8 (0xC0 + (v >>> 6)))) 1
-  else if v < p2 16 then return conts ((bw.push 8 (0xE0 + (v >>> 12)))) 2
-  else if v < p2 21 then return conts ((bw.push 8 (0xF0 + (v >>> 18)))) 3
-  else if v < p2 26 then return conts ((bw.push 8 (0xF8 + (v >>> 24)))) 4
-  else if v < p2 31 then return conts ((bw.push 8 (0xFC + (v >>> 30)))) 5
-  else return conts (bw.push 8 0xFE) 6
+def pushUtf8 (bw : BitWriter) (v : Nat) : BitWriter :=
+  if v < p2 7 then bw.push 8 v
+  else if v < p2 11 then pushConts v 1 (bw.push 8 (0xC0 + v / p2 6))
+  else if v < p2 16 then pushConts v 2 (bw.push 8 (0xE0 + v / p2 12))
+  else if v < p2 21 then pushConts v 3 (bw.push 8 (0xF0 + v / p2 18))
+  else if v < p2 26 then pushConts v 4 (bw.push 8 (0xF8 + v / p2 24))
+  else if v < p2 31 then pushConts v 5 (bw.push 8 (0xFC + v / p2 30))
+  else pushConts v 6 (bw.push 8 0xFE)
+
+/-- Fixed-width run over `xs[start .. start+len)`, stopping at the array
+    end (the shape of `Emit.W.pushSIntSeg`). -/
+def pushSIntSeg (b : Nat) (xs : Array Int) :
+    (start len : Nat) → BitWriter → BitWriter
+  | _, 0, bw => bw
+  | start, len + 1, bw =>
+    if start < xs.size then
+      pushSIntSeg b xs (start + 1) len (bw.pushSInt b (xs.getD start 0))
+    else bw
+
+/-- Fixed-width run over a (short) list — LPC coefficients (the shape of
+    `Emit.W.pushSIntList`). -/
+def pushSIntList (b : Nat) : List Int → BitWriter → BitWriter
+  | [], bw => bw
+  | x :: xs, bw => pushSIntList b xs (bw.pushSInt b x)
 
 end BitWriter
 
@@ -534,7 +551,7 @@ def chooseSub (b : Nat) (blk : Array Int) : SubPrep :=
 structure FramePrep where
   chCode : Nat
   blockSize : Nat
-  subs : Array SubPrep
+  subs : List SubPrep
 
 /-- The per-frame search: stereo-mode decision by the sum-of-magnitudes
     proxy (`Heuristics.stereoPick`) for two channels, independent coding
@@ -552,15 +569,15 @@ def chooseFrame (b : Nat) (chs : Array (Array Int)) : FramePrep :=
     let sa := sumAbsArr sd
     let am := sumAbsArr md
     if al + ar ≤ al + sa ∧ al + ar ≤ sa + ar ∧ al + ar ≤ am + sa then
-      ⟨1, bs, #[chooseSub b l, chooseSub b r]⟩
+      ⟨1, bs, [chooseSub b l, chooseSub b r]⟩
     else if al + sa ≤ sa + ar ∧ al + sa ≤ am + sa then
-      ⟨8, bs, #[chooseSub b l, chooseSub (b + 1) sd]⟩
+      ⟨8, bs, [chooseSub b l, chooseSub (b + 1) sd]⟩
     else if sa + ar ≤ am + sa then
-      ⟨9, bs, #[chooseSub (b + 1) sd, chooseSub b r]⟩
+      ⟨9, bs, [chooseSub (b + 1) sd, chooseSub b r]⟩
     else
-      ⟨10, bs, #[chooseSub b md, chooseSub (b + 1) sd]⟩
+      ⟨10, bs, [chooseSub b md, chooseSub (b + 1) sd]⟩
   else
-    ⟨chs.size - 1, bs, chs.map (chooseSub b)⟩
+    ⟨chs.size - 1, bs, (chs.map (chooseSub b)).toList⟩
 
 /-! ## Writers -/
 
@@ -596,65 +613,67 @@ def pushRiceRange (k mask : Nat) (res : Array Int) :
     else ⟨buf, acc, n⟩
   termination_by i stop => stop - i
 
+/-- The partitions of a coded residual, one at a time — the shape of
+    `Emit.W.pushParts` restricted to method RICE, which is all the default
+    heuristics emit. -/
+def pushPartsR (res : Array Int) (ks : Array Nat) (c ord : Nat) :
+    (j rem start : Nat) → BitWriter → BitWriter
+  | _, 0, _, bw => bw
+  | j, rem + 1, start, bw =>
+    let len := if j = 0 then c - ord else c
+    let k := ks.getD j 10
+    let w := bw.push 4 k
+    pushPartsR res ks c ord (j + 1) rem (start + len)
+      (pushRiceRange k (p2 k - 1) res start (start + len) w.buf w.acc w.n)
+
 /-- Partitioned coded residual (method RICE, the only one the default
     heuristics emit). -/
 def pushResidual (bw : BitWriter) (bs ord po : Nat) (ks : Array Nat)
-    (res : Array Int) : BitWriter := Id.run do
-  let mut w := (bw.push 2 0).push 4 po
-  let c := bs / p2 po
-  let mut start := 0
-  for j in [0 : p2 po] do
-    let len := if j = 0 then c - ord else c
-    let k := ks.getD j 10
-    w := w.push 4 k
-    w := pushRiceRange k (p2 k - 1) res start (start + len) w.buf w.acc w.n
-    start := start + len
-  return w
+    (res : Array Int) : BitWriter :=
+  pushPartsR res ks (bs / p2 po) ord 0 (p2 po) 0 ((bw.push 2 0).push 4 po)
 
 /-- One subframe, from its decision: the exact layout of
-    `Subframe.write`. Emission only — `p` already holds the search
-    result. -/
-def pushSubframeOf (bw : BitWriter) (p : SubPrep) : BitWriter := Id.run do
+    `Subframe.write`, in the shape of `Emit.W.pushContent`. Emission only —
+    `p` already holds the search result. -/
+def pushSubframeOf (bw : BitWriter) (p : SubPrep) : BitWriter :=
   let b' := p.depth - p.wasted
-  let scaled := p.scaled
-  let mut w := (bw.push 1 0).push 6 p.plan.typeCode
-  w := if p.wasted = 0 then w.push 1 0
-       else (w.push 1 1).pushUnary (p.wasted - 1)
+  let xs := p.scaled
+  let w0 := (bw.push 1 0).push 6 p.plan.typeCode
+  let w := if p.wasted = 0 then w0.push 1 0
+           else (w0.push 1 1).pushUnary (p.wasted - 1)
   match p.plan with
-  | .constant => return w.pushSInt b' (scaled.getD 0 0)
-  | .verbatim =>
-    for x in scaled do
-      w := w.pushSInt b' x
-    return w
+  | .constant => w.pushSInt b' (xs.getD 0 0)
+  | .verbatim => BitWriter.pushSIntSeg b' xs 0 xs.size w
   | .fixed ord po ks =>
-    for i in [0 : ord] do
-      w := w.pushSInt b' (scaled.getD i 0)
-    return pushResidual w scaled.size ord po ks (Emit.fixedResA ord scaled)
+    pushResidual (BitWriter.pushSIntSeg b' xs 0 ord w) xs.size ord po ks
+      (Emit.fixedResA ord xs)
   | .lpc cs shift po ks =>
-    let ord := cs.length
-    for i in [0 : ord] do
-      w := w.pushSInt b' (scaled.getD i 0)
-    w := (w.push 4 (12 - 1)).pushSInt 5 (shift : Int)
-    for cf in cs do
-      w := w.pushSInt 12 cf
-    return pushResidual w scaled.size ord po ks (Emit.lpcResA cs shift scaled)
+    pushResidual
+      (BitWriter.pushSIntList 12 cs
+        (((BitWriter.pushSIntSeg b' xs 0 cs.length w).push 4 (12 - 1)).pushSInt 5
+          (shift : Int)))
+      xs.size cs.length po ks (Emit.lpcResA cs shift xs)
+
+/-- The subframes of a frame, one at a time (the shape of
+    `Emit.W.pushPlan`). -/
+def pushPlanOf : List SubPrep → BitWriter → BitWriter
+  | [], bw => bw
+  | p :: ps, bw => pushPlanOf ps (pushSubframeOf bw p)
 
 /-- One frame, from its decisions: canonical header (blocksize code 7,
     sample rate from STREAMINFO), subframes, byte-alignment, CRCs over the
-    emitted bytes. Emission only. `bw` must be byte-aligned on entry
-    (frames always are). -/
+    emitted bytes — the shape of `Emit.W.pushFrame`. Emission only. `bw`
+    must be byte-aligned on entry (frames always are). -/
 def pushFrameOf (bw : BitWriter) (b : Nat) (strat : Bool) (num : Nat)
-    (fp : FramePrep) : BitWriter := Id.run do
+    (fp : FramePrep) : BitWriter :=
   let start := bw.buf.size
-  let mut w := (((bw.push 14 0x3FFE).push 1 0).push 1 (if strat then 1 else 0)).push 4 7
-  w := ((w.push 4 0).push 4 fp.chCode).push 3 (Frame.bpsCode b)
-  w := (w.push 1 0).pushUtf8 num
-  w := w.push 16 (fp.blockSize - 1)
-  w := w.push 8 (Crc.crc8Range w.buf start w.buf.size).toNat
-  for p in fp.subs do
-    w := pushSubframeOf w p
-  w := w.align
-  return w.push 16 (Crc.crc16Range w.buf start w.buf.size).toNat
+  let w1 := (((((((((bw.push 14 0x3FFE).push 1 0).push 1
+    (if strat then 1 else 0)).push 4 7).push 4 0).push 4 fp.chCode).push 3
+    (Frame.bpsCode b)).push 1 0).pushUtf8 num).push 16 (fp.blockSize - 1)
+  let w2 := w1.push 8 (Crc.crc8Range w1.buf start w1.buf.size).toNat
+  let w3 := pushPlanOf fp.subs w2
+  let w4 := w3.align
+  w4.push 16 (Crc.crc16Range w4.buf start w4.buf.size).toNat
 
 /-- One frame: the search (`chooseFrame`), then emission (`pushFrameOf`). -/
 def pushFrame (bw : BitWriter) (b : Nat) (strat : Bool) (num : Nat)
