@@ -6,7 +6,7 @@ Vinyl implements a FLAC ([RFC 9639](references/rfc9639.txt)) encoder and
 decoder with no FFI, together with machine-checked proofs. The main
 correctness theorem — kernel-certified losslessness of the shipped
 encoder/decoder pair — is
-[`Flac.decode_encode`](Flac/Spec/Decode.lean#L2240):
+[`Flac.decode_encode`](Flac/Spec/Decode.lean#L2271):
 
 ```lean
 /-- Decoding an encoded stream recovers the audio exactly,
@@ -15,13 +15,13 @@ theorem Flac.decode_encode (a : Audio) (h : a.WellFormed) :
     decode (encode a) = .ok a
 ```
 
-Here [`Audio.WellFormed`](Flac/Native/Stream.lean#L259) says exactly
+Here [`Audio.WellFormed`](Flac/Native/Stream.lean#L304) says exactly
 "representable as FLAC" — 1–8 equal-length channels, bit depth 1–32,
 samples in range for the bit depth, and the STREAMINFO field bounds — and
 it is **decidable**, so the precondition can be tested at runtime. The
 checked encoder [`Flac.encodeChecked`](Flac/Native/Codec.lean#L25) does
 exactly that, which turns the runtime check itself into the theorem's
-premise ([`Flac.decode_encodeChecked`](Flac/Spec/Decode.lean#L2247)):
+premise ([`Flac.decode_encodeChecked`](Flac/Spec/Decode.lean#L2278)):
 
 ```lean
 /-- If the checked encoder returns bytes at all, decoding them
@@ -31,7 +31,7 @@ theorem Flac.decode_encodeChecked
 ```
 
 At the byte level the same guarantee holds for raw PCM files
-([`Flac.decodePcm16_encodePcm16`](Flac/Spec/Decode.lean#L2661)):
+([`Flac.decodePcm16_encodePcm16`](Flac/Spec/Decode.lean#L2692)):
 
 ```lean
 /-- If encoding a raw 16-bit PCM byte array succeeds at all,
@@ -56,7 +56,7 @@ theorems above cover bit depths 1–32.)
 The statements quantify over every encoder knob: block size, numbering
 strategy, stereo-decorrelation mode, wasted bits, subframe types, Rice
 parameters and partitions
-([`Flac.decode_encode_cfg`](Flac/Spec/Decode.lean#L2228)). The encoder
+([`Flac.decode_encode_cfg`](Flac/Spec/Decode.lean#L2259)). The encoder
 validates each heuristic choice against a decidable certificate and falls
 back to VERBATIM when the check fails, so **arbitrary — even
 adversarial — heuristics cannot break correctness**: they only choose
@@ -68,7 +68,7 @@ bit model carries the round-trip proof
 shipped *production* decoder (a buffered `ByteArray` reader) is proven to
 compute exactly the same function on every input
 ([`decodeOption_eq_reference`](Flac/Spec/Decode.lean), accept-set
-transfer [`decode_ok_iff_reference`](Flac/Spec/Decode.lean#L2218)); and
+transfer [`decode_ok_iff_reference`](Flac/Spec/Decode.lean#L2249)); and
 both are *total* — no `partial`, no panics — so the decoder terminates on
 arbitrary bytes. Interoperability with the real world is established
 separately by differential testing against libFLAC (below).
@@ -78,8 +78,8 @@ separately by differential testing against libFLAC (below).
 Milestones M0–M5 are complete and M6 (performance under the theorem
 ratchet) has largely landed: every decoder fast path is proven equal to
 its bit-level specification, *including* frame-parallel decoding
-([`readFramesFast_eq`](Flac/Spec/Decode.lean#L2088)) and parallel PCM
-serialization ([`pcm16FastPar_eq`](Flac/Spec/Decode.lean#L2607)), and the
+([`readFramesFast_eq`](Flac/Spec/Decode.lean#L2119)) and parallel PCM
+serialization ([`pcm16FastPar_eq`](Flac/Spec/Decode.lean#L2638)), and the
 frame-parallel encoder is certified per call by the verified decoder — the
 remaining step is a statically verified fast emitter to retire that
 runtime certificate. M7 (two-sided
