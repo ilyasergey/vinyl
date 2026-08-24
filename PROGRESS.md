@@ -1668,3 +1668,85 @@ measured different binaries. Benchmarks and edits must not overlap.
    block-sized arrays per subframe. Tail-recursion instead of `let mut` was
    measured and did nothing; sharing the window across a frame's two
    subframes is untried.
+
+---
+
+## 2026-08-24 — Session 14: two more encode wins, and the shape that works
+
+**Attempted:** continue toward encode within 2× of `flac -8 -j8`, and push the
+completed stages.
+
+**Landed — 1.56× per thread cumulative (18.8 → 29.3 MB/s), both bit-identical:**
+
+- **Offset-carrying deinterleave** (+2.5%). `channelSeg` recomputed
+  `2 * (i * ch + c)` per sample when the offset only advances by `2 * ch`.
+  `channelSegO` carries it; `channelSegO_eq` proves the two agree, so the
+  deinterleave correctness argument reaches the existing `channelSeg_eq`
+  unchanged.
+- **Straight-line emission dot** (+2.1%), on the third attempt.
+
+**The emission dot, and why the third shape won.** Same idea three ways:
+
+| shape | result |
+|---|---|
+| `dotAS` dispatching per sample | 27.0 → 25.3 MB/s |
+| chained `dotAGo{k}`, dispatch per subframe | 27.7 → 26.7 MB/s |
+| **self-recursive loop, straight-line body** | **28.7 → 29.3 MB/s** |
+
+The first walks the cons cells it removes. The second puts the dispatch in the
+right place but passes `out`, k taps, `n`, `hn` and `acc` — nine arguments at
+order 6, which spills on arm64, where the list version passed five. The third
+is what `Flac.Encode.lpcFold{n}` already did on the search side: taps as
+loop-invariant parameters of a self-recursive loop, so they stay in registers
+for the whole block. **The specialisation was never the point; the loop shape
+was.**
+
+Proof chain: `dotAGo_unfold{K}` → `dotA_unfold{K}` → `dot{K}At_eq` →
+`lpcResGo{K}_eq` → `lpcResA_generic`, with `lpcResA_toList` routing through
+the last. Matching `i` as `m + K` keeps the hot path free of `Nat` subtraction,
+which is also what makes `dotAGo_unfold{K}` a one-line `simp only [dotAGo]`.
+
+Two Lean specifics worth not rediscovering: `ring` is unavailable (no
+mathlib), so a nonlinear step needs its atom rewritten before `omega`; and
+`split` picks a `match` over a `dite`, so a `m + K` match must be reduced with
+`simp only [dot{K}At]` first.
+
+**Results, both suites rerun and republished:**
+
+| | session start | now |
+|---|---|---|
+| real, per thread | 4.24× behind | **2.71×** |
+| real, 8 threads | 3.32× | **2.22×** (median 2.43×) |
+| synthetic, 8 threads | 2.21× | **1.62×** (median 1.65×) |
+| real encode 1→8 threads | 18 → 101 MB/s | 29 → 147 MB/s |
+
+Decode untouched at 217 MB/s — `restoreA` still walks the list, correctly:
+the decoder's coefficients come from the stream, not a search, so there is no
+per-subframe dispatch point to hoist to. Compression unchanged from the
+previous entry at 47.9% real / 40.6% synthetic.
+
+Vinyl's eight-thread encode is now slightly *ahead* of single-threaded
+`flac -5` (147 against 142 MB/s), which still compresses better.
+
+**Not blocked; no proof debt.** `scripts/check.sh` green; `fast == verified`
+byte-for-byte; 32 MB round-trip byte-identical; libFLAC `-8` cross-decodes;
+`flac -t` accepts.
+
+**The 2× target is not met on real audio** — 2.43× on the median unit against
+a 2.0× goal, needing another 1.22×. It *is* met on the synthetic corpus
+(1.65×). The remaining items are all in the 2–3%-per-change class that the
+last two wins were, against a needed 22%:
+
+1. `pushRiceRange` (~11%) and `BitWriter.flushBytes` (~4%) — Rice emission,
+   already once-optimised with a three-byte window.
+2. `fixedFoldTail` (~7%) — five fixed orders in one fused pass; already the
+   right shape, so the only lever is costing fewer orders, which trades ratio.
+3. `acorr3` (~6%) — three lags per pass; two passes at `lpcMaxOrder = 6`.
+4. `FloatArray` construction (~8%) — `blockF` and `welchFf` per subframe.
+   Tail-recursion was measured and did nothing; sharing the window across a
+   frame's two subframes is untried and is the most promising of these.
+
+Closing the remaining 1.22× plausibly needs a different kind of change than
+micro-optimisation — fewer passes over the block, or a cheaper search — and
+each further ratio-for-speed trade costs compression that is already 5% behind
+`flac -8`.
