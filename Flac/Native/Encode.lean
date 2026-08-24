@@ -753,30 +753,28 @@ def pushFrame (bw : BitWriter) (b : Nat) (strat : Bool) (num : Nat)
   let v := lo + 256 * hi
   if v < 32768 then (v : Int) else (v : Int) - 65536
 
+/-- One channel's samples for the window `[i, i+rem)`, read straight from
+    the interleaved PCM bytes. Structural, so it can be related to
+    `List.take`/`List.drop` of the reference's deinterleaved channel. -/
+def channelSeg (bytes : ByteArray) (ch c : Nat) :
+    (i rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | i, rem + 1, out =>
+    channelSeg bytes ch c (i + 1) rem
+      (out.push (sampleAt bytes (2 * (i * ch + c))))
+
+/-- Channels `[c, c+rem)` of the window `[lo, lo+len)`. -/
+def frameChannelsGo (bytes : ByteArray) (ch lo len : Nat) :
+    (c rem : Nat) → Array (Array Int) → Array (Array Int)
+  | _, 0, out => out
+  | c, rem + 1, out =>
+    frameChannelsGo bytes ch lo len (c + 1) rem
+      (out.push (channelSeg bytes ch c lo len (Array.emptyWithCapacity len)))
+
 /-- Channel arrays for the sample window `[lo, hi)`, read straight from
     the interleaved PCM bytes. -/
 def frameChannels (bytes : ByteArray) (ch lo hi : Nat) : Array (Array Int) :=
-  Id.run do
-    let len := hi - lo
-    if ch = 1 then
-      let mut a : Array Int := Array.emptyWithCapacity len
-      for i in [lo : hi] do
-        a := a.push (sampleAt bytes (2 * i))
-      return #[a]
-    if ch = 2 then
-      let mut a : Array Int := Array.emptyWithCapacity len
-      let mut b : Array Int := Array.emptyWithCapacity len
-      for i in [lo : hi] do
-        a := a.push (sampleAt bytes (4 * i))
-        b := b.push (sampleAt bytes (4 * i + 2))
-      return #[a, b]
-    let mut chans : Array (Array Int) := Array.emptyWithCapacity ch
-    for c in [0 : ch] do
-      let mut a : Array Int := Array.emptyWithCapacity len
-      for i in [lo : hi] do
-        a := a.push (sampleAt bytes (2 * (i * ch + c)))
-      chans := chans.push a
-    return chans
+  frameChannelsGo bytes ch lo (hi - lo) 0 ch (Array.emptyWithCapacity ch)
 
 /-- One frame straight from the interleaved PCM bytes. -/
 def frameBytesPcm (blockSize ch bps : Nat) (varBlk : Bool)
