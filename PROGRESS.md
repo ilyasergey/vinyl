@@ -1173,3 +1173,71 @@ The one non-scalar obligation, wasted-bit divisibility, is also a proof:
    `(Task.spawn f).get = f ()` holds by `rfl`, or a `ByteStep`-style erased
    payload avoids even that.
 4. Flip and delete, in one commit, as before.
+
+### Session 10, continued — stage 3 complete
+
+**Landed** (same probe and method; byte-identical on all 37 corpus files at
+every step). Cumulative encode cost of the whole project so far: **+6.8%**
+over the tag, against the 31% the certificate gives back.
+
+| commit | change |
+|---|---|
+| `e5c76e5` | `StereoMode` inductive; `FramePrep.subs` pairs each decision with its block |
+| `4289be0` | `sim_frame` — the shipped frame *is* the verified frame |
+| `86ac02b` | `chooseSub_cfg_valid` — one decision carries its certificate |
+| `bb9ac08` | `chooseFrame_asg_valid` — the frame's decisions are valid |
+| `f4c92d6` | `safeChooser_fastChooser` — `orVerbatim` is the identity on them |
+
+**The frame level is closed, end to end.** `Flac.Encode.sim_frame` has no
+hypotheses at all:
+
+    Simulates (fun bw => pushFrameOf bw b strat num (chooseFrame b chs))
+              (Emit.W.pushFrame b strat num (chooseFrame b chs).asg chs.toList)
+
+The shipped encoder's frame — its own `Float` search, its own unpacked
+writers — emits exactly what the verified emitter emits for the channel
+assignment those decisions denote. Nothing in the chain reasons about a
+`Float`: the searches appear on *both* sides of every equation and are only
+ever applied.
+
+**And the chooser side is closed too.** `fastChooser` is the
+`EncoderCfg.chooser` to instantiate `Stream.encode` with, and
+`safeChooser_fastChooser` shows the `orVerbatim` wrapper the reference puts
+around every chooser is the identity on it, so the VERBATIM fallback never
+fires. That needed `chooseFrame_asg_valid`, whose per-mode cases rest on
+`Spec.Stereo.side_fits`/`mid_fits` for the `b + 1` side channels.
+
+Two lessons worth keeping:
+- `chooseFrame_shape` had to be proven as an *equation* before validity could
+  be attacked: inside `ChannelAsg.Valid`, `split` targets `Valid`'s own match
+  rather than `chooseFrame`'s branches. Both independent branches (two
+  channels coded independently, and more than two) share the description
+  `subs = chs.toList.map fun c => (chooseSub b c, c)`, which keeps the case
+  analysis to four.
+- Neither `set`, `conv_lhs`, `by_contra` nor `repeat'` exists without
+  mathlib. For a guarded definition, `rw [f] at h; split at h` gives the
+  guard directly — no `by_contra` needed.
+
+`Flac/Spec/Encode.lean`: 93 theorems, 1529 lines, warning-free, no sorry, and
+only `propext`/`Classical.choice`/`Quot.sound`.
+
+**Blocked:** nothing.
+
+**Next — stage 4, the last one before the flip.**
+1. A byte-level append corollary of `Emit.W.pushFrame_spec` (emission only
+   appends): `(W.pushFrame … w).buf = w.buf ++ (W.pushFrame … empty).buf` for
+   byte-aligned `w`. `Spec.Emit.aligned_buf_of_bits` is the existing bridge
+   from a bits equality to a buffer equality.
+2. `Sim (BitWriter.empty c₁) (Emit.W.empty c₂)` — needs
+   `ByteArray.emptyWithCapacity c₁ = emptyWithCapacity c₂`, which `encode_eq`
+   already proves by `ByteArray.ext`.
+3. Then the frame fold: the fast encoder concatenates per-frame buffers,
+   each produced from an *empty* writer, where `W.pushFrames` folds one
+   writer through. (1) + (2) + `sim_frame` closes that, and the `Task`
+   collapse is `(Task.spawn f).get = f ()` by `rfl` — or a `ByteStep`-style
+   erased payload if the `@[extern]` task model is to be kept out.
+4. The STREAMINFO prefix (`pushStreamPrefix` versus the fast encoder's
+   header pushes, plus MD5, which is already outside the losslessness claim).
+5. Flip and delete, in one commit: point `--encode` at the proven path, drop
+   `pcm16Certified`. `encodePcm16Fast` keeps its signature and
+   `decodePcm16_encodePcm16Fast` its exact statement.
