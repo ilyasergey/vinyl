@@ -450,13 +450,25 @@ def defaultSubCfg (b : Nat) (blk : List Int) : Subframe.SubCfg :=
 def sumAbs (xs : List Int) : Nat :=
   xs.foldl (fun a x => a + x.natAbs) 0
 
+/-- `sumAbs` over every fourth element.
+
+    The stereo proxies only *rank* four candidate assignments, so a subsample
+    ranks them the same way; `Flac.Encode.stereoSumsGo` explains why 4 and
+    carries the measurement. This mirrors that index set — 0, 4, 8, … — so the
+    verified chooser and the fast encoder keep choosing the same mode, which
+    is what makes the differential test between them meaningful. -/
+def sumAbsStride : List Int → Nat → Nat → Nat
+  | [], _, acc => acc
+  | x :: xs, 0, acc => sumAbsStride xs 3 (acc + x.natAbs)
+  | _ :: xs, k + 1, acc => sumAbsStride xs k acc
+
 /-- Pick a stereo mode by the classic sum-of-magnitudes proxy:
     0 = independent, 1 = left/side, 2 = right/side, 3 = mid/side. -/
 def stereoPick (l r : List Int) : Nat :=
-  let al := sumAbs l
-  let ar := sumAbs r
-  let sa := sumAbs (Stereo.side l r)
-  let am := sumAbs (Stereo.mid l r)
+  let al := sumAbsStride l 0 0
+  let ar := sumAbsStride r 0 0
+  let sa := sumAbsStride (Stereo.side l r) 0 0
+  let am := sumAbsStride (Stereo.mid l r) 0 0
   if al + ar ≤ al + sa ∧ al + ar ≤ sa + ar ∧ al + ar ≤ am + sa then 0
   else if al + sa ≤ sa + ar ∧ al + sa ≤ am + sa then 1
   else if sa + ar ≤ am + sa then 2
