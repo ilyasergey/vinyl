@@ -1088,3 +1088,88 @@ Two code changes were made purely to make statements provable, both free:
 `simp only [f]` zeta-reduces where `unfold f` leaves `have`s in the way, but
 loops on well-founded recursive definitions — `rw [f]` then `simp only []`
 unfolds exactly once.
+
+### Session 10, continued — stages 2 and 3
+
+**Landed** (same probe and method; byte-identical on all 37 corpus files at
+every step, `degen-wasted3.pcm` included):
+
+| commit | change | vs tag |
+|---|---|---|
+| `1f8e3ef` | `frameChannels` structural (`channelSeg`/`frameChannelsGo`), mono/stereo specialisations dropped | +0.5% |
+| `2450dbc` | the input bridge, proven | — |
+| `8d533b7` | `SubPlan.sanitize`: O(1) clamps in place of a validity scan | +0.2% |
+| `9208292` | the sanitised plan is valid; `EmitOk` derived | — |
+| `f08ad39` | `wastedDetectF` structural (`tzGo`/`wastedGo`) and proven sound | +7.2% total |
+
+**Stage 2 — the input bridge.** `frameChannels_eq`: the window each frame
+worker deinterleaves out of the shared PCM bytes is exactly the reference's
+frame — `deinterleave ∘ pcm16OfByteList`, dropped to `lo`, taken to `len`,
+which is what `Stream.chunkChannels` hands the verified emitter. Chain:
+`getD_toList`, `sampleAt_eq`, `getD_pcm16OfByteList` (valid at every index
+because an even byte count leaves no trailing byte — exactly what
+`encodePcm16`'s guard enforces), `getD_deinterleaveN`,
+`length_getD_deinterleaveN`, then `channelSeg_eq` / `frameChannelsGo_eq`.
+`Flac.length_deinterleaveN` is no longer private, and neither is
+`Encode.sampleAt`.
+
+**Stage 3 — the validity check is free, and the earlier note about needing a
+fast decider was wrong.** Everything `Subframe.SubCfg.Valid` asks of the
+search's output is *scalar*, so clamping at the plan boundary makes each
+bound hold by construction, with no reasoning about `Float`:
+
+- `riceChoices` clamps each Rice parameter to 14, so `Partition.Valid`'s
+  `k < 15` is immediate. `parts_valid` then follows from the clamp *alone*,
+  because `Partition.Valid` for a Rice choice ignores its samples — which is
+  what removes the apparent need to materialise `chunkBySizes` of a residual
+  list, the thing that made the `Decidable` instances look expensive.
+- `safePo` keeps the searched partition order only when
+  `bs % 2^po = 0 ∧ ord < bs / 2^po ∧ po ≤ 6` — exactly what `partitionMaxF`
+  already checks — else 0.
+- `SubPlan.sanitize` clamps the fixed order to 4, the coefficient list to 32,
+  each coefficient to the 12-bit field, and the shift to 15.
+
+Every clamp is a no-op on what the searches return (`Heuristics.riceParam`
+stops at 14 by construction; `partitionMaxF` checks divisibility; the
+quantizer already clamps to 12 bits), so output is byte-identical, at +0.2%.
+
+`subCfgOf_sanitize_valid` then proves the sanitised plan's reference
+configuration valid given only that the samples fit the bit depth and
+`choosePlanF`'s own constant-block guard. `partSizes_sum` shows a legal
+configuration's partitions cover the residual exactly, so `emitOk_sanitize`
+discharges `SubPlan.EmitOk` unconditionally and the emission simulation needs
+no side condition.
+
+Consequence: the fast encoder needs **no validity scan** to match
+`ChannelAsg.orVerbatim` — the sanitised choice is always valid, so
+`orVerbatim` is the identity on it. That is what keeps certificate removal
+free, and it supersedes this session's earlier "the real work here is a fast
+array-side decider".
+
+The one non-scalar obligation, wasted-bit divisibility, is also a proof:
+`wastedDetectF` is now `tzGo`/`wastedGo` (structural), and
+`wastedDetectF_dvd_mem` shows every sample is divisible by `2 ^ w`, with
+`wastedDetectF_lt` giving `w < b`.
+
+`Flac/Spec/Encode.lean`: 66 theorems, 1093 lines, no sorry, no axioms beyond
+`propext`/`Classical.choice`/`Quot.sound`.
+
+**Blocked:** nothing.
+
+**Next**, what is left of the chain:
+1. `chooseSub_denotes` — `SubPrep.Denotes`, which should be nearly `rfl`:
+   the fast code scales by `(· / ((p2 wa : Nat) : Int))` and
+   `Flac.Bits.shiftDown w x` *is* `x / ((2 ^ w : Nat) : Int)`.
+2. The frame-level chooser: define the reference `EncoderCfg.chooser` as the
+   translation of `chooseFrame`'s decisions (`⟨p.wasted, subCfgOf p.plan⟩`
+   per subframe), then prove `planOf qs = Emit.W.planA b asg chs` branch by
+   branch — the stereo cases need `sd`/`md` to be `Stereo.sideA`/`midA`,
+   which they are syntactically — and `asg.code chs.length = fp.chCode`.
+   `ChannelAsg.Valid` at that level needs the per-channel width facts:
+   `Flac.Spec.Stereo.side_fits`/`mid_fits` for the `b+1` channels, and the
+   16-bit input bound (via the input bridge) for the rest.
+3. Stream assembly: the STREAMINFO prefix, then per-frame concatenation.
+   `pushFrame_spec` (emission only appends) is the locality argument;
+   `(Task.spawn f).get = f ()` holds by `rfl`, or a `ByteStep`-style erased
+   payload avoids even that.
+4. Flip and delete, in one commit, as before.
