@@ -38,7 +38,7 @@ def Simulates (F : BitWriter → BitWriter) (f : Emit.W → Emit.W) : Prop :=
 theorem simulates_comp {F G : BitWriter → BitWriter} {f g : Emit.W → Emit.W}
     (hF : Simulates F f) (hG : Simulates G g) :
     Simulates (fun bw => G (F bw)) (fun w => g (f w)) :=
-  fun bw w h => hG _ _ (hF _ _ h)
+  fun _ _ h => hG _ _ (hF _ _ h)
 
 theorem simulates_id : Simulates id id := fun _ _ h => h
 
@@ -505,7 +505,7 @@ theorem sim_pushSubframe (p : SubPrep) (xs : Array Int) (hd : p.Denotes xs)
 
 theorem sim_pushPlanOf : ∀ qs : List (SubPrep × Array Int),
     (∀ q ∈ qs, q.1.Denotes q.2 ∧ q.1.plan.EmitOk q.1.scaled) →
-    Simulates (pushPlanOf (qs.map Prod.fst)) (Emit.W.pushPlan (planOf qs)) := by
+    Simulates (pushPlanOf qs) (Emit.W.pushPlan (planOf qs)) := by
   intro qs
   induction qs with
   | nil => intro _ bw w h; exact h
@@ -514,7 +514,7 @@ theorem sim_pushPlanOf : ∀ qs : List (SubPrep × Array Int),
     obtain ⟨hd, hok⟩ := hq q (List.mem_cons_self ..)
     have hq' : ∀ r ∈ qs, r.1.Denotes r.2 ∧ r.1.plan.EmitOk r.1.scaled :=
       fun r hm => hq r (List.mem_cons_of_mem _ hm)
-    simp only [List.map_cons, pushPlanOf, planOf]
+    simp only [pushPlanOf, planOf]
     exact ih hq' _ _ (sim_pushSubframe q.1 q.2 hd hok bw w h)
 
 /-- A value read off the writer's own buffer — a CRC over the bytes emitted
@@ -530,10 +530,10 @@ private theorem sim_push_buf {bw : BitWriter} {w : Emit.W} (h : Sim bw w)
 theorem sim_pushFrameOf (b : Nat) (strat : Bool) (num : Nat) (fp : FramePrep)
     (asg : Frame.ChannelAsg) (chs : List (Array Int))
     (qs : List (SubPrep × Array Int))
-    (hsubs : fp.subs = qs.map Prod.fst)
+    (hsubs : fp.subs = qs)
     (hplan : planOf qs = Emit.W.planA b asg chs)
     (hbs : fp.blockSize = (chs.headD #[]).size)
-    (hcode : fp.chCode = asg.code chs.length)
+    (hcode : fp.code fp.subs.length = asg.code chs.length)
     (hq : ∀ q ∈ qs, q.1.Denotes q.2 ∧ q.1.plan.EmitOk q.1.scaled) :
     Simulates (fun bw => pushFrameOf bw b strat num fp)
       (Emit.W.pushFrame b strat num asg chs) := by
@@ -542,7 +542,8 @@ theorem sim_pushFrameOf (b : Nat) (strat : Bool) (num : Nat) (fp : FramePrep)
   -- the header, up to but not including the CRC-8
   have h1 : Sim
       ((((((((((bw.push 14 0x3FFE).push 1 0).push 1
-        (if strat then 1 else 0)).push 4 7).push 4 0).push 4 fp.chCode).push 3
+        (if strat then 1 else 0)).push 4 7).push 4 0).push 4
+        (fp.code fp.subs.length)).push 3
         (Frame.bpsCode b)).push 1 0).pushUtf8 num).push 16 (fp.blockSize - 1))
       (Emit.W.pushHeaderCore b strat num (chs.headD #[]).size
         (asg.code chs.length) w) := by
@@ -558,6 +559,7 @@ theorem sim_pushFrameOf (b : Nat) (strat : Bool) (num : Nat) (fp : FramePrep)
     have s8 := sim_push (k := 1) (v := 0) (by omega) _ _ s7
     have s9 := sim_pushUtf8 num _ _ s8
     exact sim_push (k := 16) (v := (chs.headD #[]).size - 1) (by omega) _ _ s9
+  rw [hsubs] at h1
   simp only [pushFrameOf, Emit.W.pushFrame, hsubs, hstart]
   refine sim_push_buf ?_ (by omega)
     (fun buf => (Crc.crc16Range buf w.buf.size buf.size).toNat)
@@ -651,7 +653,7 @@ private theorem getD_zipWith_cons {as : List Int} {bs : List (List Int)} {c : Na
   rfl
 
 /-- Every deinterleaved channel has exactly `n` samples. -/
-private theorem length_getD_deinterleaveN (ch : Nat) (hch : 0 < ch) :
+private theorem length_getD_deinterleaveN (ch : Nat) (_hch : 0 < ch) :
     ∀ (n : Nat) (l : List Int), n * ch ≤ l.length → ∀ c, c < ch →
       ((Flac.deinterleaveN ch n l).getD c []).length = n := by
   intro n
@@ -679,7 +681,7 @@ private theorem length_getD_deinterleaveN (ch : Nat) (hch : 0 < ch) :
       ih (l.drop ch) (by simp only [List.length_drop]; omega) c hc]
 
 /-- Sample `t` of channel `c` is interleaved sample `t * ch + c`. -/
-private theorem getD_deinterleaveN (ch : Nat) (hch : 0 < ch) :
+private theorem getD_deinterleaveN (ch : Nat) (_hch : 0 < ch) :
     ∀ (n : Nat) (l : List Int), n * ch ≤ l.length → ∀ c t, c < ch → t < n →
       ((Flac.deinterleaveN ch n l).getD c []).getD t 0 = l.getD (t * ch + c) 0 := by
   intro n
@@ -819,13 +821,13 @@ private theorem fitsSInt_zero (n : Nat) : Flac.Bits.FitsSInt n 0 := by
 theorem safePo_le (bs ord po : Nat) : safePo bs ord po ≤ 6 := by
   unfold safePo; split <;> omega
 
-theorem safePo_dvd {bs ord po : Nat} (h : ord < bs) :
+theorem safePo_dvd {bs ord po : Nat} (_h : ord < bs) :
     2 ^ safePo bs ord po ∣ bs := by
   unfold safePo
   split
   · rename_i hg
     exact (Nat.dvd_iff_mod_eq_zero ..).2 (by rw [← p2_eq]; exact hg.1)
-  · simpa using Nat.one_dvd bs
+  · simp
 
 theorem safePo_ord {bs ord po : Nat} (h : ord < bs) :
     ord < bs / 2 ^ safePo bs ord po := by

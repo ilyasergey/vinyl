@@ -593,13 +593,34 @@ def chooseSub (b : Nat) (blk : Array Int) : SubPrep :=
   ⟨b, wa, (choosePlanF (b - wa) scaled scaledF).sanitize scaled.size, scaled,
     scaledF⟩
 
-/-- One frame's decisions: the 4-bit channel code, the block size, and one
+/-- The stereo decision, as `Heuristics.stereoPick` makes it. -/
+inductive StereoMode where
+  | independent
+  | leftSide
+  | rightSide
+  | midSide
+deriving DecidableEq
+
+/-- One frame's decisions: the stereo mode, the block size, and one
     `SubPrep` per subframe — the array mirror of `Frame.ChannelAsg` paired
     with the `(depth, samples)` list `Frame.subframePlan` derives from it. -/
 structure FramePrep where
-  chCode : Nat
+  mode : StereoMode
   blockSize : Nat
-  subs : List SubPrep
+  /-- Each decision with the (undecorrelated) block it was made from, which
+      is what `Flac.Encode.planOf` needs to name the reference's plan. -/
+  subs : List (SubPrep × Array Int)
+
+/-- The 4-bit channel code (RFC 9639 Table 13) the mode calls for, computed
+    without building a `Frame.ChannelAsg` — whose subframe configurations
+    would materialise a partition list per subframe.
+    `Flac.Encode.chooseFrame_code` proves the two agree. -/
+def FramePrep.code (fp : FramePrep) (nch : Nat) : Nat :=
+  match fp.mode with
+  | .independent => nch - 1
+  | .leftSide => 8
+  | .rightSide => 9
+  | .midSide => 10
 
 /-- The per-frame search: stereo-mode decision by the sum-of-magnitudes
     proxy (`Heuristics.stereoPick`) for two channels, independent coding
@@ -617,15 +638,15 @@ def chooseFrame (b : Nat) (chs : Array (Array Int)) : FramePrep :=
     let sa := sumAbsArr sd
     let am := sumAbsArr md
     if al + ar ≤ al + sa ∧ al + ar ≤ sa + ar ∧ al + ar ≤ am + sa then
-      ⟨1, bs, [chooseSub b l, chooseSub b r]⟩
+      ⟨.independent, bs, [(chooseSub b l, l), (chooseSub b r, r)]⟩
     else if al + sa ≤ sa + ar ∧ al + sa ≤ am + sa then
-      ⟨8, bs, [chooseSub b l, chooseSub (b + 1) sd]⟩
+      ⟨.leftSide, bs, [(chooseSub b l, l), (chooseSub (b + 1) sd, sd)]⟩
     else if sa + ar ≤ am + sa then
-      ⟨9, bs, [chooseSub (b + 1) sd, chooseSub b r]⟩
+      ⟨.rightSide, bs, [(chooseSub (b + 1) sd, sd), (chooseSub b r, r)]⟩
     else
-      ⟨10, bs, [chooseSub b md, chooseSub (b + 1) sd]⟩
+      ⟨.midSide, bs, [(chooseSub b md, md), (chooseSub (b + 1) sd, sd)]⟩
   else
-    ⟨chs.size - 1, bs, (chs.map (chooseSub b)).toList⟩
+    ⟨.independent, bs, (chs.map fun c => (chooseSub b c, c)).toList⟩
 
 /-! ## Writers -/
 
@@ -698,6 +719,17 @@ def subCfgOf : SubPlan → Subframe.SubframeCfg
   | .fixed ord po ks => .fixed ord (riceCfgOf po ks)
   | .lpc cs shift po ks => .lpc cs shift 12 (riceCfgOf po ks)
 
+/-- The reference subframe configuration a decision denotes. -/
+def SubPrep.cfg (p : SubPrep) : Subframe.SubCfg := ⟨p.wasted, subCfgOf p.plan⟩
+
+/-- The reference channel assignment a frame's decisions denote. -/
+def FramePrep.asg (fp : FramePrep) : Frame.ChannelAsg :=
+  match fp.mode, fp.subs with
+  | .leftSide, [q0, q1] => .leftSide q0.1.cfg q1.1.cfg
+  | .rightSide, [q0, q1] => .rightSide q0.1.cfg q1.1.cfg
+  | .midSide, [q0, q1] => .midSide q0.1.cfg q1.1.cfg
+  | _, qs => .independent (qs.map fun q => q.1.cfg)
+
 /-- A `SubPrep`'s cached block is the wasted-bit-scaled image of the block
     it was chosen from. The chooser establishes this; emission consumes
     it. -/
@@ -709,7 +741,7 @@ def SubPrep.Denotes (p : SubPrep) (xs : Array Int) : Prop :=
 def planOf : List (SubPrep × Array Int) →
     List ((Nat × Subframe.SubCfg) × Array Int)
   | [] => []
-  | (p, xs) :: rest => ((p.depth, ⟨p.wasted, subCfgOf p.plan⟩), xs) :: planOf rest
+  | (p, xs) :: rest => ((p.depth, p.cfg), xs) :: planOf rest
 
 /-- What *emission* needs of a plan, over and above the round-trip
     certificate `Subframe.SubCfg.Valid`: Rice parameters that fit the
@@ -759,9 +791,9 @@ def pushSubframeOf (bw : BitWriter) (p : SubPrep) : BitWriter :=
 
 /-- The subframes of a frame, one at a time (the shape of
     `Emit.W.pushPlan`). -/
-def pushPlanOf : List SubPrep → BitWriter → BitWriter
+def pushPlanOf : List (SubPrep × Array Int) → BitWriter → BitWriter
   | [], bw => bw
-  | p :: ps, bw => pushPlanOf ps (pushSubframeOf bw p)
+  | q :: qs, bw => pushPlanOf qs (pushSubframeOf bw q.1)
 
 /-- One frame, from its decisions: canonical header (blocksize code 7,
     sample rate from STREAMINFO), subframes, byte-alignment, CRCs over the
@@ -771,7 +803,8 @@ def pushFrameOf (bw : BitWriter) (b : Nat) (strat : Bool) (num : Nat)
     (fp : FramePrep) : BitWriter :=
   let start := bw.buf.size
   let w1 := (((((((((bw.push 14 0x3FFE).push 1 0).push 1
-    (if strat then 1 else 0)).push 4 7).push 4 0).push 4 fp.chCode).push 3
+    (if strat then 1 else 0)).push 4 7).push 4 0).push 4
+    (fp.code fp.subs.length)).push 3
     (Frame.bpsCode b)).push 1 0).pushUtf8 num).push 16 (fp.blockSize - 1)
   let w2 := w1.push 8 (Crc.crc8Range w1.buf start w1.buf.size).toNat
   let w3 := pushPlanOf fp.subs w2
