@@ -1811,3 +1811,59 @@ from session 14 are unchanged and unranked by this — `pushRiceRange` (~11%),
 **Not blocked; no proof debt.** No Lean source touched this session, so
 `scripts/check.sh` state is session 14's: green, `fast == verified`
 byte-for-byte, libFLAC `-8` cross-decodes, `flac -t` accepts.
+
+---
+
+## 2026-08-24 — Session 15: subsampled stereo proxy; encode now 2.18× off `flac -8`
+
+**Landed:** the stereo decision's four sum-of-magnitude proxies now run over
+every fourth sample. They only *rank* four candidate channel assignments, and
+all four are ranked over the same index set, so a subsample ranks them the same
+way unless the margin is thin — at a 4096-sample block, every fourth sample is
+still 1024 per proxy. Measured **+5.5% per thread at identical compression**
+(38.922% either way on the 32 MB probe, and unchanged at 47.9% on the corpus);
+stride 8 moves the ratio, so 4 is where it stops. `stereoSumsGo` had become the
+third-largest item at 8% after the earlier fusion.
+
+`Heuristics.stereoPick` is strided over the same indices via `sumAbsStride`.
+Only the fast path had been changed at first, which the capstone would not have
+noticed — it proves the fast encoder computes `Stream.encode` at *its own*
+chooser — but the differential test between fast and verified would have
+silently begun comparing two different choosers. That mirror is the point of
+the test, and it is checked byte-for-byte.
+
+**Position after seven changes (18.8 → 30.4 MB/s per thread, 1.62×):**
+
+| corpus rate | 1 thread | 8 threads |
+|---|---|---|
+| real, encode vs `flac -8` | 2.67× behind | **2.18× behind** |
+| synthetic, encode vs `flac -8` | 2.42× | **1.62×** |
+| real, decode vs `flac -d` | 4.0× behind | 1.12× ahead |
+
+Encode 29 → 146 MB/s over 1→8 threads against `flac -8`'s 78 → 320. Vinyl's
+eight-thread encode is now slightly ahead of single-threaded `flac -5` (146 vs
+141), which still compresses better. Compression 47.9% real / 40.6% synthetic.
+
+**Probed and discarded, so it is not re-attempted:**
+
+- Sharing the Welch window across a frame's two subframes. The window's cost is
+  the block-sized `FloatArray` it *builds*, not its arithmetic: replacing the
+  per-sample division with a reciprocal multiply was +0.3%, i.e. nothing. The
+  array is per-subframe output, not per-frame input, so there is nothing to
+  share. What would remove it is fusing the window into the autocorrelation
+  passes — trading 4096 pushes for ~16k extra multiplies per subframe, roughly
+  a wash on paper, untried.
+- An unnormalised integer window (dropping the division entirely, scaling all
+  autocorrelation values by a constant). `expectedBits` clamps at zero, so a
+  constant scale is *not* a uniform offset across orders and can change which
+  order wins.
+
+**Remaining, all on the proven hot path or trading ratio:**
+`pushRiceRange` + `flushBytes` (~20% together; `flushBytes` runs twice per
+sample and could run once, but `sim_pushRiceRange` is stated for `k ≤ 32` where
+`n + q+1 + k` can exceed 64 bits, so fusing needs a runtime guard and a rework
+of that induction), `fixedFoldTail` (~7.5%, already the right shape),
+`acorr3`/`acorr1` (~8%).
+
+**2× is met on the synthetic corpus (1.62×) and 2.18× on real audio** — about
+1.09× short, which is now one or two wins rather than a wall.
