@@ -863,11 +863,32 @@ def frameBytesPcm (blockSize ch bps : Nat) (varBlk : Bool)
   (pushFrame (BitWriter.empty ((hi - lo) * ch * 2 + 64)) bps varBlk
     (if varBlk then f * blockSize else f) (frameChannels bytes ch lo hi)).buf
 
-/-- Concatenate the frame workers' buffers in order. Structural, so the
-    concatenation can be related to `Emit.W.pushFrames`' fold. -/
-def concatFrames (out : ByteArray) : List (Task ByteArray) → ByteArray
-  | [] => out
-  | t :: ts => concatFrames (out ++ t.get) ts
+/-- A frame worker's payload: its bytes, with the erased proof that they are
+    the bytes `frameBytesPcm` produces for that index. *Any* value of this
+    type carries the equation, so the consumer needs no fact about how the
+    worker ran — which keeps `Task` out of every proof, exactly as
+    `Flac.Decode.ByteStep` does on the decode side. -/
+structure FrameStep (blockSize ch n : Nat) (bytes : ByteArray) where
+  idx : Nat
+  out : ByteArray
+  ok : out = frameBytesPcm blockSize ch 16 false bytes n idx
+
+@[inline] def frameStep (blockSize ch n : Nat) (bytes : ByteArray) (f : Nat) :
+    FrameStep blockSize ch n bytes :=
+  ⟨f, frameBytesPcm blockSize ch 16 false bytes n f, rfl⟩
+
+/-- Concatenate the workers' payloads in order, checking each records the
+    index wanted and building that frame on the spot otherwise — a wrong
+    payload costs work, never correctness. -/
+def concatFrames (blockSize ch n : Nat) (bytes : ByteArray) :
+    (i : Nat) → List (Task (FrameStep blockSize ch n bytes)) → ByteArray →
+      ByteArray
+  | _, [], out => out
+  | i, t :: ts, out =>
+    let s := t.get
+    concatFrames blockSize ch n bytes (i + 1) ts
+      (out ++ (if s.idx = i then s.out
+               else frameBytesPcm blockSize ch 16 false bytes n i))
 
 /-- Fast byte-level 16-bit encoder (the MD5 input of RFC 9639 §8.2 for
     16-bit interleaved LE PCM is the input byte string itself).
@@ -889,7 +910,7 @@ def encodePcm16 (blockSize ch sr : Nat) (bytes : ByteArray) : ByteArray :=
     let md5Task := Task.spawn fun _ => Md5.md5 bytes
     let frameTasks := if blockSize = 0 then [] else
       (List.range ((n + blockSize - 1) / blockSize)).map fun f =>
-        Task.spawn fun _ => frameBytesPcm blockSize ch 16 false bytes n f
+        Task.spawn fun _ => frameStep blockSize ch n bytes f
     let md5 := md5Task.get
     -- the marker and STREAMINFO, in `Emit.W.pushStreamPrefix`'s order. The
     -- digest goes in as one 128-bit field rather than sixteen bytes: once
@@ -899,6 +920,6 @@ def encodePcm16 (blockSize ch sr : Nat) (bytes : ByteArray) : ByteArray :=
     let w := ((((((w.push 16 blockSize).push 16 blockSize).push 24 0).push 24
       0).push 20 sr).push 3 (ch - 1)).push 5 (16 - 1)
     let w := (w.pushBits 36 n).pushBits 128 (Stream.md5Nat md5)
-    concatFrames w.buf frameTasks
+    concatFrames blockSize ch n bytes 0 frameTasks w.buf
 
 end Flac.Encode

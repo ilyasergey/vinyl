@@ -144,18 +144,20 @@ where
   termination_by rem => rem
   decreasing_by omega
 
-/-- Interleaved PCM bytes. The interleaved layout is sample-major, so a
-    window of samples serializes independently and the windows concatenate
-    — which is what lets this run one task per window. Large outputs made
-    this the decoder's serial bottleneck once frames decoded in parallel. -/
+/-- Interleaved PCM bytes.
+
+    This used to serialize windows in parallel and concatenate them, which
+    is sound — the interleaved layout is sample-major, so windows serialize
+    independently — but carried no theorem, because it reasons through
+    `Task`. It is now the plain range, so `Flac.Spec.PcmBytes.pcmBytesRange_eq`
+    characterises it and the STREAMINFO digest the reference encoder writes
+    is a proven function of the samples. Nothing on a shipped fast path uses
+    it: `--decode-fast` serializes with `Flac.Decode.decodeBytes`, whose
+    per-frame steps carry their own equations, and the shipped encoder's
+    digest is taken over the input bytes directly. What remains here serves
+    `--decode` and `--encode-slow`, the reference pipelines. -/
 def pcmBytesA (b : Nat) (arrs : List (Array Int)) : ByteArray :=
-  let n := (arrs.headD #[]).size
-  if n ≤ pcmWindow then pcmBytesRange b arrs 0 n
-  else
-    let tasks := (pcmWindows n).map fun win =>
-      Task.spawn fun _ => pcmBytesRange b arrs win.1 win.2
-    tasks.foldl (fun acc t => acc ++ t.get)
-      (ByteArray.emptyWithCapacity (arrs.length * n * ((b + 7) / 8)))
+  pcmBytesRange b arrs 0 (arrs.headD #[]).size
 
 /-- Interleaved PCM bytes from list-typed channels: the array serializer
     after one conversion (`Flac.Spec.Stream.pcmBytesA_eq` transfers between

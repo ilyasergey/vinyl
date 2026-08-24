@@ -1526,4 +1526,113 @@ theorem safeChooser_fastChooser {b : Nat} (hb : 0 < b) (blockSize : Nat)
   rw [hct, map_toArray_toList] at hv
   exact orVerbatim_of_valid hv
 
+/-! ## Streams
+
+The reference folds one writer through every frame; the shipped encoder
+builds each frame in its own worker, from an empty writer, and concatenates
+the buffers. These lemmas join the two: emission only *appends*, which is the
+same locality argument that licensed per-frame serialisation on the decode
+side. -/
+
+private theorem emptyWithCapacity_eq (c : Nat) :
+    ByteArray.emptyWithCapacity c = ByteArray.empty := by
+  apply ByteArray.ext
+  rfl
+
+/-- Both writers start in simulation, whatever capacity they reserve. -/
+theorem sim_empty (c₁ c₂ : Nat) : Sim (BitWriter.empty c₁) (Emit.W.empty c₂) := by
+  refine ⟨?_, rfl, show (0 : Nat) < 8 by omega, rfl⟩
+  show ByteArray.emptyWithCapacity c₁ = ByteArray.emptyWithCapacity c₂
+  rw [emptyWithCapacity_eq, emptyWithCapacity_eq]
+
+private theorem frame_write_dvd (b : Nat) (strat : Bool) (num : Nat)
+    (asg : Frame.ChannelAsg) (chs : List (List Int)) :
+    8 ∣ (Frame.write b strat num asg chs).length := by
+  have h1 : 8 ∣ (Frame.body b strat num asg chs).length := alignToByte_dvd _
+  simp only [Frame.write, List.length_append, length_writeBits]
+  omega
+
+/-- **Emission only appends.** A frame's bytes do not depend on what is
+    already in the buffer, which is what lets each worker build its frame
+    from an empty writer. -/
+theorem pushFrame_buf_append (b : Nat) (strat : Bool) (num : Nat)
+    (asg : Frame.ChannelAsg) (chs : List (Array Int)) (w : Emit.W) (hw : w.n = 0) :
+    (Emit.W.pushFrame b strat num asg chs w).buf
+      = w.buf ++ (Emit.W.pushFrame b strat num asg chs (Emit.W.empty 0)).buf := by
+  obtain ⟨hb1, hn1⟩ := Emit.pushFrame_spec b strat num asg chs w hw
+  obtain ⟨hb2, hn2⟩ := Emit.pushFrame_spec b strat num asg chs (Emit.W.empty 0) rfl
+  have h1 := Emit.aligned_buf_of_bits hw hn1 hb1 (frame_write_dvd ..)
+  have h2 := Emit.aligned_buf_of_bits (w := Emit.W.empty 0) rfl hn2 hb2
+    (frame_write_dvd ..)
+  rw [h1, h2]
+  show _ = w.buf ++ (ByteArray.emptyWithCapacity 0 ++ _)
+  rw [emptyWithCapacity_eq, ByteArray.empty_append]
+
+/-- **The reference's frame fold is the shipped encoder's concatenation.**
+    Each worker's payload carries the equation for its own frame, so this
+    needs no fact about `Task` — a payload that records the wrong index just
+    costs the work of rebuilding that frame. -/
+theorem pushFrames_concat (b : Nat) (varBlk : Bool) (blockSize' : Nat)
+    (chooser : List (List Int) → Frame.ChannelAsg)
+    (blockSize ch n : Nat) (bytes : ByteArray) :
+    ∀ (frs : List (List (List Int)))
+      (ts : List (Task (FrameStep blockSize ch n bytes)))
+      (i : Nat) (w : Emit.W) (out : ByteArray),
+      out = w.buf → w.n = 0 → frs.length = ts.length →
+      (∀ k, k < frs.length →
+        frameBytesPcm blockSize ch 16 false bytes n (i + k)
+          = (Emit.W.pushFrame b varBlk
+              (if varBlk then (i + k) * blockSize' else i + k)
+              (chooser (frs.getD k [])) ((frs.getD k []).map List.toArray)
+              (Emit.W.empty 0)).buf) →
+      (Emit.W.pushFrames b varBlk blockSize' chooser i frs w).buf
+        = concatFrames blockSize ch n bytes i ts out := by
+  intro frs
+  induction frs with
+  | nil =>
+    intro ts i w out hout _ hlen _
+    match ts with
+    | [] =>
+      show w.buf = concatFrames blockSize ch n bytes i [] out
+      rw [hout]
+      rfl
+    | _ :: _ => simp at hlen
+  | cons fr frs ih =>
+    intro ts i w out hout hw hlen hbody
+    match ts with
+    | [] => simp at hlen
+    | t :: ts =>
+      have hhead := hbody 0 (by simp)
+      rw [Nat.add_zero] at hhead
+      have happ := pushFrame_buf_append b varBlk
+        (if varBlk then i * blockSize' else i) (chooser fr) (fr.map List.toArray) w hw
+      have hn0 : (Emit.W.pushFrame b varBlk (if varBlk then i * blockSize' else i)
+          (chooser fr) (fr.map List.toArray) w).n = 0 :=
+        (Emit.pushFrame_spec b varBlk (if varBlk then i * blockSize' else i)
+          (chooser fr) (fr.map List.toArray) w hw).2
+      -- the payload's own equation, whichever branch the index check takes
+      have hstep : (if t.get.idx = i then t.get.out
+          else frameBytesPcm blockSize ch 16 false bytes n i)
+          = frameBytesPcm blockSize ch 16 false bytes n i := by
+        split
+        · rename_i hi
+          rw [t.get.ok, hi]
+        · rfl
+      show (Emit.W.pushFrames b varBlk blockSize' chooser (i + 1) frs
+          (Emit.W.pushFrame b varBlk (if varBlk then i * blockSize' else i)
+            (chooser fr) (fr.map List.toArray) w)).buf = _
+      show _ = concatFrames blockSize ch n bytes (i + 1) ts
+        (out ++ (if t.get.idx = i then t.get.out
+                 else frameBytesPcm blockSize ch 16 false bytes n i))
+      rw [hstep]
+      refine ih ts (i + 1) _ (out ++ frameBytesPcm blockSize ch 16 false bytes n i)
+        ?_ hn0 (by simpa using hlen) ?_
+      · rw [hout, happ, hhead]
+        rfl
+      · intro k hk
+        have hb := hbody (k + 1) (by simpa using hk)
+        rw [show i + (k + 1) = i + 1 + k from by omega,
+          List.getD_cons_succ] at hb
+        exact hb
+
 end Flac.Encode
