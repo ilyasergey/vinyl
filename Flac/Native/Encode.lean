@@ -1079,13 +1079,26 @@ def channelSeg (bytes : ByteArray) (ch c : Nat) :
     channelSeg bytes ch c (i + 1) rem
       (out.push (sampleAt bytes (2 * (i * ch + c))))
 
+/-- `channelSeg` with the byte offset carried rather than recomputed.
+
+    `2 * (i * ch + c)` is a multiply and two adds per sample, and the offset
+    only ever advances by `2 * ch`. Proven equal to `channelSeg` by
+    `Flac.Spec.Encode.channelSegO_eq`, which is what the deinterleave
+    correctness proof still goes through. -/
+def channelSegO (bytes : ByteArray) (stride : Nat) :
+    (j rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | j, rem + 1, out =>
+    channelSegO bytes stride (j + stride) rem (out.push (sampleAt bytes j))
+
 /-- Channels `[c, c+rem)` of the window `[lo, lo+len)`. -/
 def frameChannelsGo (bytes : ByteArray) (ch lo len : Nat) :
     (c rem : Nat) → Array (Array Int) → Array (Array Int)
   | _, 0, out => out
   | c, rem + 1, out =>
     frameChannelsGo bytes ch lo len (c + 1) rem
-      (out.push (channelSeg bytes ch c lo len (Array.emptyWithCapacity len)))
+      (out.push (channelSegO bytes (2 * ch) (2 * (lo * ch + c)) len
+        (Array.emptyWithCapacity len)))
 
 /-- Channel arrays for the sample window `[lo, hi)`, read straight from
     the interleaved PCM bytes. -/

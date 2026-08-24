@@ -729,6 +729,23 @@ private theorem length_deinterleave {ch : Nat} (l : List Int) :
     (Flac.deinterleave ch l).length = ch :=
   Flac.length_deinterleaveN ch _ l (Nat.div_mul_le_self ..)
 
+/-- The offset-carrying deinterleave loop is `channelSeg`: the offset it
+    advances by `2 * ch` is exactly `2 * (i * ch + c)` at each step. -/
+private theorem channelSegO_eq (bytes : ByteArray) (ch c : Nat) :
+    ∀ (rem i : Nat) (out : Array Int),
+      channelSegO bytes (2 * ch) (2 * (i * ch + c)) rem out
+        = channelSeg bytes ch c i rem out := by
+  intro rem
+  induction rem with
+  | zero => intro i out; rfl
+  | succ rem ih =>
+    intro i out
+    simp only [channelSegO, channelSeg]
+    -- no mathlib here, so make `(i+1)*ch` linear in the atom `i*ch` first
+    rw [show 2 * (i * ch + c) + 2 * ch = 2 * ((i + 1) * ch + c) from by
+      rw [Nat.add_mul, Nat.one_mul]; omega]
+    exact ih (i + 1) _
+
 /-- One channel's window: what the frame worker reads out of the shared PCM
     bytes is the reference channel's `drop`-then-`take`. -/
 private theorem channelSeg_eq (bytes : ByteArray) (hev : bytes.size % 2 = 0)
@@ -783,7 +800,7 @@ private theorem frameChannelsGo_eq (bytes : ByteArray) (hev : bytes.size % 2 = 0
       rw [show (Array.emptyWithCapacity len : Array Int).toList = [] from rfl,
         List.nil_append] at h
       rw [← h, Array.toArray_toList]
-    simp only [frameChannelsGo]
+    simp only [frameChannelsGo, channelSegO_eq]
     rw [ih (c + 1) _ (by omega), Array.toList_push, hseg,
       drop_eq_getD_cons [] hcl, List.take_succ_cons, List.map_cons,
       List.append_assoc]
