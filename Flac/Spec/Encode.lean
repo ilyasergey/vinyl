@@ -1764,4 +1764,47 @@ theorem deinterleave_fits {ch : Nat} (hch : 0 < ch) (bytes : ByteArray)
     · rw [length_getD_deinterleave hch _ hjch]
       omega
 
+/-- Every deinterleaved channel has the same length: the sample count. -/
+private theorem deinterleave_lengths {ch : Nat} (hch : 0 < ch) (L : List Int)
+    (c : List Int) (hc : c ∈ Flac.deinterleave ch L) : c.length = L.length / ch := by
+  have hlen := length_deinterleave (ch := ch) L
+  obtain ⟨j, hj, hjc⟩ := List.mem_iff_getElem.1 hc
+  have hjch : j < ch := by rw [hlen] at hj; exact hj
+  have hgc : (Flac.deinterleave ch L).getD j [] = c := by
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hj, Option.getD_some]
+    exact hjc
+  rw [← hgc, length_getD_deinterleave hch L hjch]
+
+/-- **The audio the PCM pipeline derives is well-formed** — every clause a
+    theorem, so the shipped encoder's O(1) guards are enough where the
+    reference would scan. -/
+theorem audio_wellFormed {ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
+    (bytes : ByteArray) (hsr : sr < 2 ^ 20)
+    (hn : bytes.size / (2 * ch) < 2 ^ 36) :
+    (Stream.Audio.mk (Flac.deinterleave ch
+      (Flac.pcm16OfByteList bytes.data.toList)) 16 sr).WellFormed := by
+  have hlen := length_deinterleave (ch := ch)
+    (Flac.pcm16OfByteList bytes.data.toList)
+  have hL : (Flac.pcm16OfByteList bytes.data.toList).length = bytes.size / 2 := by
+    rw [Flac.length_pcm16OfByteList, Array.length_toList]
+    rfl
+  have hns : (Stream.Audio.mk (Flac.deinterleave ch
+      (Flac.pcm16OfByteList bytes.data.toList)) 16 sr).numSamples
+      = bytes.size / (2 * ch) := by
+    show ((Flac.deinterleave ch
+      (Flac.pcm16OfByteList bytes.data.toList)).headD []).length = _
+    rw [headD_eq_getD, length_getD_deinterleave hch _ (by omega), hL,
+      Nat.div_div_eq_div_mul]
+  have hcl : (Stream.Audio.mk (Flac.deinterleave ch
+      (Flac.pcm16OfByteList bytes.data.toList)) 16 sr).channels.length = ch := hlen
+  have hbps : (Stream.Audio.mk (Flac.deinterleave ch
+      (Flac.pcm16OfByteList bytes.data.toList)) 16 sr).bps = 16 := rfl
+  refine ⟨by rw [hcl]; omega, by rw [hcl]; omega, by rw [hbps]; omega,
+    by rw [hbps]; omega, ?_, ?_, hsr, by rw [hns]; exact hn⟩
+  · intro c hc
+    rw [deinterleave_lengths hch _ c hc, hns, hL, Nat.div_div_eq_div_mul]
+  · intro c hc
+    rw [hbps]
+    exact deinterleave_fits hch bytes c hc
+
 end Flac.Encode

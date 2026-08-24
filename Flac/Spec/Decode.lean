@@ -2316,7 +2316,7 @@ private theorem byteListOfPcm16_pcm16OfByteList :
       show (lo.toNat + 256 * hi.toNat) / 256 = hi.toNat from by omega,
       UInt8.ofNat_toNat, UInt8.ofNat_toNat]
 
-private theorem length_pcm16OfByteList :
+theorem length_pcm16OfByteList :
     ∀ l : List UInt8, (pcm16OfByteList l).length = l.length / 2
   | [] => rfl
   | [_] => by simp [pcm16OfByteList]
