@@ -4,8 +4,11 @@
 Each command receives one untimed warmup and ``BENCH_RUNS`` measured runs
 (five by default).  The measured cases are shuffled with a fixed seed so a
 single implementation does not consistently inherit the same thermal/cache
-position.  ``results.csv`` retains the historical one-row-per-case schema;
-its ``seconds`` column now contains the median measured duration.
+position.  ``results.csv`` keeps one row per case; its ``seconds`` column
+holds the median measured duration, and ``audio_bytes`` the coded-frame size
+apart from the metadata blocks (see ``bench/flacsize.py``) — the only size a
+compression claim can rest on, because libFLAC writes 8.8 kB of padding,
+seektable and vendor comment per file where Vinyl writes 42 bytes.
 """
 
 from __future__ import annotations
@@ -15,10 +18,14 @@ import os
 import random
 import statistics
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from flacsize import audio_bytes
 
 ROOT = Path(__file__).resolve().parent.parent
 BENCH = ROOT / "bench"
@@ -96,7 +103,7 @@ def main() -> None:
         raise SystemExit("BENCH_RUNS must be at least 1")
     OUT.mkdir(parents=True, exist_ok=True)
     rng = random.Random(0)
-    rows: list[tuple[str, str, float, int, int]] = []
+    rows: list[tuple[str, str, float, int, int, int]] = []
 
     for pcm in sorted(CORPUS.glob("*.pcm")):
         stem = pcm.stem
@@ -129,6 +136,7 @@ def main() -> None:
                     case.label,
                     statistics.median(samples[case.label]),
                     case.output.stat().st_size,
+                    audio_bytes(case.output),
                     raw_bytes,
                 )
             )
@@ -136,7 +144,8 @@ def main() -> None:
 
     with RESULTS.open("w", newline="") as stream:
         writer = csv.writer(stream, lineterminator="\n")
-        writer.writerow(("file", "encoder", "seconds", "bytes", "raw_bytes"))
+        writer.writerow(
+            ("file", "encoder", "seconds", "bytes", "audio_bytes", "raw_bytes"))
         writer.writerows(rows)
 
 

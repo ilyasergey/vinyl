@@ -4,6 +4,12 @@
 - bench/compression.png — per-file ratio cactus + per-category aggregate bars
 - bench/performance.png — per-file encode-throughput profile
 - bench/summary.md      — the per-category ratio table (pasted into README)
+
+Ratios are the audio-frame payload, not the whole file: libFLAC's default
+padding, seektable and vendor comment are 8.8 kB per file, which on this
+corpus of 1 MB signals is about 2% of the encoded output — several times the
+difference between the encoders being compared.  The whole-file totals are
+still reported at the bottom of summary.md.
 """
 import csv
 import math
@@ -22,22 +28,26 @@ out_dir = os.path.dirname(results_csv) or "bench"
 
 CATS = ["tonal", "wave", "noise", "mixed", "degen", "stereo"]
 
-ratio = defaultdict(list)      # encoder -> [encoded/raw]
+ratio = defaultdict(list)      # encoder -> [audio_bytes/raw]
 speed = defaultdict(list)      # encoder -> [raw MB/s per file]
 catbytes = defaultdict(lambda: defaultdict(lambda: [0, 0]))  # cat -> enc -> [enc, raw]
+filebytes = defaultdict(lambda: [0, 0])                      # enc -> [whole file, raw]
 with open(results_csv) as f:
     for row in csv.DictReader(f):
         enc = row["encoder"]
         raw = int(row["raw_bytes"])
         if raw == 0:
             continue
-        ratio[enc].append(int(row["bytes"]) / raw)
+        ratio[enc].append(int(row["audio_bytes"]) / raw)
         speed[enc].append(raw / 1e6 / float(row["seconds"]))
         if "decode" in enc:
             continue
         cb = catbytes[row["file"].split("-")[0]][enc]
-        cb[0] += int(row["bytes"])
+        cb[0] += int(row["audio_bytes"])
         cb[1] += raw
+        whole = filebytes[enc]
+        whole[0] += int(row["bytes"])
+        whole[1] += raw
 
 STYLE = {
     "vinyl":   dict(color="#7c3aed", marker="o", lw=2.2, zorder=5),
@@ -60,8 +70,8 @@ for enc in STYLE:
     ax1.plot(range(1, len(ys) + 1), [100 * y for y in ys],
              label=enc, ms=4, **STYLE[enc])
 ax1.set_xlabel("files solved (sorted per encoder)")
-ax1.set_ylabel("compression ratio, % of raw (lower = better)")
-ax1.set_title("Per-file ratio cactus")
+ax1.set_ylabel("audio-frame ratio, % of raw (lower = better)")
+ax1.set_title("Per-file ratio cactus (coded frames, metadata excluded)")
 ax1.grid(alpha=0.25)
 ax1.legend()
 
@@ -75,7 +85,7 @@ for k, enc in enumerate(STYLE):
 ax3.set_xticks(range(len(cats)))
 ax3.set_xticklabels(cats)
 ax3.set_ylabel("aggregate ratio, % of raw (lower = better)")
-ax3.set_title("Aggregate ratio by content category")
+ax3.set_title("Aggregate audio-frame ratio by content category")
 ax3.grid(alpha=0.25, axis="y")
 ax3.legend(ncol=2)
 
@@ -152,4 +162,9 @@ with open(os.path.join(out_dir, "summary.md"), "w") as f:
             row = {e: tuple(catbytes[c][e]) for e in STYLE}
         cells = " | ".join(f"{100 * row[e][0] / row[e][1]:.1f}%" for e in STYLE)
         f.write(f"| {c} | {cells} |\n")
+    f.write("\nWhole-file totals, metadata included (libFLAC writes 8.8 kB "
+            "per file, Vinyl 42 bytes):\n\n")
+    f.write("| " + " | ".join(STYLE) + " |\n|" + "---|" * len(STYLE) + "\n| ")
+    f.write(" | ".join(f"{100 * filebytes[e][0] / filebytes[e][1]:.1f}%"
+                       for e in STYLE) + " |\n")
 print("wrote summary.md")

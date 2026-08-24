@@ -22,3 +22,6 @@ bench/real_out/
 # Scratch files from the README libFLAC cross-check walkthrough
 /*.flac
 /*.pcm
+
+# Python bytecode from the bench scripts
+__pycache__/

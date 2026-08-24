@@ -26,24 +26,50 @@ echo "ok"
 echo "== CLI entry points call the functions the capstones are about"
 # Statements are pinned by type in FlacTest/Capstones.lean; which function a
 # CLI branch *invokes* is not something a type can express, so pin it here.
-# Each entry is: <cli flag> <function the capstone names>
-while read -r flag fn; do
+# Each entry is: <cli flag> <helper or - > <function the capstone names>.
+#
+# A flag may have several branches (both `--encode` arities do, one per
+# argument count) and they may delegate to a shared helper.  Naming the helper
+# beats scraping for it: a renamed or newly introduced helper then fails the
+# check instead of silently widening it.  The branch count and the delegation
+# count must agree, so a second arity cannot appear that skips the helper.
+while read -r flag helper fn; do
   [ -z "$flag" ] && continue
-  # the branch body runs from its `if let ["<flag>"` line to the next `if let`
-  body=$(awk -v f="\"$flag\"" '
-    $0 ~ ("if let \\[" f) {inb=1}
+  # A flag pattern is `["<flag>",` — the comma matters, or `--encode` also
+  # matches the `--encode-slow` branch and inherits whatever *it* calls.
+  pat="\"$flag\","
+  # the branch bodies run from the first matching `if let [` line to the next
+  # `if let [` line for a different flag
+  body=$(awk -v f="$pat" '
+    index($0, "if let [" f) {inb=1}
     inb {print}
-    inb && NR>1 && $0 ~ /^  if let \[/ && $0 !~ ("if let \\[" f) {inb=0}' FlacTest/Cli.lean)
+    inb && NR>1 && $0 ~ /^  if let \[/ && !index($0, "if let [" f) {inb=0}' FlacTest/Cli.lean)
+  if [ "$helper" != "-" ]; then
+    branches=$(printf '%s\n' "$body" | grep -c "if let \[$pat" || true)
+    delegations=$(printf '%s\n' "$body" | grep -c -- "$helper" || true)
+    if [ "$branches" -eq 0 ] || [ "$branches" -ne "$delegations" ]; then
+      echo "FAIL: CLI $flag has $branches branch(es) but $delegations call(s) of $helper"
+      fail=1
+    fi
+    # the helper's body runs from its `def` line to the next top-level `def`
+    body=$(awk -v f="$helper" '
+      $0 ~ ("^def " f "( |$|\\()") {inb=1; next}
+      inb && /^def / {inb=0}
+      inb {print}' FlacTest/Cli.lean)
+    if [ -z "$body" ]; then
+      echo "FAIL: CLI helper $helper is not defined in FlacTest/Cli.lean"; fail=1
+    fi
+  fi
   if ! printf '%s' "$body" | grep -q -- "$fn"; then
     echo "FAIL: CLI $flag does not call $fn"; fail=1
   fi
 done <<'EOF'
---encode Flac.encodePcm16Fast
---encode-slow Flac.encodePcm16Cfg
---decode-pcm16 Flac.decodePcm16A
---decode-fast Flac.Decode.decodeBytes
---decode-fast Flac.Decode.decodeArrays
---decode Stream.decodeReference
+--encode encodeFastMain Flac.encodePcm16Fast
+--encode-slow encodeSlowMain Flac.encodePcm16Cfg
+--decode-pcm16 - Flac.decodePcm16A
+--decode-fast - Flac.Decode.decodeBytes
+--decode-fast - Flac.Decode.decodeArrays
+--decode - Stream.decodeReference
 EOF
 echo "ok"
 
