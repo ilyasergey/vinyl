@@ -233,23 +233,35 @@ private def partitionMaxF (bs ord : Nat) : Nat := Id.run do
 private def partitionSearchSumsF (bs ord pomax : Nat) (sums : Array Nat) :
     Nat × Array Nat × Nat := Id.run do
   let mut best : Nat × Array Nat × Nat := (0, #[], 0)
+  -- Coarser levels are pairwise merges of finer ones, so walk *down* from the
+  -- finest partitioning and halve as we go: 2·2^pomax additions in total
+  -- instead of re-summing the finest array for every order
+  -- ((pomax+1)·2^pomax).
+  let mut level := sums
+  let mut costs : Array (Nat × Array Nat × Nat) := Array.emptyWithCapacity (pomax + 1)
   for po in [0 : pomax + 1] do
-    let c := bs / p2 po
-    let width := p2 (pomax - po)
-    let mut ks : Array Nat := Array.emptyWithCapacity (p2 po)
+    let hi := pomax - po
+    let c := bs / p2 hi
+    let mut ks : Array Nat := Array.emptyWithCapacity level.size
     let mut cost := 6
-    for j in [0 : p2 po] do
-      let mut sum := 0
-      for w in [j * width : (j + 1) * width] do
-        sum := sum + sums.getD w 0
+    for j in [0 : level.size] do
       let len := if j = 0 then c - ord else c
-      let (k, ck) := Heuristics.bestParamSum sum len
+      let (k, ck) := Heuristics.bestParamSum (level.getD j 0) len
       ks := ks.push k
       cost := cost + 4 + ck
+    costs := costs.push (hi, ks, cost)
+    -- merge adjacent pairs for the next (coarser) level
+    let mut up : Array Nat := Array.emptyWithCapacity (level.size / 2)
+    for j in [0 : level.size / 2] do
+      up := up.push (level.getD (2 * j) 0 + level.getD (2 * j + 1) 0)
+    level := up
+  -- lowest order wins ties, so scan ascending
+  for po in [0 : pomax + 1] do
+    let entry := costs.getD (pomax - po) (0, #[], 0)
     if po = 0 then
-      best := (0, ks, cost)
-    else if cost < best.2.2 then
-      best := (po, ks, cost)
+      best := entry
+    else if entry.2.2 < best.2.2 then
+      best := entry
   return best
 
 /-- Dot product of the coefficients (most recent tap first) with
@@ -729,14 +741,22 @@ def stereoSumsGo (l r : Array Int) :
     (i n al ar sa am : Nat) → Nat × Nat × Nat × Nat
   | i, n, al, ar, sa, am =>
     if h : i < n then
-      let a := l.getD i 0
-      let b := r.getD i 0
-      stereoSumsGo l r (i + 1) n (al + a.natAbs) (ar + b.natAbs)
-        (sa + (a - b).natAbs) (am + (Flac.Bits.sar (a + b) 1).natAbs)
+      if hl : i < l.size then
+        if hr : i < r.size then
+          let a := l[i]
+          let b := r[i]
+          stereoSumsGo l r (i + 1) n (al + a.natAbs) (ar + b.natAbs)
+            (sa + (a - b).natAbs) (am + (Flac.Bits.sar (a + b) 1).natAbs)
+        else (al, ar, sa, am)
+      else (al, ar, sa, am)
     else (al, ar, sa, am)
   termination_by i n => n - i
 
-/-- `(|l|, |r|, |l-r|, |mid|)` over the common prefix of the two channels. -/
+/-- `(|l|, |r|, |l-r|, |mid|)` over the common prefix of the two channels.
+
+    `n` is the common length, so the two per-sample bounds tests inside the
+    loop are the ones Lean needs to erase the index checks, not extra work:
+    both are loop-invariant and the branch predictor never misses them. -/
 @[inline] def stereoSums (l r : Array Int) : Nat × Nat × Nat × Nat :=
   stereoSumsGo l r 0 (min l.size r.size) 0 0 0 0
 

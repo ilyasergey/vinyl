@@ -66,8 +66,18 @@ in `src/libFLAC/stream_encoder.c`), so `process_subframe_` evaluates only
 does the opposite: one Welch window, several orders. The candidate list is
 therefore where Vinyl's compression-per-unit-work is decided. -/
 
-/-- Highest LPC order considered (= autocorrelation lags). -/
-def lpcMaxOrder : Nat := 8
+/-- Highest LPC order considered (= autocorrelation lags).
+
+    Six, not eight, and the reason is `acorr3`: it computes **three lags per
+    pass** over the windowed block, so eight lags cost three passes and six
+    cost two. Measured on 32 MB of real music, 8 → 6 is +5.2% encode for
+    +0.127 points of ratio, where 8 → 7 is +0.4% for +0.059 — all of the win
+    is the pass that disappears, not the taps. Fewer taps also shortens the
+    emission residual, which is the other place the order is paid for.
+
+    This is the same speed-for-ratio trade as [`lpcCandidates`](#) below and
+    it is one constant to put back. -/
+def lpcMaxOrder : Nat := 6
 
 /-- Orders costed exactly, beyond the Levinson estimate winner `est`.
 
