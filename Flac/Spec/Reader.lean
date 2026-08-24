@@ -639,7 +639,7 @@ theorem extractBits3_eq (d : ByteArray) (pos n : Nat) (h : pos % 8 + n ≤ 24) :
       ∨ (pos % 8 + n + 7) / 8 = 2 ∨ (pos % 8 + n + 7) / 8 = 3 := by omega
   rcases hcase with hk | hk | hk | hk
   · have hn : n = 0 := by omega
-    simp [hk, hn]
+    simp [hn]
   · rw [hk, acc1, show 24 - pos % 8 - n = (8 * 1 - pos % 8 - n) + 16 from by omega,
       win16 _ _ _ _ _ h1 h2]
   · rw [hk, acc2, show 24 - pos % 8 - n = (8 * 2 - pos % 8 - n) + 8 from by omega,
