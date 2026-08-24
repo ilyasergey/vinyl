@@ -4,6 +4,29 @@ Vinyl vs libFLAC 1.5.0, measured on the 37-file synthetic 16-bit corpus
 of [`gen_corpus.py`](gen_corpus.py) — six content categories (tonal,
 waveforms, noise, tonal+noise mixes, degenerate signals, stereo pairs).
 
+## Real-audio corpus: fetched, not timed yet
+
+The next benchmark suite uses real recordings rather than generated proxy
+signals.  [`real_fetch.py`](real_fetch.py) defaults to the compact 167.4 MiB
+EBU SQAM corpus; the 644.1 MiB LibriSpeech test pair and multi-gigabyte
+FSD50K, MUSDB18-HQ, and MAESTRO corpora are explicit opt-ins.  Audio and
+prepared PCM remain under ignored `bench/real_data/`; the committed fetcher
+verifies publisher identities and writes a per-file hash/format/licence
+manifest.
+
+```sh
+python3 bench/real_fetch.py --list
+python3 bench/real_fetch.py --accept-ebu-terms  # default: SQAM only
+```
+
+No timing or compression results have been recorded for these corpora yet.
+See [`CORPORA.md`](CORPORA.md) for category selectors, exact optional-download
+commands and checksums, licence restrictions, native-format caveats, and the
+prepared-corpus layout.  [`real_corpora.lock.json`](real_corpora.lock.json)
+pins the exact SQAM and LibriSpeech archives fetched in this session.
+
+## Synthetic regression dashboard
+
 Regenerate everything with:
 
 ```sh
@@ -48,21 +71,23 @@ curve that stays lower compresses better. **Bottom** — aggregate ratio
 | stereo | 27.2% | 31.8% | 26.7% | **26.6%** |
 | **TOTAL** | **39.6%** | 49.4% | 40.9% | 39.8% |
 
-With the certified heuristics (Levinson–Durbin LPC, wasted-bit
-detection, stereo-mode decision, adaptive Rice partitioning), the
-encoder's overall ratio **beats `flac -8`** on this corpus
-(39.6% vs 39.8% of raw), winning tonal/waveform/degenerate content and
-trailing slightly on noise, noisy mixes, and stereo.
+These are the complete files emitted by the current commands, not comparable
+audio-frame payloads.  libFLAC's files include its default 8,192-byte padding,
+seektable, and vendor comment; Vinyl emits only STREAMINFO.  Across files this
+small, that metadata is larger than the displayed 0.2-point difference.
+Consequently the table does **not** establish that Vinyl beats or
+compression-matches `flac -8`.  The real-audio run must use minimal metadata
+and compare frame payload sizes before selecting a speed baseline.
 
 ## Speed
 
 Per-file throughput (log scale), sorted slowest→fastest per codec; a
 curve that sits higher is faster. Dashed lines mark the two medians the
-arrow spans, and the arrow names the baseline it is drawn against: the
-encode panel is measured against **`flac -8`**, the preset whose
-compression ratio Vinyl matches, and the decode panel against libFLAC's
-decoder. All four encoder curves are plotted regardless, with medians in
-the legend, so the `-0`/`-5` presets stay visible for context.
+arrow spans, and the arrow names the baseline it is drawn against.  The
+encode panel retains **`flac -8` as a historical reference**, not as an
+established compression match; the decode panel uses libFLAC's decoder.
+All four encoder curves are plotted regardless, with medians in the legend,
+so the `-0`/`-5` presets stay visible for context.
 **Top** — encode. **Bottom** — decode (the shipped buffered decoder):
 
 ![Throughput vs libFLAC](performance.png)
@@ -71,7 +96,9 @@ Current five-run medians (2026-08-24): Vinyl encode 58.4 MB/s and Vinyl
 decode 123.7 MB/s, versus 107.6 MB/s for `flac -5` encode, 74.5 MB/s for
 `flac -8` encode, and 124.8 MB/s for libFLAC decode. That is a
 **1.01× decode gap** and a 1.84× encode gap against `flac -5` — **1.27×
-against `flac -8`, the level whose compression Vinyl matches**.
+against the historical `flac -8` reference**.  Neither encode gap should be
+called compression-matched until the metadata-normalized real-corpus frontier
+has been measured.
 
 Repeating the whole run moves these medians by 2–3% (thermal state, page
 cache), which is why the gaps are quoted to two significant figures and

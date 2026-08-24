@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-08-24",
+  "corpora": {
+    "sqam": {
+      "default": true,
+      "url": "https://qc.ebu.io/testmaterials/523/1/download/",
+      "archive": "TECH3253_SQAM_FLAC.zip",
+      "archive_bytes": 175545976,
+      "publisher_identity": {
+        "kind": "versioned-size-and-s3-etag",
+        "etag": "aec89ca407910382d98a7fea74f64a14-9"
+      },
+      "observed_sha256": "7d6fcd0fc42354637291792534b61bf129612f221f8efef97b62e8942a8686aa",
+      "prepared_files": 70,
+      "prepared_raw_bytes": 620398800,
+      "native_format": "signed 16-bit little-endian PCM, 44100 Hz, stereo",
+      "license": "EBU SQAM: non-commercial use except as an R&D tool"
+    },
+    "librispeech-test-clean": {
+      "default": false,
+      "url": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+      "archive": "test-clean.tar.gz",
+      "archive_bytes": 346663984,
+      "publisher_md5": "32fa31d27d2e1cad72775fee3f4849a9",
+      "observed_sha256": "39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23",
+      "native_format": "signed 16-bit PCM, 16000 Hz, mono",
+      "license": "CC BY 4.0"
+    },
+    "librispeech-test-other": {
+      "default": false,
+      "url": "https://www.openslr.org/resources/12/test-other.tar.gz",
+      "archive": "test-other.tar.gz",
+      "archive_bytes": 328757843,
+      "publisher_md5": "fb5a50374b501bb3bac4815ee91d3135",
+      "observed_sha256": "d09c181bba5cf717b3dee7d4d592af11a3ee3a09e08ae025c5506f6ebe961c29",
+      "native_format": "signed 16-bit PCM, 16000 Hz, mono",
+      "license": "CC BY 4.0"
+    }
+  }
+}
