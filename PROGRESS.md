@@ -1598,3 +1598,73 @@ The removed figures and tables still live in `bench/README.md`, which the
 section's closing pointer now names explicitly.
 
 **Not blocked; no proof debt.** Next steps unchanged from Session 12.
+
+---
+
+## 2026-08-24 — Session 13: optimising encode, and two instructive failures
+
+**Attempted:** bring encode's eight-thread median within 2× of `flac -8 -j8`.
+Starting point: 3.36× on the real-audio median, 18.8 MB/s per thread on a
+32.5 MB SQAM probe.
+
+**Landed — 1.49× per thread (18.8 → 28.0 MB/s), gap 3.36× → 2.60× median:**
+
+| change | per-thread | ratio | kind |
+|---|---|---|---|
+| `lpcCandidates := [est]` | +28% | +0.038 pp real / +0.87 pp synthetic | trade |
+| order-specialised search folds | +8.8% | none | bit-identical |
+| fused stereo proxies, deferred mid/side | ~0 | none | bit-identical |
+| hierarchical partition aggregation | +3% (with next) | none | bit-identical |
+| indexed `stereoSumsGo` | — | none | bit-identical |
+| `lpcMaxOrder` 8 → 6 | +5.2% | +0.127 pp | trade |
+
+Corpus totals now: real encode 28 → 142 MB/s over 1→8 threads against
+`flac -8`'s 78 → 326, so **2.8× per thread and 2.3× thread-matched** (2.60× on
+the median unit); synthetic **1.67×**, which is inside the target on that
+corpus. Decode untouched at 218 MB/s, 1.14× ahead of libFLAC's only
+configuration. Compression 47.6% → 47.9% real, 39.6% → 40.6% synthetic.
+
+**Two failures worth recording, because both look like the win that worked.**
+
+The search fold sped up 4.6× (`lpcDotFf` 419 → `lpcFold8` 90 samples) by
+carrying LPC taps as function parameters instead of walking a `List Float`.
+The identical idea applied to the *emission* residual failed twice:
+
+1. **`dotAS` dispatching per sample** — 27.0 → 25.3 MB/s. The `match cs` that
+   selects the specialisation walks exactly the cons cells the specialisation
+   removes, then pays the specialised loop on top.
+2. **`lpcResGo1..8` dispatching once per subframe** — 27.7 → 26.7 MB/s, with
+   `dotAGoK_spec`, `dotAK_eq`, `lpcResGoK_eq` and `lpcResA_generic` all
+   proved and the output bit-identical. The dispatch was in the right place
+   this time; the cost is that `dotAGoK` chains through `dotAGo(K-1)…dotAGo0`,
+   and each call passes `out`, K coefficients, `n`, `hn` and `acc` — nine
+   arguments at order 6, which spills on arm64. The list version passed five.
+
+The distinguishing property is not "specialise the taps" but **the shape of
+the loop**: `lpcFold8` is *self*-recursive with the taps loop-invariant and a
+straight-line body, so the coefficients sit in registers for the whole block.
+A chain of distinct functions cannot do that. Getting emission to the same
+shape means a straight-line inline dot inside each `lpcResGoK` with
+proof-carrying indices, and an unfold lemma per order relating it to
+`dotAGo` — not attempted.
+
+**Not blocked; no proof debt.** `scripts/check.sh` green; `fast == verified`
+encoder byte-for-byte on 2 MB; 32 MB round-trip byte-identical; `flac -t`
+accepts.
+
+**Also fixed:** `bench/run.sh` runs `lake build` internally, so a source edit
+overlapping a benchmark silently republishes a dashboard whose two suites
+measured different binaries. Benchmarks and edits must not overlap.
+
+**Next steps, in value order.**
+
+1. **Straight-line inline dot in `lpcResGo{K}`** — the emission residual is
+   still the largest single cost (~14% before the order change). The two
+   failed shapes above say what not to do.
+2. **`channelSeg`** (~9%): hoist `2*(i*ch+c)` into an incrementing offset and
+   drop the two `sampleAt` bounds tests; needs `channelSeg_eq` updated.
+3. **`pushRiceRange`** (~11%) and `crc16` (~3%) — the rest of emission.
+4. **`FloatArray` construction** (~8%): `blockF` and `welchFf` build two
+   block-sized arrays per subframe. Tail-recursion instead of `let mut` was
+   measured and did nothing; sharing the window across a frame's two
+   subframes is untried.
