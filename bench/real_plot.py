@@ -2,16 +2,23 @@
 """Render the real-audio benchmark figures from bench/real_results.csv:
 
 - bench/real_compression.png — per-unit audio-frame ratio cactus + category bars
-- bench/real_performance.png — encode and decode throughput profiles
+- bench/real_performance.png — encode and decode throughput at the headline
+                               thread count
+- bench/real_threads.png     — throughput and parallel speedup vs thread count
 - bench/real_summary.md      — the tables pasted into the READMEs
 
 Compression is reported on the *audio-frame payload* (whole file minus the
 metadata blocks).  libFLAC writes padding, a seektable, and a vendor comment;
 Vinyl writes STREAMINFO alone, so whole-file sizes would credit Vinyl with
 about 8 kB per unit that has nothing to do with coding.
+
+Every case label carries its thread count as `-jN`, because both codecs are
+swept: Vinyl's encoder and decoder are frame-parallel and libFLAC 1.5.0 takes
+`-j`.  libFLAC's decoder has no threading option and appears at `-j1` only.
 """
 import csv
 import os
+import re
 import statistics
 import sys
 from collections import defaultdict
@@ -25,89 +32,96 @@ results_csv = sys.argv[1] if len(sys.argv) > 1 else "bench/real_results.csv"
 out_dir = os.path.dirname(results_csv) or "bench"
 
 # Vinyl carries the one identity hue; the libFLAC presets are a neutral ramp,
-# except the thread-matched preset — the honest wall-clock comparator for a
-# frame-parallel encoder — which earns its own hue.  Markers repeat the
-# identity so nothing is distinguished by colour alone.
-def style_for(labels):
-    """`flac -8 -jN` carries N from BENCH_THREADS, so bind the styles to the
-    labels the run actually produced."""
-    parallel = sorted(l for l in labels if l.startswith("flac -8 -j"))
-    style = {
-        "vinyl":   dict(color="#7c3aed", marker="o", lw=2.2, zorder=5),
-        "flac -5": dict(color="#64748b", marker="^", lw=1.6),
-        "flac -8": dict(color="#1e293b", marker="v", lw=1.6),
-    }
-    for label in parallel:
-        style[label] = dict(color="#0d9488", marker="D", lw=1.8, zorder=4)
-    return style, (parallel[0] if parallel else "flac -8")
-DEC_STYLE = {
+# except `-8`, the encoder Vinyl is actually being judged against, which earns
+# its own hue.  Markers repeat the identity so nothing is colour-alone.
+FAMILY = {
+    "vinyl":        dict(color="#7c3aed", marker="o", lw=2.2, zorder=5),
     "vinyl decode": dict(color="#7c3aed", marker="o", lw=2.2, zorder=5),
+    "flac -5":      dict(color="#64748b", marker="^", lw=1.6),
+    "flac -8":      dict(color="#0d9488", marker="D", lw=1.8, zorder=4),
     "flac decode":  dict(color="#1e293b", marker="v", lw=1.6),
 }
-# Compression curves: -j only changes scheduling, so the multithreaded stream
-# is the byte-identical twin of `flac -8` and would draw a duplicate curve.
-RATIO_ENCODERS = ["vinyl", "flac -5", "flac -8"]
+# Compression curves: -j changes scheduling only, so one thread count per
+# encoder is the whole story.
+RATIO_FAMILIES = ["vinyl", "flac -5", "flac -8"]
 
 CATS = ["alignment", "artificial", "single-instrument", "solo-instrument",
         "vocal", "vocal-orchestra", "orchestra", "pop", "speech",
         "speech-clean", "speech-other"]
 SUITES = ["sqam", "librispeech-test-clean", "librispeech-test-other"]
 
-ratio = defaultdict(list)     # encoder -> [audio_bytes / raw]
-speed = defaultdict(list)     # encoder -> [raw MB/s per unit]
-catbytes = defaultdict(lambda: defaultdict(lambda: [0, 0]))   # cat -> enc -> [enc, raw]
-filebytes = defaultdict(lambda: [0, 0])                       # enc -> [whole file, raw]
-corpus = defaultdict(lambda: defaultdict(lambda: [0.0, 0]))   # suite -> enc -> [s, raw]
-threads = {}
+JOB = re.compile(r"^(?P<family>.+?) -j(?P<threads>\d+)$")
+
+ratio = defaultdict(list)      # family -> [audio_bytes / raw]  (one thread count)
+speed = defaultdict(list)      # (family, threads) -> [raw MB/s per unit]
+catbytes = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+filebytes = defaultdict(lambda: [0, 0])
+corpus = defaultdict(lambda: defaultdict(lambda: [0.0, 0]))   # suite -> job -> [s, raw]
+sizes = defaultdict(dict)      # family -> unit -> audio_bytes  (to check -j purity)
+catunits = defaultdict(set)
 units = set()
-catunits = defaultdict(set)   # cat -> {unit}
+threadsets = defaultdict(set)  # family -> {thread counts}
 
 with open(results_csv) as handle:
     for row in csv.DictReader(handle):
-        enc = row["encoder"]
-        raw = int(row["raw_bytes"])
-        seconds = float(row["seconds"])
+        match = JOB.match(row["encoder"])
+        if not match:
+            raise SystemExit(f"unparseable case label {row['encoder']!r}")
+        family, n = match["family"], int(match["threads"])
+        raw, seconds = int(row["raw_bytes"]), float(row["seconds"])
         if raw == 0 or seconds <= 0:
             continue
         units.add(row["unit"])
         catunits[row["category"]].add(row["unit"])
-        threads[enc] = int(row["threads"])
-        ratio[enc].append(int(row["audio_bytes"]) / raw)
-        speed[enc].append(raw / 1e6 / seconds)
-        agg = corpus[row["suite"]][enc]
-        agg[0] += seconds
-        agg[1] += raw
-        if "decode" in enc:
+        threadsets[family].add(n)
+        speed[(family, n)].append(raw / 1e6 / seconds)
+        corpus[row["suite"]][(family, n)][0] += seconds
+        corpus[row["suite"]][(family, n)][1] += raw
+        if "decode" in family:
             continue
-        cell = catbytes[row["category"]][enc]
-        cell[0] += int(row["audio_bytes"])
-        cell[1] += raw
-        whole = filebytes[enc]
-        whole[0] += int(row["bytes"])
-        whole[1] += raw
+        # `-j` must not change the bytes; check rather than assume
+        previous = sizes[family].setdefault(row["unit"], int(row["audio_bytes"]))
+        if previous != int(row["audio_bytes"]):
+            raise SystemExit(
+                f"{family}: -j changed the output size on {row['unit']}")
+        if n != min(threadsets[family]):
+            continue
+        ratio[family].append(int(row["audio_bytes"]) / raw)
+        catbytes[row["category"]][family][0] += int(row["audio_bytes"])
+        catbytes[row["category"]][family][1] += raw
+        filebytes[family][0] += int(row["bytes"])
+        filebytes[family][1] += raw
 
-STYLE, PARALLEL_BASELINE = style_for(threads)
 cats = [c for c in CATS if c in catbytes]
 suites = [s for s in SUITES if s in corpus]
 n_units = len(units)
+HEAD = max(threadsets["vinyl"])          # the headline thread count
 
 
-def total(enc, keys=None):
+def total(family, keys=None):
     keys = cats if keys is None else keys
-    return (sum(catbytes[c][enc][0] for c in keys),
-            sum(catbytes[c][enc][1] for c in keys))
+    return (sum(catbytes[c][family][0] for c in keys),
+            sum(catbytes[c][family][1] for c in keys))
+
+
+def corpus_speed(job, keys=None):
+    keys = suites if keys is None else keys
+    seconds = sum(corpus[k][job][0] for k in keys)
+    raw = sum(corpus[k][job][1] for k in keys)
+    return raw / 1e6 / seconds if seconds else None
 
 
 # ── compression: cactus above, category bars below ──────────────────────
 fig, (ax1, ax3) = plt.subplots(2, 1, figsize=(9, 9.5), dpi=150)
 
-for enc in RATIO_ENCODERS:
-    if enc not in ratio:
+for family in RATIO_FAMILIES:
+    if family not in ratio:
         continue
-    ys = sorted(ratio[enc])
-    num, den = total(enc)
+    ys = sorted(ratio[family])
+    num, den = total(family)
     ax1.plot(range(1, len(ys) + 1), [100 * y for y in ys],
-             label=f"{enc} — corpus {100 * num / den:.1f}%", ms=3.5, **STYLE[enc])
+             label=f"{family} — corpus {100 * num / den:.1f}%", ms=3.5,
+             **FAMILY[family])
 ax1.set_xlabel(f"benchmark units ({n_units} total, sorted per encoder)")
 ax1.set_ylabel("audio-frame ratio, % of raw PCM (lower = better)")
 ax1.set_title("Per-unit compression cactus")
@@ -115,11 +129,11 @@ ax1.grid(alpha=0.25)
 ax1.legend()
 
 width = 0.26
-for k, enc in enumerate(RATIO_ENCODERS):
+for k, family in enumerate(RATIO_FAMILIES):
     xs = [i + (k - 1) * width for i in range(len(cats))]
-    ys = [100 * catbytes[c][enc][0] / catbytes[c][enc][1] if catbytes[c].get(enc) else 0
-          for c in cats]
-    ax3.bar(xs, ys, width=width - 0.02, label=enc, color=STYLE[enc]["color"])
+    ys = [100 * catbytes[c][family][0] / catbytes[c][family][1]
+          if catbytes[c].get(family) else 0 for c in cats]
+    ax3.bar(xs, ys, width=width - 0.02, label=family, color=FAMILY[family]["color"])
 ax3.set_xticks(range(len(cats)))
 ax3.set_xticklabels(cats, rotation=30, ha="right")
 ax3.set_ylabel("aggregate ratio, % of raw (lower = better)")
@@ -133,27 +147,24 @@ fig.savefig(os.path.join(out_dir, "real_compression.png"))
 print("wrote real_compression.png")
 
 
-# ── performance: encode + decode throughput profiles ────────────────────
-def throughput_panel(ax, styles, kind, gap_pair, gap_note=""):
+# ── throughput at the headline thread count ─────────────────────────────
+def throughput_panel(ax, jobs, kind, gap_pair, gap_note=""):
     n = 0
-    for enc in styles:
-        if enc not in speed:
+    for family, count in jobs:
+        if (family, count) not in speed:
             continue
-        ys = sorted(speed[enc])
+        ys = sorted(speed[(family, count)])
         n = max(n, len(ys))
-        # `-jN` already names the thread count where it appears in the label;
-        # everywhere else spell it out, because a frame-parallel codec beside a
-        # single-threaded one is the whole point of the comparison.
-        count = threads[enc]
-        tag = "" if "-j" in enc else f" · {count} thread{'s' if count > 1 else ''}"
-        ax.plot(range(1, len(ys) + 1), ys, ms=3.5, **styles[enc],
-                label=f"{enc}{tag} — median {statistics.median(ys):.3g} MB/s")
+        ax.plot(range(1, len(ys) + 1), ys, ms=3.5, **FAMILY[family],
+                label=f"{family} · {count} thread{'s' if count > 1 else ''}"
+                      f" — median {statistics.median(ys):.3g} MB/s",
+                ls="--" if count != HEAD and "decode" not in family else "-")
     ax.set_xlabel(f"benchmark units (each {kind}r sorted slowest → fastest)")
     ax.set_ylabel(f"{kind} throughput, raw MB/s (higher = faster)")
     ax.set_yscale("log")
-    allv = [v for e in styles if e in speed for v in speed[e]]
-    ticks = [t for t in (5, 10, 15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 700,
-                         1000)
+    allv = [v for j in jobs if j in speed for v in speed[j]]
+    ticks = [t for t in (5, 10, 15, 20, 30, 50, 70, 100, 150, 200, 300, 500,
+                         700, 1000)
              if min(allv) * 0.8 <= t <= max(allv) * 1.25]
     ax.set_yticks(ticks)
     ax.set_yticklabels([f"{t:g}" for t in ticks])
@@ -162,38 +173,90 @@ def throughput_panel(ax, styles, kind, gap_pair, gap_note=""):
     if lo in speed and hi in speed:
         lo_med = statistics.median(speed[lo])
         hi_med = statistics.median(speed[hi])
-        for med, enc in ((lo_med, lo), (hi_med, hi)):
-            ax.axhline(med, color=styles[enc]["color"], ls="--", lw=1, alpha=0.6)
-        # Curves rise left to right, so the arrow goes near the right end,
-        # between the two dashed medians.  The caption cannot hang off it —
-        # the slowest curve passes through that space — so it sits in the
-        # bottom-right of the axes, which every curve has already left.
+        for med, job in ((lo_med, lo), (hi_med, hi)):
+            ax.axhline(med, color=FAMILY[job[0]]["color"], ls="--", lw=1, alpha=0.6)
         x = n * 0.86
         ax.annotate("", xy=(x, hi_med), xytext=(x, lo_med),
                     arrowprops=dict(arrowstyle="<->", color="#111827", lw=1.1))
         ax.text(0.985, 0.03,
                 f"×{max(hi_med, lo_med) / min(hi_med, lo_med):.2f} median gap "
-                f"vs {hi}{gap_note}",
+                f"vs {hi[0]} -j{hi[1]}{gap_note}",
                 transform=ax.transAxes, ha="right", va="bottom",
                 fontsize=9, color="#111827",
                 bbox=dict(boxstyle="round,pad=0.35", fc="#f8fafc",
                           ec="#cbd5e1", lw=0.8))
-    ax.set_title(f"{kind.capitalize()} speed")
+    ax.set_title(f"{kind.capitalize()} speed at {HEAD} threads")
     ax.grid(alpha=0.25, which="both")
     ax.legend(fontsize=8, loc="upper left")
 
 
 fig2, (ax2, ax4) = plt.subplots(2, 1, figsize=(9, 9.5), dpi=150)
-# Vinyl's encoder is frame-parallel, so the like-for-like wall-clock baseline
-# is libFLAC at the same thread count; the single-threaded `-8` row stays on
-# the plot because it is the preset's default and the historical reference.
-throughput_panel(ax2, STYLE, "encode", ("vinyl", PARALLEL_BASELINE),
-                 gap_note=" (thread-matched)")
-throughput_panel(ax4, DEC_STYLE, "decode", ("vinyl decode", "flac decode"))
+throughput_panel(
+    ax2,
+    [("vinyl", HEAD), ("flac -8", HEAD), ("flac -8", 1), ("flac -5", 1)],
+    "encode", (("vinyl", HEAD), ("flac -8", HEAD)), gap_note=" (thread-matched)")
+throughput_panel(
+    ax4, [("vinyl decode", HEAD), ("flac decode", 1)],
+    "decode", (("vinyl decode", HEAD), ("flac decode", 1)))
 fig2.suptitle("Throughput — Vinyl (verified) vs libFLAC 1.5.0, real-audio corpora")
 fig2.tight_layout()
 fig2.savefig(os.path.join(out_dir, "real_performance.png"))
 print("wrote real_performance.png")
+
+# ── scaling with thread count ───────────────────────────────────────────
+SCALED = [("vinyl", "encode"), ("flac -8", "encode"), ("vinyl decode", "decode")]
+counts = sorted(threadsets["vinyl"])
+
+fig3, (ax5, ax6) = plt.subplots(1, 2, figsize=(11, 5), dpi=150)
+for family, kind in SCALED:
+    ns = [n for n in sorted(threadsets[family]) if (family, n) in speed]
+    ys = [corpus_speed((family, n)) for n in ns]
+    ax5.plot(ns, ys, ms=6, label=f"{family} ({kind})", **FAMILY[family],
+             ls="-" if kind == "encode" else "--")
+# libFLAC's decoder cannot be swept, so it is a reference level, not a curve
+flac_dec = corpus_speed(("flac decode", 1))
+if flac_dec:
+    ax5.axhline(flac_dec, color=FAMILY["flac decode"]["color"], ls=":", lw=1.6)
+    ax5.text(counts[-1], flac_dec * 1.04,
+             f"flac decode, 1 thread (no -j) — {flac_dec:.0f} MB/s",
+             ha="right", va="bottom", fontsize=8,
+             color=FAMILY["flac decode"]["color"])
+ax5.set_xscale("log", base=2)
+ax5.set_xticks(counts)
+ax5.set_xticklabels([str(c) for c in counts])
+ax5.xaxis.set_minor_formatter(NullFormatter())
+ax5.set_xlabel("threads")
+ax5.set_ylabel("corpus throughput, raw MB/s (higher = faster)")
+ax5.set_title("Throughput vs threads")
+ax5.grid(alpha=0.25, which="both")
+ax5.legend(fontsize=8, loc="upper left")
+
+for family, kind in SCALED:
+    ns = [n for n in sorted(threadsets[family]) if (family, n) in speed]
+    base = corpus_speed((family, ns[0]))
+    ax6.plot(ns, [corpus_speed((family, n)) / base for n in ns], ms=6,
+             label=f"{family} ({kind})", **FAMILY[family],
+             ls="-" if kind == "encode" else "--")
+ax6.plot(counts, counts, color="#94a3b8", ls=":", lw=1.4, label="ideal (linear)")
+ax6.set_xscale("log", base=2)
+ax6.set_yscale("log", base=2)
+ax6.set_xticks(counts)
+ax6.set_xticklabels([str(c) for c in counts])
+ax6.set_yticks(counts)
+ax6.set_yticklabels([f"{c}×" for c in counts])
+ax6.xaxis.set_minor_formatter(NullFormatter())
+ax6.yaxis.set_minor_formatter(NullFormatter())
+ax6.set_xlabel("threads")
+ax6.set_ylabel(f"speedup vs {counts[0]} thread")
+ax6.set_title("Parallel speedup")
+ax6.grid(alpha=0.25, which="both")
+ax6.legend(fontsize=8, loc="upper left")
+
+fig3.suptitle("Scaling with thread count — real-audio corpora, "
+              f"{n_units} units / total corpus time")
+fig3.tight_layout()
+fig3.savefig(os.path.join(out_dir, "real_threads.png"))
+print("wrote real_threads.png")
 
 # ── markdown summary tables ─────────────────────────────────────────────
 with open(os.path.join(out_dir, "real_summary.md"), "w") as f:
@@ -201,28 +264,41 @@ with open(os.path.join(out_dir, "real_summary.md"), "w") as f:
     f.write("| category | units | vinyl | flac -5 | flac -8 |\n|---|---:|---|---|---|\n")
     for c in cats:
         cells = " | ".join(
-            f"{100 * catbytes[c][e][0] / catbytes[c][e][1]:.1f}%" for e in RATIO_ENCODERS)
+            f"{100 * catbytes[c][e][0] / catbytes[c][e][1]:.1f}%" for e in RATIO_FAMILIES)
         f.write(f"| {c} | {len(catunits[c])} | {cells} |\n")
-    cells = " | ".join(f"{100 * total(e)[0] / total(e)[1]:.1f}%" for e in RATIO_ENCODERS)
+    cells = " | ".join(f"{100 * total(e)[0] / total(e)[1]:.1f}%" for e in RATIO_FAMILIES)
     f.write(f"| **TOTAL** | {n_units} | {cells} |\n\n")
 
     f.write("### Whole-file size as % of raw PCM (metadata included)\n\n")
-    f.write("| " + " | ".join(RATIO_ENCODERS) + " |\n")
-    f.write("|" + "---|" * len(RATIO_ENCODERS) + "\n| ")
+    f.write("| " + " | ".join(RATIO_FAMILIES) + " |\n")
+    f.write("|" + "---|" * len(RATIO_FAMILIES) + "\n| ")
     f.write(" | ".join(f"{100 * filebytes[e][0] / filebytes[e][1]:.1f}%"
-                       for e in RATIO_ENCODERS) + " |\n\n")
+                       for e in RATIO_FAMILIES) + " |\n\n")
 
-    f.write("### Corpus throughput, total raw MB ÷ total seconds\n\n")
-    order = [e for e in list(STYLE) + list(DEC_STYLE) if e in threads]
-    f.write("| suite | " + " | ".join(order) + " |\n")
-    f.write("|---|" + "---|" * len(order) + "\n")
+    f.write(f"### Corpus throughput at {HEAD} threads, total raw MB ÷ total seconds\n\n")
+    head = [("vinyl", HEAD), ("flac -5", 1), ("flac -8", 1), ("flac -8", HEAD),
+            ("vinyl decode", HEAD), ("flac decode", 1)]
+    head = [j for j in head if j in speed]
+    f.write("| suite | " + " | ".join(f"{fam} -j{n}" for fam, n in head) + " |\n")
+    f.write("|---|" + "---|" * len(head) + "\n")
     for s in suites + ["TOTAL"]:
         keys = suites if s == "TOTAL" else [s]
-        cells = []
-        for e in order:
-            secs = sum(corpus[k][e][0] for k in keys)
-            raw = sum(corpus[k][e][1] for k in keys)
-            cells.append(f"{raw / 1e6 / secs:.0f} MB/s" if secs else "—")
+        cells = [f"{corpus_speed(j, keys):.0f} MB/s" for j in head]
         label = f"**{s}**" if s == "TOTAL" else s
         f.write(f"| {label} | " + " | ".join(cells) + " |\n")
+
+    f.write("\n### Scaling with thread count, corpus throughput\n\n")
+    f.write("| threads | " + " | ".join(f"{fam} ({kind})" for fam, kind in SCALED)
+            + " | flac decode |\n")
+    f.write("|---:|" + "---|" * (len(SCALED) + 1) + "\n")
+    for n in counts:
+        cells = []
+        for family, _ in SCALED:
+            value = corpus_speed((family, n)) if (family, n) in speed else None
+            cells.append(f"{value:.0f} MB/s" if value else "—")
+        cells.append(f"{flac_dec:.0f} MB/s" if n == 1 and flac_dec else "no `-j`")
+        f.write(f"| {n} | " + " | ".join(cells) + " |\n")
+    f.write("\nSpeedup at %d threads: " % counts[-1] + ", ".join(
+        f"{fam} {corpus_speed((fam, counts[-1])) / corpus_speed((fam, counts[0])):.2f}×"
+        for fam, _ in SCALED if (fam, counts[-1]) in speed) + ".\n")
 print("wrote real_summary.md")

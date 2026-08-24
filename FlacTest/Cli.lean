@@ -388,10 +388,38 @@ def usage : String :=
   "      decode with the shipped buffered decoder (raw 16-bit LE out)\n" ++
   "  vinyl --decode-pcm16 <in.flac> <out.pcm>\n" ++
   "      decode via the verified byte-level pipeline (16-bit input only)\n" ++
+  "  vinyl -j <n> <command...>   (also --threads <n>, --threads=<n>)\n" ++
+  "      run <command...> with Lean's task pool capped at <n> workers,\n" ++
+  "      the same knob `flac -j` turns; see the note on `withThreads`\n" ++
   "  vinyl --samples <dir>\n" ++
   "      write sample .flac/.pcm pairs into <dir> (must exist)\n" ++
   "  vinyl (no arguments)\n" ++
   "      run the unit-test suite"
+
+/-- Run `args` in a copy of this process whose Lean task pool is capped at
+    `n` workers, and return its exit code.
+
+    Lean sizes the task pool from `LEAN_NUM_THREADS` when the runtime starts,
+    which is before `main` is entered, so a flag cannot resize the pool of the
+    process that parses it — hence the re-execution. The child never sees the
+    flag again, so this recurses exactly once. It costs one extra process
+    (~3 ms of Lean runtime init); `bench/real_run.py` sets the variable
+    directly instead, so no benchmark pays it. -/
+def withThreads (n : String) (args : List String) : IO UInt32 := do
+  match n.toNat? with
+  | none =>
+    IO.eprintln s!"--threads: expected a worker count, got '{n}'"
+    return 2
+  | some workers =>
+    if workers = 0 then
+      IO.eprintln "--threads: worker count must be at least 1"
+      return 2
+    let self ← IO.appPath
+    let child ← IO.Process.spawn
+      { cmd := self.toString
+        args := args.toArray
+        env := #[("LEAN_NUM_THREADS", some (toString workers))] }
+    child.wait
 
 /-- The fast encoder as a CLI action.  `sampleRate` reaches STREAMINFO only:
     `Flac.Stream.decodePcm16_encodePcm16Fast` holds at every rate the encoder
@@ -426,6 +454,15 @@ def encodeSlowMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
     return 1
 
 def cliMain (args : List String) : IO UInt32 := do
+  -- the thread flag is leading and consumed here, so every branch below sees
+  -- the command alone, exactly as if the flag had not been given
+  match args with
+  | "-j" :: n :: rest => return ← withThreads n rest
+  | "--threads" :: n :: rest => return ← withThreads n rest
+  | flag :: rest =>
+    if flag.startsWith "--threads=" then
+      return ← withThreads (flag.drop "--threads=".length).toString rest
+  | [] => pure ()
   if args = ["--help"] ∨ args = ["-h"] then
     IO.println usage
     return 0
