@@ -730,6 +730,13 @@ def FramePrep.asg (fp : FramePrep) : Frame.ChannelAsg :=
   | .midSide, [q0, q1] => .midSide q0.1.cfg q1.1.cfg
   | _, qs => .independent (qs.map fun q => q.1.cfg)
 
+/-- The reference chooser the shipped encoder's decisions denote: the
+    `EncoderCfg.chooser` to instantiate `Flac.Stream.encode` with so that it
+    emits exactly what the fast encoder emits. Its `Float` search is never
+    reasoned about — only applied, on both sides of every equation. -/
+def fastChooser (b : Nat) (fr : List (List Int)) : Frame.ChannelAsg :=
+  (chooseFrame b (fr.map List.toArray).toArray).asg
+
 /-- A `SubPrep`'s cached block is the wasted-bit-scaled image of the block
     it was chosen from. The chooser establishes this; emission consumes
     it. -/

@@ -1475,4 +1475,55 @@ theorem chooseFrame_asg_valid {b bs : Nat} (hb : 0 < b) (chs : Array (Array Int)
     · rw [← Flac.Stereo.sideA_toList]
       exact chooseSub_cfg_valid (by omega) _ (side_fits_mem hl hr)
 
+/-! ## The reference, instantiated with our chooser, keeps our choice -/
+
+theorem orVerbatim_of_valid {asg : Frame.ChannelAsg} {b bs : Nat}
+    {chs : List (List Int)} (h : asg.Valid b bs chs) :
+    asg.orVerbatim b bs chs = asg := by
+  unfold Frame.ChannelAsg.orVerbatim
+  rw [if_pos h]
+
+private theorem map_toArray_toList (fr : List (List Int)) :
+    (fr.map List.toArray).map Array.toList = fr := by
+  induction fr with
+  | nil => rfl
+  | cons c fr ih => rw [List.map_cons, List.map_cons, ih, List.toList_toArray]
+
+/-- **The sanitisation is enough.** `EncoderCfg.safeChooser` wraps every
+    chooser in `orVerbatim`; on the fast encoder's decisions that wrapper is
+    the identity, so the reference encoder emits exactly them. -/
+theorem safeChooser_fastChooser {b : Nat} (hb : 0 < b) (blockSize : Nat)
+    (varBlk : Bool) (fr : List (List Int))
+    (hlen : ∀ c ∈ fr, c.length = (fr.headD []).length)
+    (hfit : ∀ c ∈ fr, ∀ x ∈ c, Flac.Bits.FitsSInt b x)
+    (hn1 : 1 ≤ fr.length) (hn8 : fr.length ≤ 8) :
+    (Stream.EncoderCfg.mk blockSize varBlk (fastChooser b)).safeChooser b fr
+      = fastChooser b fr := by
+  have hct : ((fr.map List.toArray).toArray).toList = fr.map List.toArray :=
+    List.toList_toArray
+  have hsz : ((fr.map List.toArray).toArray).size = fr.length := by
+    rw [← Array.length_toList, hct, List.length_map]
+  have hmem : ∀ c ∈ ((fr.map List.toArray).toArray).toList,
+      ∃ l ∈ fr, c.toList = l := by
+    intro c hc
+    rw [hct] at hc
+    obtain ⟨l, hl, hlc⟩ := List.mem_map.1 hc
+    exact ⟨l, hl, by rw [← hlc, List.toList_toArray]⟩
+  have h1 : ∀ c ∈ ((fr.map List.toArray).toArray).toList,
+      c.toList.length = (fr.headD []).length := by
+    intro c hc
+    obtain ⟨l, hl, hcl⟩ := hmem c hc
+    rw [hcl]
+    exact hlen l hl
+  have h2 : ∀ c ∈ ((fr.map List.toArray).toArray).toList,
+      ∀ x ∈ c.toList, Flac.Bits.FitsSInt b x := by
+    intro c hc
+    obtain ⟨l, hl, hcl⟩ := hmem c hc
+    rw [hcl]
+    exact hfit l hl
+  have hv := chooseFrame_asg_valid (bs := (fr.headD []).length) hb
+    ((fr.map List.toArray).toArray) h1 h2 (by rw [hsz]; omega) (by rw [hsz]; omega)
+  rw [hct, map_toArray_toList] at hv
+  exact orVerbatim_of_valid hv
+
 end Flac.Encode
