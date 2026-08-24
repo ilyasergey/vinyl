@@ -26,6 +26,7 @@ from collections import defaultdict
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.transforms import blended_transform_factory
 from matplotlib.ticker import NullFormatter
 
 results_csv = sys.argv[1] if len(sys.argv) > 1 else "bench/real_results.csv"
@@ -36,7 +37,7 @@ out_dir = os.path.dirname(results_csv) or "bench"
 # its own hue.  Markers repeat the identity so nothing is colour-alone.
 FAMILY = {
     "vinyl":        dict(color="#7c3aed", marker="o", lw=2.2, zorder=5),
-    "vinyl decode": dict(color="#7c3aed", marker="o", lw=2.2, zorder=5),
+    "vinyl decode": dict(color="#7c3aed", marker="s", lw=2.2, zorder=5),
     "flac -5":      dict(color="#64748b", marker="^", lw=1.6),
     "flac -8":      dict(color="#0d9488", marker="D", lw=1.8, zorder=4),
     "flac decode":  dict(color="#1e293b", marker="v", lw=1.6),
@@ -205,22 +206,33 @@ print("wrote real_performance.png")
 
 # ── scaling with thread count ───────────────────────────────────────────
 SCALED = [("vinyl", "encode"), ("flac -8", "encode"), ("vinyl decode", "decode")]
+
+
+def scaled_label(family, kind):
+    """`vinyl decode` already names its direction; `vinyl` does not."""
+    return family if kind in family else f"{family} ({kind})"
+
 counts = sorted(threadsets["vinyl"])
 
 fig3, (ax5, ax6) = plt.subplots(1, 2, figsize=(11, 5), dpi=150)
 for family, kind in SCALED:
     ns = [n for n in sorted(threadsets[family]) if (family, n) in speed]
     ys = [corpus_speed((family, n)) for n in ns]
-    ax5.plot(ns, ys, ms=6, label=f"{family} ({kind})", **FAMILY[family],
+    ax5.plot(ns, ys, ms=6, label=scaled_label(family, kind), **FAMILY[family],
              ls="-" if kind == "encode" else "--")
 # libFLAC's decoder cannot be swept, so it is a reference level, not a curve
 flac_dec = corpus_speed(("flac decode", 1))
 if flac_dec:
     ax5.axhline(flac_dec, color=FAMILY["flac decode"]["color"], ls=":", lw=1.6)
-    ax5.text(counts[-1], flac_dec * 1.04,
-             f"flac decode, 1 thread (no -j) — {flac_dec:.0f} MB/s",
-             ha="right", va="bottom", fontsize=8,
-             color=FAMILY["flac decode"]["color"])
+    # Left end: the curves all start low there, so the space above the level
+    # is clear.  x in axes fraction (inset from the spine), y in data units so
+    # the label stays pinned to the line it names.
+    ax5.annotate(f"flac decode, 1 thread (no -j) — {flac_dec:.0f} MB/s",
+                 xy=(0.02, flac_dec),
+                 xycoords=blended_transform_factory(ax5.transAxes, ax5.transData),
+                 xytext=(0, 4), textcoords="offset points",
+                 ha="left", va="bottom", fontsize=8,
+                 color=FAMILY["flac decode"]["color"])
 ax5.set_xscale("log", base=2)
 ax5.set_xticks(counts)
 ax5.set_xticklabels([str(c) for c in counts])
@@ -235,7 +247,7 @@ for family, kind in SCALED:
     ns = [n for n in sorted(threadsets[family]) if (family, n) in speed]
     base = corpus_speed((family, ns[0]))
     ax6.plot(ns, [corpus_speed((family, n)) / base for n in ns], ms=6,
-             label=f"{family} ({kind})", **FAMILY[family],
+             label=scaled_label(family, kind), **FAMILY[family],
              ls="-" if kind == "encode" else "--")
 ax6.plot(counts, counts, color="#94a3b8", ls=":", lw=1.4, label="ideal (linear)")
 ax6.set_xscale("log", base=2)

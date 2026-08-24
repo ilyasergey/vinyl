@@ -1483,3 +1483,96 @@ what was measured at the time, under the accounting in use then.
    nearly kept up; on real audio it does not.
 4. **24-bit and non-44.1/16 kHz material** — both corpora are S16 at two
    rates, while the codec and theorems cover depths 1–32.
+
+---
+
+## 2026-08-24 — Session 12: a thread flag, and thread-matched numbers everywhere
+
+**Attempted:** session 11 reported an encode gap "3.4× thread-matched" and a
+decode result "1.08× ahead", both against libFLAC's `-j`. Vinyl had no
+equivalent knob, so those were the machine's core count against a chosen
+libFLAC setting rather than a controlled comparison. Give Vinyl the knob,
+sweep both codecs over thread counts on **both** suites, and republish.
+
+**Landed:**
+
+- **`vinyl -j <n>`** (also `--threads <n>`, `--threads=<n>`), in
+  `FlacTest/Cli.lean`. Lean sizes its task pool from `LEAN_NUM_THREADS` when
+  the runtime starts, which is before `main` is entered, so a flag cannot
+  resize its own process's pool: the flag re-executes the binary once with the
+  variable set and returns the child's exit code. Measured cost ~3 ms; all
+  three spellings agree with the variable to within noise (0.4947 / 0.4976 /
+  0.4978 s against 0.4917 s at one thread). Bad input is rejected with exit 2.
+- **The knob is the runtime pool, not the codec.** Parallelism is one
+  `Task.spawn` per frame, so capping workers inside `encodePcm16` would mean
+  regrouping frames and reproving `encodePcm16_eq` for nothing. Nothing under
+  `Flac/` changed.
+- **Both harnesses sweep.** `BENCH_THREAD_SWEEP` (default `1,2,4,8`, clamped to
+  the core count) drives Vinyl encode, Vinyl decode and `flac -8` at every
+  count in `bench/run.py` *and* `bench/real_run.py`; `-0`/`-5` stay at one
+  thread as ratio context. Case labels carry `-jN`, and both plot scripts
+  *check* that `-j` never changes the coded bytes rather than assuming it.
+- **`flac -d` takes no threads.** `-j` is documented under encoding options,
+  and `flac -d -j8` is silently accepted and ignored — 0.0448 s against
+  0.0445 s on the same file, exit 0 either way. So every decode row is one
+  libFLAC thread by necessity, and the figures draw it as a dotted reference
+  level rather than a curve.
+- **New figures** `bench/threads.png` and `bench/real_threads.png`: corpus
+  throughput against thread count, and parallel speedup against the ideal
+  line.
+
+**Results.** Corpus throughput, total raw MB ÷ total seconds:
+
+| threads | vinyl enc | `flac -8` enc | gap | vinyl dec | `flac` dec | gap |
+|---:|---|---|---|---|---|---|
+| *synthetic, 37 × 1 MB* | | | | | | |
+| 1 | 18.5 | 72.0 | 3.90× | 49.2 | 130.2 | 2.64× |
+| 8 | 77.9 | 172.3 | **2.21×** | 124.4 | no `-j` | **1.05×** |
+| *real audio, 143 units* | | | | | | |
+| 1 | 18.2 | 77.3 | 4.24× | 46.2 | 189.6 | 4.11× |
+| 8 | 100.8 | 335.0 | **3.32×** | 216.9 | no `-j` | **0.87×** |
+
+Speedup 1→8 threads: Vinyl encode 4.22× (synthetic) / 5.53× (real), `flac -8`
+2.39× / 4.33×, Vinyl decode 2.53× / 4.70×.
+
+**What this revises from session 11.**
+
+1. **Per thread, Vinyl is ~4× behind in *both* directions** — encode 4.2×,
+   decode 4.1× on real audio. Session 11 could not state the decode figure at
+   all ("total CPU time is not recorded, so the per-core figure is not
+   quantified here"); this quantifies it, and it is much worse than the
+   wall-clock result suggested. That the factor is the *same* both ways is the
+   informative part: it is per-operation cost, not a structural problem in one
+   path.
+2. **"Decode is ahead" survives but shrinks in meaning.** 1.14× ahead at eight
+   threads is real and is Vinyl's only wall-clock win, but the decode curve
+   only crosses libFLAC's single-threaded level at about **six threads**.
+3. **Vinyl parallelises better than libFLAC** — the one clearly favourable
+   finding, and it holds on both corpora. It is also the part the proofs cover:
+   frame-parallel decode and serialization are proven equal to their bit-level
+   specifications, so the scaling is not bought with trust.
+4. **The synthetic suite scales worse for both codecs** (Vinyl 4.22×, libFLAC
+   2.39×) because 1 MB files carry a fixed per-file cost that cannot be
+   parallelised away. Read scaling off the real corpus.
+
+**Docs.** `bench/README.md` restructured again on request: a
+"Where Vinyl stands against libFLAC" ratio block **first**, then Part 1
+synthetic micro-benchmarks (moved ahead of the real-audio suite), Part 2
+real audio, Part 3 optimization history — with the thread-scaling figure and a
+scaling table in both suites, and every cross-reference renumbered.
+`README.md`'s benchmark section now leads with the same ratio block and keeps
+only the three general points: same-thread slowdown, scaling trends, and that
+decode overtakes libFLAC as threads are added; it also documents `-j`.
+
+**Not blocked; no proof debt.** `scripts/check.sh` green.
+
+**Next steps.**
+
+1. **`rusage` per invocation**, to separate oversubscription and
+   efficiency-core effects on this asymmetric-core machine (Apple M2: four
+   performance, four efficiency) — the likeliest reason neither codec scales
+   linearly past four threads.
+2. **Close the ~4× per-operation gap**, which is where the whole distance now
+   lives. Part 3's "where the remaining encode gap is" is the map.
+3. **`flac -0` on real audio**, to bracket Vinyl's ratio from below.
+4. **24-bit and non-44.1/16 kHz material.**
