@@ -278,6 +278,194 @@ private def lpcFoldRange (xs : FloatArray) (cs : List Float) (inv : Float) :
     else acc
   termination_by i stop => stop - i
 
+/-- Order-specialised residual folds.
+
+    `lpcFoldRange` walked a `List Float` of coefficients once per sample,
+    which costs three *dependent* loads per tap — the cons cell, its tail
+    pointer, and the boxed `Float` — and was 11% of encode once the candidate
+    set came down to one order.  These carry the taps as function parameters,
+    which Lean keeps unboxed and the register allocator keeps in registers,
+    and the sample reads become independent loads from a contiguous
+    `FloatArray`.
+
+    The accumulation order is untouched (`c₀·x[i-1]` first, then `c₁·x[i-2]`,
+    …, starting from `ff0`), and every value is an exact integer well inside
+    `2^53`, so each result is bit-identical to the list version — the plan
+    these sums produce, and therefore the emitted bytes, do not change.
+
+    `lpcMaxOrder` is 8, so orders 1–8 cover every candidate; anything else
+    falls back to the generic walk. -/
+private def lpcFold1 (xs : FloatArray) (c0 inv : Float) :
+    (i stop : Nat) → stop ≤ xs.size → Float → Float
+  | i, stop, hstop, acc =>
+    if h : i < stop then
+      have hi : i < xs.size := by omega
+      have h1 : i - 1 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
+      lpcFold1 xs c0 inv (i + 1) stop hstop
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1]) inv))
+    else acc
+  termination_by i stop => stop - i
+
+private def lpcFold2 (xs : FloatArray) (c0 c1 inv : Float) :
+    (i stop : Nat) → stop ≤ xs.size → Float → Float
+  | i, stop, hstop, acc =>
+    if h : i < stop then
+      have hi : i < xs.size := by omega
+      have h1 : i - 1 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
+      have h2 : i - 2 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
+      lpcFold2 xs c0 c1 inv (i + 1) stop hstop
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2]) inv))
+    else acc
+  termination_by i stop => stop - i
+
+private def lpcFold3 (xs : FloatArray) (c0 c1 c2 inv : Float) :
+    (i stop : Nat) → stop ≤ xs.size → Float → Float
+  | i, stop, hstop, acc =>
+    if h : i < stop then
+      have hi : i < xs.size := by omega
+      have h1 : i - 1 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
+      have h2 : i - 2 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
+      have h3 : i - 3 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
+      lpcFold3 xs c0 c1 c2 inv (i + 1) stop hstop
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3]) inv))
+    else acc
+  termination_by i stop => stop - i
+
+private def lpcFold4 (xs : FloatArray) (c0 c1 c2 c3 inv : Float) :
+    (i stop : Nat) → stop ≤ xs.size → Float → Float
+  | i, stop, hstop, acc =>
+    if h : i < stop then
+      have hi : i < xs.size := by omega
+      have h1 : i - 1 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
+      have h2 : i - 2 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
+      have h3 : i - 3 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
+      have h4 : i - 4 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 4) hi
+      lpcFold4 xs c0 c1 c2 c3 inv (i + 1) stop hstop
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3] + c3 * xs[i - 4]) inv))
+    else acc
+  termination_by i stop => stop - i
+
+private def lpcFold5 (xs : FloatArray) (c0 c1 c2 c3 c4 inv : Float) :
+    (i stop : Nat) → stop ≤ xs.size → Float → Float
+  | i, stop, hstop, acc =>
+    if h : i < stop then
+      have hi : i < xs.size := by omega
+      have h1 : i - 1 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
+      have h2 : i - 2 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
+      have h3 : i - 3 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
+      have h4 : i - 4 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 4) hi
+      have h5 : i - 5 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 5) hi
+      lpcFold5 xs c0 c1 c2 c3 c4 inv (i + 1) stop hstop
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3] + c3 * xs[i - 4] + c4 * xs[i - 5]) inv))
+    else acc
+  termination_by i stop => stop - i
+
+private def lpcFold6 (xs : FloatArray) (c0 c1 c2 c3 c4 c5 inv : Float) :
+    (i stop : Nat) → stop ≤ xs.size → Float → Float
+  | i, stop, hstop, acc =>
+    if h : i < stop then
+      have hi : i < xs.size := by omega
+      have h1 : i - 1 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
+      have h2 : i - 2 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
+      have h3 : i - 3 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
+      have h4 : i - 4 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 4) hi
+      have h5 : i - 5 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 5) hi
+      have h6 : i - 6 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 6) hi
+      lpcFold6 xs c0 c1 c2 c3 c4 c5 inv (i + 1) stop hstop
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3] + c3 * xs[i - 4] + c4 * xs[i - 5] + c5 * xs[i - 6]) inv))
+    else acc
+  termination_by i stop => stop - i
+
+private def lpcFold7 (xs : FloatArray) (c0 c1 c2 c3 c4 c5 c6 inv : Float) :
+    (i stop : Nat) → stop ≤ xs.size → Float → Float
+  | i, stop, hstop, acc =>
+    if h : i < stop then
+      have hi : i < xs.size := by omega
+      have h1 : i - 1 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
+      have h2 : i - 2 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
+      have h3 : i - 3 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
+      have h4 : i - 4 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 4) hi
+      have h5 : i - 5 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 5) hi
+      have h6 : i - 6 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 6) hi
+      have h7 : i - 7 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 7) hi
+      lpcFold7 xs c0 c1 c2 c3 c4 c5 c6 inv (i + 1) stop hstop
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3] + c3 * xs[i - 4] + c4 * xs[i - 5] + c5 * xs[i - 6] + c6 * xs[i - 7]) inv))
+    else acc
+  termination_by i stop => stop - i
+
+private def lpcFold8 (xs : FloatArray) (c0 c1 c2 c3 c4 c5 c6 c7 inv : Float) :
+    (i stop : Nat) → stop ≤ xs.size → Float → Float
+  | i, stop, hstop, acc =>
+    if h : i < stop then
+      have hi : i < xs.size := by omega
+      have h1 : i - 1 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
+      have h2 : i - 2 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
+      have h3 : i - 3 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
+      have h4 : i - 4 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 4) hi
+      have h5 : i - 5 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 5) hi
+      have h6 : i - 6 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 6) hi
+      have h7 : i - 7 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 7) hi
+      have h8 : i - 8 < xs.size :=
+        Nat.lt_of_le_of_lt (Nat.sub_le i 8) hi
+      lpcFold8 xs c0 c1 c2 c3 c4 c5 c6 c7 inv (i + 1) stop hstop
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3] + c3 * xs[i - 4] + c4 * xs[i - 5] + c5 * xs[i - 6] + c6 * xs[i - 7] + c7 * xs[i - 8]) inv))
+    else acc
+  termination_by i stop => stop - i
+
+/-- `lpcFoldRange` at the specialisation for `cs`'s length. -/
+private def lpcFoldRangeS (xs : FloatArray) (cs : List Float) (inv : Float)
+    (i stop : Nat) (hstop : stop ≤ xs.size) (hlo : cs.length ≤ i) (acc : Float) :
+    Float :=
+  -- matching on `hlo` too, so the fallback carries the hypothesis for the
+  -- list it actually got
+  match cs, hlo with
+  | [c0], _ => lpcFold1 xs c0 inv i stop hstop acc
+  | [c0, c1], _ => lpcFold2 xs c0 c1 inv i stop hstop acc
+  | [c0, c1, c2], _ => lpcFold3 xs c0 c1 c2 inv i stop hstop acc
+  | [c0, c1, c2, c3], _ => lpcFold4 xs c0 c1 c2 c3 inv i stop hstop acc
+  | [c0, c1, c2, c3, c4], _ => lpcFold5 xs c0 c1 c2 c3 c4 inv i stop hstop acc
+  | [c0, c1, c2, c3, c4, c5], _ => lpcFold6 xs c0 c1 c2 c3 c4 c5 inv i stop hstop acc
+  | [c0, c1, c2, c3, c4, c5, c6], _ =>
+    lpcFold7 xs c0 c1 c2 c3 c4 c5 c6 inv i stop hstop acc
+  | [c0, c1, c2, c3, c4, c5, c6, c7], _ =>
+    lpcFold8 xs c0 c1 c2 c3 c4 c5 c6 c7 inv i stop hstop acc
+  | cs', hlo' => lpcFoldRange xs cs' inv i stop hstop hlo' acc
+
 /-- Evaluate one LPC candidate directly into finest-partition sums. Same
     residual arithmetic and same visiting order as `lpcResidualArr`
     followed by `partitionSearchFf`, without allocating a block-sized
@@ -296,7 +484,7 @@ private def lpcPartitionSearchFf (cs : List Float) (shift : Nat) (xs : FloatArra
     let lo := if j = 0 then ord else j * cF
     if h : stop ≤ bs then
       if hlo : cs.length ≤ lo then
-        sums := sums.push (lpcFoldRange xs cs inv lo stop h hlo ff0).toUInt64.toNat
+        sums := sums.push (lpcFoldRangeS xs cs inv lo stop h hlo ff0).toUInt64.toNat
   return partitionSearchSumsF bs ord pomax sums
 
 /-! ### The fused fixed-order pass
@@ -526,6 +714,32 @@ def choosePlan (b : Nat) (blk : Array Int) : SubPlan :=
 def sumAbsArr (xs : Array Int) : Nat :=
   xs.foldl (fun a x => a + x.natAbs) 0
 
+/-- The four sum-of-magnitude proxies the stereo decision needs — `|l|`,
+    `|r|`, `|l-r|` and `|mid|` — in one pass.
+
+    Computing them separately meant four passes over the block *and*
+    materializing the mid and side arrays before knowing whether the winning
+    mode uses either: two block-sized `Array Int` allocations per frame, at
+    least one of which was always thrown away. Together that was ~6% of
+    encode. The accumulators are tail-recursion parameters (a `let mut` Nat
+    carried across a `for` loop does not stay a tagged scalar), and each sum
+    still runs over ascending `i`, so these are the same four `Nat`s the
+    separate folds produced and `stereoPick`'s decision is unchanged. -/
+def stereoSumsGo (l r : Array Int) :
+    (i n al ar sa am : Nat) → Nat × Nat × Nat × Nat
+  | i, n, al, ar, sa, am =>
+    if h : i < n then
+      let a := l.getD i 0
+      let b := r.getD i 0
+      stereoSumsGo l r (i + 1) n (al + a.natAbs) (ar + b.natAbs)
+        (sa + (a - b).natAbs) (am + (Flac.Bits.sar (a + b) 1).natAbs)
+    else (al, ar, sa, am)
+  termination_by i n => n - i
+
+/-- `(|l|, |r|, |l-r|, |mid|)` over the common prefix of the two channels. -/
+@[inline] def stereoSums (l r : Array Int) : Nat × Nat × Nat × Nat :=
+  stereoSumsGo l r 0 (min l.size r.size) 0 0 0 0
+
 /-! ### Sanitizing the plan
 
 The searches compute their scalars in `Float`, so nothing about those
@@ -633,19 +847,20 @@ def chooseFrame (b : Nat) (chs : Array (Array Int)) : FramePrep :=
   if chs.size = 2 then
     let l := chs.getD 0 #[]
     let r := chs.getD 1 #[]
-    let sd := l.zipWith (fun a b => a - b) r
-    let md := l.zipWith (fun a b => sar (a + b) 1) r
-    let al := sumAbsArr l
-    let ar := sumAbsArr r
-    let sa := sumAbsArr sd
-    let am := sumAbsArr md
+    -- one pass for all four proxies; the decorrelated channels are built
+    -- only in the branch that codes them
+    let (al, ar, sa, am) := stereoSums l r
     if al + ar ≤ al + sa ∧ al + ar ≤ sa + ar ∧ al + ar ≤ am + sa then
       ⟨.independent, bs, [(chooseSub b l, l), (chooseSub b r, r)]⟩
     else if al + sa ≤ sa + ar ∧ al + sa ≤ am + sa then
+      let sd := l.zipWith (fun a b => a - b) r
       ⟨.leftSide, bs, [(chooseSub b l, l), (chooseSub (b + 1) sd, sd)]⟩
     else if sa + ar ≤ am + sa then
+      let sd := l.zipWith (fun a b => a - b) r
       ⟨.rightSide, bs, [(chooseSub (b + 1) sd, sd), (chooseSub b r, r)]⟩
     else
+      let sd := l.zipWith (fun a b => a - b) r
+      let md := l.zipWith (fun a b => sar (a + b) 1) r
       ⟨.midSide, bs, [(chooseSub b md, md), (chooseSub (b + 1) sd, sd)]⟩
   else
     ⟨.independent, bs, (chs.map fun c => (chooseSub b c, c)).toList⟩

@@ -69,34 +69,49 @@ therefore where Vinyl's compression-per-unit-work is decided. -/
 /-- Highest LPC order considered (= autocorrelation lags). -/
 def lpcMaxOrder : Nat := 8
 
-/-- Orders costed exactly. The Levinson estimate winner `est` is listed
-    first so it takes ties (candidates are compared with a strict `<`) —
-    which is why dropping an order from `base` costs so little: the
-    estimator still reaches it.
+/-- Orders costed exactly, beyond the Levinson estimate winner `est`.
 
-    Measured on the 37-file corpus (`flac -8` is **39.784%**), ratio and
-    encode speed on a 32 MB probe:
+    **Now just `est`** — libFLAC's own discipline: estimate the order from
+    the Levinson prediction errors, then cost exactly one candidate. Every
+    extra order means another full residual fold over the block, and the
+    folds were the largest single cost in encode.
 
-    | base | ratio | encode | gap vs `flac -8` |
+    The two corpora disagree sharply about what that costs, which is why the
+    older table below (synthetic, 37 files of 1 MB) is kept:
+
+    | base | synthetic ratio | real-audio ratio | encode |
     |---|---|---|---|
-    | `[1,2,4,6,8]` | 39.580% | 64.8 MB/s | 1.48x |
-    | `[2,4,6,8]` | 39.580% | 67.7 MB/s | 1.42x |
-    | `[1,2,4,8]` | 39.634% | 68.4 MB/s | 1.41x |
-    | **`[2,4,8]`** | **39.634%** | **71.2 MB/s** | **1.35x** |
-    | `[2,8]` | 39.773% | 76.4 MB/s | 1.26x |
-    | `[3,8]` | 39.912% | 76.7 MB/s | (loses to `flac -8`) |
-    | `[8]` | 40.072% | — | (loses) |
-    | `[]` (estimate only, libFLAC's rule) | 40.504% | — | (loses) |
-    | `[1,2,4,8,12]` at max order 12 | 39.450% | 0.94x of the top row | 1.57x |
+    | `[2,4,8]` (was chosen) | 39.634% | 38.757% | 1.00x |
+    | **`[]`, estimate only** | **40.504%** | **38.795%** | **1.28x** |
 
-    `[2,4,8]` is the chosen point: 10% faster than the five-order set for
-    0.054 percentage points, keeping a 0.15-point margin over `flac -8`.
-    `[2,8]` is faster still but its margin is 0.011 points — too thin to
-    rely on off this corpus. If ratio is what is wanted instead,
-    `[1,2,4,8,12]` at max order 12 beats `flac -8` by 0.33 points. -/
+    On synthetic signals the extra orders are worth 0.87 percentage points;
+    on 32 MB of real music they are worth **0.038** — a tenth of a percent
+    relative — for 28% of encode throughput. The synthetic corpus is tonal
+    and degenerate material by construction, which is exactly where a second
+    order pays; real audio is not. `flac -8` compresses better than either
+    setting on both corpora (see `bench/README.md`), so the extra folds were
+    not buying a margin, only narrowing a deficit.
+
+    The estimate winner is listed first so it takes ties (candidates are
+    compared with a strict `<`), which is why dropping orders costs so
+    little: the estimator still reaches them.
+
+    The full historical curve, measured on the synthetic corpus at a 32 MB
+    probe, for anyone trading back the other way:
+
+    | base | ratio | encode |
+    |---|---|---|
+    | `[1,2,4,6,8]` | 39.580% | 64.8 MB/s |
+    | `[2,4,6,8]` | 39.580% | 67.7 MB/s |
+    | `[1,2,4,8]` | 39.634% | 68.4 MB/s |
+    | `[2,4,8]` | 39.634% | 71.2 MB/s |
+    | `[2,8]` | 39.773% | 76.4 MB/s |
+    | `[3,8]` | 39.912% | 76.7 MB/s |
+    | `[8]` | 40.072% | — |
+    | `[1,2,4,8,12]` at max order 12 | 39.450% | 0.94x of the top row |
+ -/
 def lpcCandidates (est : Nat) : List Nat :=
-  let base : List Nat := [2, 4, 8]
-  if base.contains est then base else est :: base
+  [est]
 
 /-- Search partition orders 0–6 over the folded residual: per-partition
     best parameters, estimated total bit cost from partition sums.
