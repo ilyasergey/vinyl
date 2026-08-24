@@ -1655,4 +1655,42 @@ theorem pcmBytes_deinterleave {ch : Nat} (hch : 0 < ch) (bytes : ByteArray)
   rw [← Stream.pcm16FastA_eq_range, Flac.pcm16FastA_eq, hmap,
     Flac.pcm16Fast_deinterleave hch bytes hsz]
 
+/-! ## Frames line up
+
+The shipped encoder indexes frames by number; the reference walks a list of
+chunks. These lemmas identify frame `f` on both sides. -/
+
+private theorem dropAll_zero (chs : List (List Int)) :
+    Stream.dropAll 0 chs = chs := by
+  simp [Stream.dropAll]
+
+private theorem dropAll_dropAll (k m : Nat) (chs : List (List Int)) :
+    Stream.dropAll m (Stream.dropAll k chs) = Stream.dropAll (k + m) chs := by
+  simp [Stream.dropAll, List.map_map, List.drop_drop]
+
+private theorem take_min {α : Type} (l : List α) (m : Nat) :
+    l.take m = l.take (min m l.length) := by
+  rcases Nat.le_total m l.length with h | h
+  · rw [Nat.min_eq_left h]
+  · rw [Nat.min_eq_right h, List.take_of_length_le h, List.take_length]
+
+/-- Frame `f` of the reference's chunking is `take` after `drop`. -/
+theorem chunkChannels_getD (nn : Nat) : ∀ (chs : List (List Int)) (f : Nat),
+    f < (Stream.chunkChannels nn chs).length →
+    (Stream.chunkChannels nn chs).getD f []
+      = Stream.takeAll nn (Stream.dropAll (f * nn) chs) := by
+  intro chs
+  fun_induction Stream.chunkChannels nn chs with
+  | case1 chs h =>
+    intro f hf
+    simp at hf
+  | case2 chs h ih =>
+    intro f hf
+    cases f with
+    | zero => rw [List.getD_cons_zero, Nat.zero_mul, dropAll_zero]
+    | succ f =>
+      rw [List.length_cons] at hf
+      rw [List.getD_cons_succ, ih f (by omega), dropAll_dropAll,
+        show nn + f * nn = (f + 1) * nn from by rw [Nat.succ_mul]; omega]
+
 end Flac.Encode
