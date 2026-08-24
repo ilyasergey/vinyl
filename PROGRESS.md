@@ -1576,3 +1576,25 @@ decode overtakes libFLAC as threads are added; it also documents `-j`.
    lives. Part 3's "where the remaining encode gap is" is the map.
 3. **`flac -0` on real audio**, to bracket Vinyl's ratio from below.
 4. **24-bit and non-44.1/16 kHz material.**
+
+## 2026-08-24 — Session 13: main README shows one benchmark figure
+
+**Docs only; no Lean touched.** On request, `README.md`'s benchmark section no
+longer carries the thread-scaling material: the per-thread throughput table
+(both suites), `bench/threads.png`, `bench/real_threads.png`, and the
+scaling/asymmetric-core commentary are gone from the main README. In their place
+is a single figure — `bench/real_performance.png`, the real-audio per-unit
+throughput cactus — under a new "Real-audio throughput" heading, with commentary
+on what the curves actually show: the gap is a flat multiplicative factor across
+143 units of very different material (×3.4 encode at eight threads, ×4.7 at
+one), decode at eight threads is the one place Vinyl leads on wall clock (×1.15
+median, 217 vs 190 MB/s corpus totals), and the per-core distance is the same
+~4× in both directions.
+
+Kept deliberately: the thread-matched ratio table and the compression table at
+the top of the section, since dropping either would reintroduce one of the two
+accounting errors retracted in Session 11 (payload-only sizes, matched threads).
+The removed figures and tables still live in `bench/README.md`, which the
+section's closing pointer now names explicitly.
+
+**Not blocked; no proof debt.** Next steps unchanged from Session 12.
