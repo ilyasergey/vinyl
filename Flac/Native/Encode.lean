@@ -620,46 +620,103 @@ def pushRiceRange (k mask : Nat) (res : Array Int) :
     else ⟨buf, acc, n⟩
   termination_by i stop => stop - i
 
-/-- The partitions of a coded residual, one at a time — the shape of
-    `Emit.W.pushParts` restricted to method RICE, which is all the default
-    heuristics emit. -/
-def pushPartsR (res : Array Int) (ks : Array Nat) (c ord : Nat) :
-    (j rem start : Nat) → BitWriter → BitWriter
-  | _, 0, _, bw => bw
-  | j, rem + 1, start, bw =>
-    let len := if j = 0 then c - ord else c
-    let k := ks.getD j 10
-    let w := bw.push 4 k
-    pushPartsR res ks c ord (j + 1) rem (start + len)
-      (pushRiceRange k (p2 k - 1) res start (start + len) w.buf w.acc w.n)
+/-- The per-partition Rice parameters as the reference's choice list. The
+    fast plan carries `ks : Array Nat`; `Rice.Partition` is what
+    `Emit.W.pushParts` consumes. -/
+def riceChoices (po : Nat) (ks : Array Nat) : List Rice.Partition :=
+  (List.range (p2 po)).map fun j => .rice (ks.getD j 10)
+
+/-- The partitions of a coded residual, one `(choice, size)` pair at a time
+    — the shape of `Emit.W.pushParts`. -/
+def pushPartsR (m : Rice.Method) (res : Array Int) :
+    (choices : List Rice.Partition) → (sizes : List Nat) → (start : Nat) →
+      BitWriter → BitWriter
+  | [], _, _, bw => bw
+  | _ :: _, [], _, bw => bw
+  | ch :: choices, sz :: sizes, start, bw =>
+    let bw' := match ch with
+      | .rice k =>
+        let w := bw.push m.paramBits k
+        pushRiceRange k (p2 k - 1) res start (start + sz) w.buf w.acc w.n
+      | .escape bits =>
+        BitWriter.pushSIntSeg bits res start sz
+          ((bw.push m.paramBits m.escapeCode).push 5 bits)
+    pushPartsR m res choices sizes (start + sz) bw'
+
+/-- The reference residual configuration a fast plan's `(po, ks)` denotes —
+    the residual half of the plan correspondence. -/
+def riceCfgOf (po : Nat) (ks : Array Nat) : Rice.ResidualCfg :=
+  ⟨.rice4, po, riceChoices po ks⟩
+
+/-- The reference subframe configuration a fast plan denotes — the plan
+    correspondence at the subframe level. `SubPlan.typeCode` and
+    `Subframe.SubframeCfg.typeCode` agree by construction. -/
+def subCfgOf : SubPlan → Subframe.SubframeCfg
+  | .constant => .constant
+  | .verbatim => .verbatim
+  | .fixed ord po ks => .fixed ord (riceCfgOf po ks)
+  | .lpc cs shift po ks => .lpc cs shift 12 (riceCfgOf po ks)
+
+/-- A `SubPrep`'s cached block is the wasted-bit-scaled image of the block
+    it was chosen from. The chooser establishes this; emission consumes
+    it. -/
+def SubPrep.Denotes (p : SubPrep) (xs : Array Int) : Prop :=
+  p.scaled = (if p.wasted = 0 then xs else xs.map (Flac.Bits.shiftDown p.wasted))
+
+/-- The reference subframe plan a list of decisions denotes, paired with the
+    unscaled blocks they were chosen from (mirrors `Emit.planA`'s output). -/
+def planOf : List (SubPrep × Array Int) →
+    List ((Nat × Subframe.SubCfg) × Array Int)
+  | [] => []
+  | (p, xs) :: rest => ((p.depth, ⟨p.wasted, subCfgOf p.plan⟩), xs) :: planOf rest
+
+/-- What *emission* needs of a plan, over and above the round-trip
+    certificate `Subframe.SubCfg.Valid`: Rice parameters that fit the
+    writer's field, and partitions that cover no more than the residual
+    they code. Decidable, so the encoder can check it per call. -/
+def SubPlan.EmitOk (p : SubPlan) (xs : Array Int) : Prop :=
+  match p with
+  | .constant => True
+  | .verbatim => True
+  | .fixed ord po ks =>
+    (∀ j, ks.getD j 10 ≤ 32) ∧
+      (Rice.partSizes xs.size po ord).sum ≤ (Emit.fixedResA ord xs).size
+  | .lpc cs shift po ks =>
+    (∀ j, ks.getD j 10 ≤ 32) ∧
+      (Rice.partSizes xs.size po cs.length).sum ≤ (Emit.lpcResA cs shift xs).size
 
 /-- Partitioned coded residual (method RICE, the only one the default
     heuristics emit). -/
 def pushResidual (bw : BitWriter) (bs ord po : Nat) (ks : Array Nat)
     (res : Array Int) : BitWriter :=
-  pushPartsR res ks (bs / p2 po) ord 0 (p2 po) 0 ((bw.push 2 0).push 4 po)
+  pushPartsR .rice4 res (riceChoices po ks) (Rice.partSizes bs po ord) 0
+    ((bw.push 2 0).push 4 po)
 
-/-- One subframe, from its decision: the exact layout of
-    `Subframe.write`, in the shape of `Emit.W.pushContent`. Emission only —
-    `p` already holds the search result. -/
-def pushSubframeOf (bw : BitWriter) (p : SubPrep) : BitWriter :=
-  let b' := p.depth - p.wasted
-  let xs := p.scaled
-  let w0 := (bw.push 1 0).push 6 p.plan.typeCode
-  let w := if p.wasted = 0 then w0.push 1 0
-           else (w0.push 1 1).pushUnary (p.wasted - 1)
-  match p.plan with
-  | .constant => w.pushSInt b' (xs.getD 0 0)
-  | .verbatim => BitWriter.pushSIntSeg b' xs 0 xs.size w
+/-- Subframe content (the shape of `Emit.W.pushContent`). -/
+def pushContentOf (bw : BitWriter) (b : Nat) (pl : SubPlan) (xs : Array Int) :
+    BitWriter :=
+  match pl with
+  | .constant => bw.pushSInt b (xs.getD 0 0)
+  | .verbatim => BitWriter.pushSIntSeg b xs 0 xs.size bw
   | .fixed ord po ks =>
-    pushResidual (BitWriter.pushSIntSeg b' xs 0 ord w) xs.size ord po ks
+    pushResidual (BitWriter.pushSIntSeg b xs 0 ord bw) xs.size ord po ks
       (Emit.fixedResA ord xs)
   | .lpc cs shift po ks =>
     pushResidual
       (BitWriter.pushSIntList 12 cs
-        (((BitWriter.pushSIntSeg b' xs 0 cs.length w).push 4 (12 - 1)).pushSInt 5
+        (((BitWriter.pushSIntSeg b xs 0 cs.length bw).push 4 (12 - 1)).pushSInt 5
           (shift : Int)))
       xs.size cs.length po ks (Emit.lpcResA cs shift xs)
+
+/-- One subframe, from its decision: the exact layout of `Subframe.write`,
+    in the shape of `Emit.W.pushSubframe`. Emission only — `p` already holds
+    the search result, `p.scaled` the wasted-bit-scaled block. -/
+def pushSubframeOf (bw : BitWriter) (p : SubPrep) : BitWriter :=
+  pushContentOf
+    (if p.wasted = 0 then ((bw.push 1 0).push 6 p.plan.typeCode).push 1 0
+     else (((bw.push 1 0).push 6 p.plan.typeCode).push 1 1).pushUnary
+       (p.wasted - 1))
+    (p.depth - p.wasted) p.plan p.scaled
 
 /-- The subframes of a frame, one at a time (the shape of
     `Emit.W.pushPlan`). -/

@@ -381,4 +381,191 @@ theorem sim_pushRiceRange {k : Nat} (hk : k ≤ 32) (res : Array Int) :
       exact ih (start + 1) (by omega) _ _
         (sim_push hk _ _ (sim_pushUnary _ _ _ h))
 
+/-! ## Partitions and residuals -/
+
+private theorem paramBits_le (m : Rice.Method) : m.paramBits ≤ 32 := by
+  cases m <;> decide
+
+theorem sim_pushPartsR (m : Rice.Method) (res : Array Int) :
+    ∀ (choices : List Rice.Partition) (sizes : List Nat) (start : Nat),
+      (∀ k, Rice.Partition.rice k ∈ choices → k ≤ 32) →
+      start + sizes.sum ≤ res.size →
+      Simulates (pushPartsR m res choices sizes start)
+        (Emit.W.pushParts m res choices sizes start) := by
+  intro choices
+  induction choices with
+  | nil => intro sizes start _ _ bw w h; exact h
+  | cons ch chs ih =>
+    intro sizes start hk hb bw w h
+    cases sizes with
+    | nil => exact h
+    | cons sz szs =>
+      have hsum : (sz :: szs).sum = sz + szs.sum := by
+        simp only [List.sum_cons]
+      have hbnd : start + sz ≤ res.size := by omega
+      have hb' : start + sz + szs.sum ≤ res.size := by omega
+      have hk' : ∀ k, Rice.Partition.rice k ∈ chs → k ≤ 32 :=
+        fun k hm => hk k (List.mem_cons_of_mem _ hm)
+      simp only [pushPartsR, Emit.W.pushParts]
+      cases ch with
+      | rice k =>
+        exact ih szs (start + sz) hk' hb' _ _
+          (sim_pushRiceRange (hk k (List.mem_cons_self ..)) res sz start hbnd _ _
+            (sim_push (paramBits_le m) bw w h))
+      | escape bits =>
+        exact ih szs (start + sz) hk' hb' _ _
+          (sim_pushSIntSeg bits res start sz _ _
+            (sim_push (by omega) _ _ (sim_push (paramBits_le m) bw w h)))
+
+theorem sim_pushResidual (bs ord po : Nat) (ks : Array Nat) (res : Array Int)
+    (hks : ∀ j, ks.getD j 10 ≤ 32)
+    (hb : (Rice.partSizes bs po ord).sum ≤ res.size) :
+    Simulates (fun bw => pushResidual bw bs ord po ks res)
+      (Emit.W.pushResidual bs ord (riceCfgOf po ks) res) := by
+  intro bw w h
+  have hk : ∀ k, Rice.Partition.rice k ∈ riceChoices po ks → k ≤ 32 := by
+    intro k hm
+    unfold riceChoices at hm
+    obtain ⟨j, _, hj⟩ := List.mem_map.1 hm
+    cases hj
+    exact hks j
+  exact sim_pushPartsR .rice4 res (riceChoices po ks) (Rice.partSizes bs po ord) 0
+    hk (by omega) _ _ (sim_push (by omega) _ _ (sim_push (by omega) bw w h))
+
+/-! ## Subframes -/
+
+/-- Subframe content: the fast plan's emission simulates
+    `Emit.W.pushContent` at the plan's reference configuration. -/
+theorem sim_pushContent (b : Nat) (pl : SubPlan) (xs : Array Int)
+    (hok : pl.EmitOk xs) :
+    Simulates (fun bw => pushContentOf bw b pl xs)
+      (Emit.W.pushContent b (subCfgOf pl) xs) := by
+  intro bw w h
+  cases pl with
+  | constant => exact sim_pushSInt b _ _ _ h
+  | verbatim => exact sim_pushSIntSeg b xs 0 xs.size _ _ h
+  | fixed ord po ks =>
+    obtain ⟨hks, hb⟩ := hok
+    exact sim_pushResidual xs.size ord po ks _ hks hb _ _
+      (sim_pushSIntSeg b xs 0 ord _ _ h)
+  | lpc cs shift po ks =>
+    obtain ⟨hks, hb⟩ := hok
+    exact sim_pushResidual xs.size cs.length po ks _ hks hb _ _
+      (sim_pushSIntList 12 cs _ _
+        (sim_pushSInt 5 _ _ _ (sim_push (by omega) _ _
+          (sim_pushSIntSeg b xs 0 cs.length _ _ h))))
+
+/-- One subframe, header bits included. Stated against `Emit.W.pushContent`
+    so the wasted-bit *scaling* correspondence (`p.scaled` is the scaled
+    block) stays with the chooser, where it belongs. -/
+theorem sim_pushSubframeOf (p : SubPrep) (hok : p.plan.EmitOk p.scaled) :
+    Simulates (fun bw => pushSubframeOf bw p)
+      (fun w => Emit.W.pushContent (p.depth - p.wasted) (subCfgOf p.plan) p.scaled
+        (if p.wasted = 0 then ((w.push 1 0).push 6 p.plan.typeCode).push 1 0
+         else (((w.push 1 0).push 6 p.plan.typeCode).push 1 1).pushUnary
+           (p.wasted - 1))) := by
+  intro bw w h
+  have hhdr : Sim
+      (if p.wasted = 0 then ((bw.push 1 0).push 6 p.plan.typeCode).push 1 0
+       else (((bw.push 1 0).push 6 p.plan.typeCode).push 1 1).pushUnary (p.wasted - 1))
+      (if p.wasted = 0 then ((w.push 1 0).push 6 p.plan.typeCode).push 1 0
+       else (((w.push 1 0).push 6 p.plan.typeCode).push 1 1).pushUnary
+         (p.wasted - 1)) := by
+    by_cases hw : p.wasted = 0
+    · rw [if_pos hw, if_pos hw]
+      exact sim_push (by omega) _ _ (sim_push (by omega) _ _
+        (sim_push (by omega) bw w h))
+    · rw [if_neg hw, if_neg hw]
+      exact sim_pushUnary _ _ _ (sim_push (by omega) _ _
+        (sim_push (by omega) _ _ (sim_push (by omega) bw w h)))
+  exact sim_pushContent _ p.plan p.scaled hok _ _ hhdr
+
+/-! ## Frames -/
+
+private theorem typeCode_subCfgOf (pl : SubPlan) :
+    (subCfgOf pl).typeCode = pl.typeCode := by
+  cases pl <;> rfl
+
+/-- One subframe against the reference writer, with the wasted-bit scaling
+    supplied by the chooser (`SubPrep.Denotes`). -/
+theorem sim_pushSubframe (p : SubPrep) (xs : Array Int) (hd : p.Denotes xs)
+    (hok : p.plan.EmitOk p.scaled) :
+    Simulates (fun bw => pushSubframeOf bw p)
+      (Emit.W.pushSubframe p.depth ⟨p.wasted, subCfgOf p.plan⟩ xs) := by
+  intro bw w h
+  have he : Emit.W.pushSubframe p.depth ⟨p.wasted, subCfgOf p.plan⟩ xs w
+      = Emit.W.pushContent (p.depth - p.wasted) (subCfgOf p.plan) p.scaled
+        (if p.wasted = 0 then ((w.push 1 0).push 6 p.plan.typeCode).push 1 0
+         else (((w.push 1 0).push 6 p.plan.typeCode).push 1 1).pushUnary
+           (p.wasted - 1)) := by
+    simp only [Emit.W.pushSubframe, typeCode_subCfgOf]
+    rw [← hd]
+  rw [he]
+  exact sim_pushSubframeOf p hok bw w h
+
+theorem sim_pushPlanOf : ∀ qs : List (SubPrep × Array Int),
+    (∀ q ∈ qs, q.1.Denotes q.2 ∧ q.1.plan.EmitOk q.1.scaled) →
+    Simulates (pushPlanOf (qs.map Prod.fst)) (Emit.W.pushPlan (planOf qs)) := by
+  intro qs
+  induction qs with
+  | nil => intro _ bw w h; exact h
+  | cons q qs ih =>
+    intro hq bw w h
+    obtain ⟨hd, hok⟩ := hq q (List.mem_cons_self ..)
+    have hq' : ∀ r ∈ qs, r.1.Denotes r.2 ∧ r.1.plan.EmitOk r.1.scaled :=
+      fun r hm => hq r (List.mem_cons_of_mem _ hm)
+    simp only [List.map_cons, pushPlanOf, planOf]
+    exact ih hq' _ _ (sim_pushSubframe q.1 q.2 hd hok bw w h)
+
+/-- A value read off the writer's own buffer — a CRC over the bytes emitted
+    so far — is the same value on both sides, because the buffers are. -/
+private theorem sim_push_buf {bw : BitWriter} {w : Emit.W} (h : Sim bw w)
+    {k : Nat} (hk : k ≤ 32) (f : ByteArray → Nat) :
+    Sim (bw.push k (f bw.buf)) (w.push k (f w.buf)) := by
+  rw [h.1]
+  exact sim_push hk bw w h
+
+/-- One frame. The CRCs are computed over each writer's own buffer, and the
+    simulation is exactly what makes those buffers equal. -/
+theorem sim_pushFrameOf (b : Nat) (strat : Bool) (num : Nat) (fp : FramePrep)
+    (asg : Frame.ChannelAsg) (chs : List (Array Int))
+    (qs : List (SubPrep × Array Int))
+    (hsubs : fp.subs = qs.map Prod.fst)
+    (hplan : planOf qs = Emit.W.planA b asg chs)
+    (hbs : fp.blockSize = (chs.headD #[]).size)
+    (hcode : fp.chCode = asg.code chs.length)
+    (hq : ∀ q ∈ qs, q.1.Denotes q.2 ∧ q.1.plan.EmitOk q.1.scaled) :
+    Simulates (fun bw => pushFrameOf bw b strat num fp)
+      (Emit.W.pushFrame b strat num asg chs) := by
+  intro bw w h
+  have hstart : bw.buf.size = w.buf.size := by rw [h.1]
+  -- the header, up to but not including the CRC-8
+  have h1 : Sim
+      ((((((((((bw.push 14 0x3FFE).push 1 0).push 1
+        (if strat then 1 else 0)).push 4 7).push 4 0).push 4 fp.chCode).push 3
+        (Frame.bpsCode b)).push 1 0).pushUtf8 num).push 16 (fp.blockSize - 1))
+      (Emit.W.pushHeaderCore b strat num (chs.headD #[]).size
+        (asg.code chs.length) w) := by
+    rw [hcode, hbs]
+    simp only [Emit.W.pushHeaderCore]
+    have s1 := sim_push (k := 14) (v := 0x3FFE) (by omega) bw w h
+    have s2 := sim_push (k := 1) (v := 0) (by omega) _ _ s1
+    have s3 := sim_push (k := 1) (v := if strat then 1 else 0) (by omega) _ _ s2
+    have s4 := sim_push (k := 4) (v := 7) (by omega) _ _ s3
+    have s5 := sim_push (k := 4) (v := 0) (by omega) _ _ s4
+    have s6 := sim_push (k := 4) (v := asg.code chs.length) (by omega) _ _ s5
+    have s7 := sim_push (k := 3) (v := Frame.bpsCode b) (by omega) _ _ s6
+    have s8 := sim_push (k := 1) (v := 0) (by omega) _ _ s7
+    have s9 := sim_pushUtf8 num _ _ s8
+    exact sim_push (k := 16) (v := (chs.headD #[]).size - 1) (by omega) _ _ s9
+  simp only [pushFrameOf, Emit.W.pushFrame, hsubs, hstart]
+  refine sim_push_buf ?_ (by omega)
+    (fun buf => (Crc.crc16Range buf w.buf.size buf.size).toNat)
+  refine sim_align _ _ ?_
+  rw [← hplan]
+  refine sim_pushPlanOf qs hq _ _ ?_
+  refine sim_push_buf ?_ (by omega)
+    (fun buf => (Crc.crc8Range buf w.buf.size buf.size).toNat)
+  exact h1
+
 end Flac.Encode
