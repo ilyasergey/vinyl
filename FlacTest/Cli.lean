@@ -376,10 +376,11 @@ def deinterleave (ch : Nat) (xs : List Int) : List (List Int) :=
 
 def usage : String :=
   "vinyl - a formally verified FLAC codec (see README.md)\n\n" ++
-  "  vinyl --encode <in.pcm> <out.flac> <blockSize> <channels>\n" ++
+  "  vinyl --encode <in.pcm> <out.flac> <blockSize> <channels> [<sampleRate>]\n" ++
   "      encode raw interleaved signed 16-bit little-endian PCM\n" ++
   "      (fast encoder; proven to compute the reference encoder)\n" ++
-  "  vinyl --encode-slow <in.pcm> <out.flac> <blockSize> <channels>\n" ++
+  "      <sampleRate> only sets STREAMINFO and defaults to 44100\n" ++
+  "  vinyl --encode-slow <in.pcm> <out.flac> <blockSize> <channels> [<sampleRate>]\n" ++
   "      encode with the fully verified encoder (the fast path's fallback)\n" ++
   "  vinyl --decode <in.flac> <out.pcm>\n" ++
   "      decode with the verified reference decoder (raw 16-bit LE out)\n" ++
@@ -392,23 +393,46 @@ def usage : String :=
   "  vinyl (no arguments)\n" ++
   "      run the unit-test suite"
 
+/-- The fast encoder as a CLI action.  `sampleRate` reaches STREAMINFO only:
+    `Flac.Stream.decodePcm16_encodePcm16Fast` holds at every rate the encoder
+    accepts, so a 16 kHz corpus is encoded with honest metadata. -/
+def encodeFastMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
+    IO UInt32 := do
+  let bytes ← IO.FS.readBinFile inFile
+  -- the fast byte-level encoder, proven: whenever it returns
+  -- bytes, `Flac.decodePcm16_encodePcm16Fast` guarantees decoding
+  -- returns the input bytes exactly — no hypotheses
+  match Flac.encodePcm16Fast blockSize ch sampleRate bytes with
+  | some flacBytes =>
+    IO.FS.writeBinFile outFile flacBytes
+    IO.println s!"encoded {bytes.size / (2 * ch)} samples x {ch} channels @ {sampleRate} Hz (round-trip guaranteed by Flac.Stream.decodePcm16_encodePcm16Fast)"
+    return 0
+  | none =>
+    IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, or channels/blockSize/sampleRate out of range)"
+    return 1
+
+/-- The fully verified encoder as a CLI action; kept for differential testing. -/
+def encodeSlowMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
+    IO UInt32 := do
+  let bytes ← IO.FS.readBinFile inFile
+  match Flac.encodePcm16Cfg ⟨blockSize, false, Heuristics.defaultAsgChooser 16⟩
+      ch sampleRate bytes with
+  | some flacBytes =>
+    IO.FS.writeBinFile outFile flacBytes
+    IO.println s!"encoded {bytes.size / (2 * ch)} samples x {ch} channels @ {sampleRate} Hz (checked: round-trip guaranteed by Flac.decodePcm16_encodePcm16Cfg)"
+    return 0
+  | none =>
+    IO.println "ENCODE ERROR: input not FLAC-representable"
+    return 1
+
 def cliMain (args : List String) : IO UInt32 := do
   if args = ["--help"] ∨ args = ["-h"] then
     IO.println usage
     return 0
   if let ["--encode", inFile, outFile, bs, ch] := args then
-    let bytes ← IO.FS.readBinFile inFile
-    -- the fast byte-level encoder, proven: whenever it returns
-    -- bytes, `Flac.decodePcm16_encodePcm16Fast` guarantees decoding
-    -- returns the input bytes exactly — no hypotheses
-    match Flac.encodePcm16Fast bs.toNat! ch.toNat! 44100 bytes with
-    | some flacBytes =>
-      IO.FS.writeBinFile outFile flacBytes
-      IO.println s!"encoded {bytes.size / (2 * ch.toNat!)} samples x {ch} channels (round-trip guaranteed by Flac.Stream.decodePcm16_encodePcm16Fast)"
-      return 0
-    | none =>
-      IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, or channels/blockSize out of range)"
-      return 1
+    return ← encodeFastMain inFile outFile bs.toNat! ch.toNat! 44100
+  if let ["--encode", inFile, outFile, bs, ch, rate] := args then
+    return ← encodeFastMain inFile outFile bs.toNat! ch.toNat! rate.toNat!
   if let ["--decode-pcm16", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
     -- `Flac.decodePcm16A_eq`: same bytes as `Flac.decodePcm16`, no list round-trip
@@ -419,18 +443,9 @@ def cliMain (args : List String) : IO UInt32 := do
       IO.println "decoded (byte-level pipeline)"
       return 0
   if let ["--encode-slow", inFile, outFile, bs, ch] := args then
-    let bytes ← IO.FS.readBinFile inFile
-    -- the fully verified encoder (the fast path's fallback), kept for
-    -- differential testing
-    match Flac.encodePcm16Cfg ⟨bs.toNat!, false, Heuristics.defaultAsgChooser 16⟩
-        ch.toNat! 44100 bytes with
-    | some flacBytes =>
-      IO.FS.writeBinFile outFile flacBytes
-      IO.println s!"encoded {bytes.size / (2 * ch.toNat!)} samples x {ch} channels (checked: round-trip guaranteed by Flac.decodePcm16_encodePcm16Cfg)"
-      return 0
-    | none =>
-      IO.println "ENCODE ERROR: input not FLAC-representable"
-      return 1
+    return ← encodeSlowMain inFile outFile bs.toNat! ch.toNat! 44100
+  if let ["--encode-slow", inFile, outFile, bs, ch, rate] := args then
+    return ← encodeSlowMain inFile outFile bs.toNat! ch.toNat! rate.toNat!
   if let ["--decode-fast", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
     -- the fused path: each frame is serialized by the worker that decoded
