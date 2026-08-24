@@ -114,12 +114,12 @@ def throughput_panel(ax, styles, kind, gap_pair, gap_note=""):
         hi_med = statistics.median(speed[hi])
         for med, enc in ((lo_med, lo), (hi_med, hi)):
             ax.axhline(med, color=styles[enc]["color"], ls="--", lw=1, alpha=0.6)
-        # Curves are sorted slowest → fastest, so they rise left to right:
-        # the upper left and lower right are the empty corners. Put the
-        # arrow where the Vinyl curve has already climbed above its own
-        # median, and the caption *below* Vinyl's median line, so the label
-        # never sits on top of a curve.
-        x = n * 0.62
+        # Curves are sorted slowest → fastest, so they rise left to right
+        # and the lower right is the empty corner: near the right end every
+        # curve has climbed well above both median lines, leaving the space
+        # under them clear. Put the arrow there, between the two dashed
+        # medians, and the caption below Vinyl's median line beneath it.
+        x = n * 0.86
         ax.annotate("", xy=(x, hi_med), xytext=(x, lo_med),
                     arrowprops=dict(arrowstyle="<->", color="#111827", lw=1.1))
         ax.text(x, lo_med * 0.90,
