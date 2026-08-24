@@ -78,11 +78,17 @@ separately by differential testing against libFLAC (below).
 Milestones M0–M5 are complete and M6 (performance under the theorem
 ratchet) has largely landed: every decoder fast path is proven equal to
 its bit-level specification, *including* frame-parallel decoding
-([`readFramesFast_eq`](Flac/Spec/Decode.lean#L2119)) and parallel PCM
-serialization ([`pcm16FastPar_eq`](Flac/Spec/Decode.lean#L2638)), and the
-frame-parallel encoder is certified per call by the verified decoder — the
-remaining step is a statically verified fast emitter to retire that
-runtime certificate. M7 (two-sided
+([`readFramesFast_eq`](Flac/Spec/Decode.lean#L2119)), parallel PCM
+serialization ([`pcm16FastPar_eq`](Flac/Spec/Decode.lean#L2638)), and
+frame-parallel *serialization* — where each frame worker emits its own
+frame's bytes and
+[`decodeBytes_spec`](Flac/Spec/PcmBytes.lean#L702) proves the result is
+exactly the interleaved PCM of the decoded samples. That last one
+*narrowed* the trusted surface: the window concatenation the previous
+serializer performed was asserted in prose and unprovable, because it
+reasons through `Task`. The frame-parallel encoder is still certified per
+call by the verified decoder — the remaining step is a statically verified
+fast emitter to retire that runtime certificate. M7 (two-sided
 verification against RFC 9639) is a stretch goal. See [`PLAN.md`](PLAN.md) §8 for the milestone-by-milestone
 roadmap and [`PROGRESS.md`](PROGRESS.md) for the session log. In short:
 bit-level I/O, CRCs, MD5, Rice coding, all subframe types (CONSTANT /
