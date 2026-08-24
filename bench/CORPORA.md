@@ -150,3 +150,14 @@ python3 bench/real_fetch.py --corpus librispeech --offline
 `--trust-existing-ebu` is intentionally required once for an EBU archive that
 predates its generated provenance sidecar.  It should be used only after the
 human has independently established where that existing file came from.
+
+## Clearing it and starting over
+
+There is no `--force`: every stage reuses what it finds, so a refetch means
+deleting the stage you want rebuilt.  `rm -rf bench/real_data` then re-running
+the fetch commands above rebuilds everything from the publishers (811.5 MiB of
+downloads, 4.6 GB prepared).  For a partial reset — which directory maps to
+which stage, and the three reuse rules that decide whether a partial delete does
+what you want — see
+[Clearing and re-fetching](README.md#clearing-and-re-fetching) in the benchmark
+README.

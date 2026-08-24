@@ -353,6 +353,42 @@ unit count for a smoke run. Audio, prepared PCM, streams and encoder output all
 live under ignored directories; nothing in this section is committed except the
 scripts, the figures, `real_results.csv` and `real_summary.md`.
 
+#### Clearing and re-fetching
+
+`real_fetch.py` has no `--force`; every stage reuses what it finds, so a refetch
+is a matter of deleting the right directory under `bench/real_data/`. What each
+stage reuses:
+
+| delete | effect | cost to rebuild |
+|---|---|---|
+| `downloads/` | re-downloads the publisher archives | 811.5 MiB over the network |
+| `source/` | re-extracts the FLAC files from the archives | extraction only, 867 MB |
+| `pcm/` **and** `manifest.csv` | re-decodes every source file to S16LE | `flac -d` over 5,629 files, 1.7 GB |
+| `streams/` **and** `units.csv` | rebuilds the 143 benchmark units | concatenation only, 1.2 GB |
+| the whole `bench/real_data/` tree | starts over from nothing | all of the above, 4.6 GB |
+
+`rm -rf bench/real_data` then re-running the two fetch commands and
+`./bench/real_run.sh` reproduces the corpus from the publishers. Three details
+decide whether a partial delete does what you want:
+
+- **An archive already in `downloads/` is never re-downloaded** — it is verified
+  and reused. Corruption is caught rather than tolerated (LibriSpeech against
+  the publisher's MD5, SQAM against the SHA-256 sidecar the first fetch wrote),
+  but the script *fails* on the mismatch instead of refetching: the error says
+  to remove the file, and removing it is what triggers the download.
+- **PCM is reused only when it still matches** its manifest row: source SHA-256,
+  byte count, and STREAMINFO MD5 all have to agree, so deleting `manifest.csv`
+  alone forces a full re-decode even with `pcm/` intact.
+- **Units are reused on size alone.** `real_units.py` keeps an existing stream
+  whose length is what it expects, so if you change how units are cut, delete
+  `streams/` and `units.csv` — nothing else will notice.
+
+Encoder output and decoded PCM land in `bench/real_out/` instead, which is
+separate and safe to delete at any time — a run rewrites each unit's files as it
+reaches that unit, and keeps them afterwards, so the directory grows to ~7 GB
+and stays there. Budget ~12 GB for a full local suite, or delete `real_out/`
+after each run.
+
 ### How the real suite is measured
 
 Timing is the same instrument as Part 1: one persistent Python parent holding a
