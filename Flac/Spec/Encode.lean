@@ -805,4 +805,161 @@ theorem frameChannels_eq (bytes : ByteArray) (hev : bytes.size % 2 = 0) {ch : Na
   simp only [Stream.takeAll, Stream.dropAll, List.map_map]
   rfl
 
+/-! ## The sanitised plan is valid
+
+Every bound `Subframe.SubCfg.Valid` asks of the search's output is scalar, so
+`SubPlan.sanitize`'s O(1) clamps establish all of them — nothing here reasons
+about a `Float`. -/
+
+private theorem fitsSInt_zero (n : Nat) : Flac.Bits.FitsSInt n 0 := by
+  have h : (0 : Int) < ((2 ^ n : Nat) : Int) := Int.natCast_pos.2 (Nat.two_pow_pos n)
+  unfold Flac.Bits.FitsSInt
+  omega
+
+theorem safePo_le (bs ord po : Nat) : safePo bs ord po ≤ 6 := by
+  unfold safePo; split <;> omega
+
+theorem safePo_dvd {bs ord po : Nat} (h : ord < bs) :
+    2 ^ safePo bs ord po ∣ bs := by
+  unfold safePo
+  split
+  · rename_i hg
+    exact (Nat.dvd_iff_mod_eq_zero ..).2 (by rw [← p2_eq]; exact hg.1)
+  · simpa using Nat.one_dvd bs
+
+theorem safePo_ord {bs ord po : Nat} (h : ord < bs) :
+    ord < bs / 2 ^ safePo bs ord po := by
+  unfold safePo
+  split
+  · rename_i hg
+    rw [← p2_eq]; exact hg.2.1
+  · simpa using h
+
+/-- A clamped Rice choice list is a valid residual configuration whenever the
+    partition arithmetic works out — the `k < 15` half is the clamp in
+    `riceChoices`. -/
+theorem riceCfgOf_valid {bs ord po : Nat} (ks : Array Nat) {res : List Int}
+    (hpo : po < 16) (hdvd : 2 ^ po ∣ bs) (hord : ord < bs / 2 ^ po)
+    (hlen : res.length = bs - ord) :
+    (riceCfgOf po ks).Valid bs ord res := by
+  refine ⟨hpo, hdvd, hord, hlen, ?_, ?_⟩
+  · show (riceChoices po ks).length = 2 ^ po
+    unfold riceChoices
+    rw [List.length_map, List.length_range, p2_eq]
+  · intro p hp
+    have h1 : p.1 ∈ riceChoices po ks := (List.of_mem_zip hp).1
+    unfold riceChoices at h1
+    obtain ⟨j, _, hj⟩ := List.mem_map.1 h1
+    rw [← hj]
+    show min (ks.getD j 10) 14 < 15
+    omega
+
+/-- The sanitised plan's reference configuration is valid on the block it was
+    chosen for. `hc` is discharged by `choosePlanF`'s own constant-block
+    guard; `hfit` comes from the input's bit depth. -/
+theorem subCfgOf_sanitize_valid {b : Nat} (pl : SubPlan) {xs : List Int}
+    (hfit : ∀ x ∈ xs, Flac.Bits.FitsSInt b x)
+    (hc : pl = .constant → ∀ x ∈ xs, x = xs.headD 0) :
+    (subCfgOf (pl.sanitize xs.length)).Valid b xs := by
+  have hhead : Flac.Bits.FitsSInt b (xs.headD 0) := by
+    match xs with
+    | [] => exact fitsSInt_zero b
+    | y :: t => exact hfit y (List.mem_cons_self ..)
+  cases pl with
+  | constant => exact ⟨hc rfl, hhead⟩
+  | verbatim => exact hfit
+  | fixed ord po ks =>
+    show (subCfgOf (if min ord 4 < xs.length then _ else _)).Valid b xs
+    split
+    · rename_i hlt
+      refine ⟨Nat.min_le_right .., fun x hx => hfit x (List.mem_of_mem_take hx), ?_⟩
+      exact riceCfgOf_valid ks
+        (by have := safePo_le xs.length (min ord 4) po; omega)
+        (safePo_dvd hlt) (safePo_ord hlt)
+        (by rw [Flac.Fixed.residual, Flac.Fixed.length_diffN])
+    · exact hfit
+  | lpc cs shift po ks =>
+    show (subCfgOf (if 0 < ((cs.take 32).map clamp12).length ∧
+      ((cs.take 32).map clamp12).length < xs.length then _ else _)).Valid b xs
+    split
+    · rename_i hg
+      refine ⟨hg.1, ?_, ?_, ?_, ?_, ?_, Nat.min_le_right .., ?_⟩
+      · rw [List.length_map, List.length_take]; omega
+      · exact fun x hx => hfit x (List.mem_of_mem_take hx)
+      · omega
+      · omega
+      · intro c hcm
+        obtain ⟨d, _, hd⟩ := List.mem_map.1 hcm
+        rw [← hd]
+        unfold clamp12
+        split
+        · rename_i hf; exact hf
+        · exact fitsSInt_zero 12
+      · exact riceCfgOf_valid ks
+          (by have := safePo_le xs.length ((cs.take 32).map clamp12).length po
+              omega)
+          (safePo_dvd hg.2) (safePo_ord hg.2)
+          (by rw [Flac.Lpc.length_residual])
+    · exact hfit
+
+/-! ## Emission's own precondition is derivable too
+
+`SubPlan.EmitOk` asks that the partitions cover no more than the residual
+they code. Under the partition arithmetic `SubPlan.sanitize` already
+guarantees, they cover it exactly, so nothing extra is checked at run time. -/
+
+private theorem sum_replicate (n c : Nat) : (List.replicate n c).sum = n * c := by
+  induction n with
+  | zero => simp
+  | succ n ih =>
+    rw [List.replicate_succ, List.sum_cons, ih, Nat.succ_mul]
+    omega
+
+/-- The partitions of a legal configuration cover the residual exactly. -/
+theorem partSizes_sum {bs po ord : Nat} (hdvd : 2 ^ po ∣ bs)
+    (hord : ord < bs / 2 ^ po) : (Rice.partSizes bs po ord).sum = bs - ord := by
+  obtain ⟨c, hc⟩ := hdvd
+  have hpos : 0 < 2 ^ po := Nat.two_pow_pos po
+  have hdiv : bs / 2 ^ po = c := by rw [hc, Nat.mul_div_cancel_left _ hpos]
+  have hoc : ord < c := by rw [hdiv] at hord; exact hord
+  have hle : c ≤ 2 ^ po * c := Nat.le_mul_of_pos_left c hpos
+  have h2 : (2 ^ po - 1) * c = 2 ^ po * c - c := by rw [Nat.sub_mul, Nat.one_mul]
+  unfold Rice.partSizes
+  rw [List.sum_cons, sum_replicate, hdiv, hc]
+  omega
+
+theorem emitOk_sanitize (pl : SubPlan) (xs : Array Int) :
+    (pl.sanitize xs.size).EmitOk xs := by
+  cases pl with
+  | constant => exact trivial
+  | verbatim => exact trivial
+  | fixed ord po ks =>
+    show SubPlan.EmitOk (if min ord 4 < xs.size then _ else _) xs
+    split
+    · rename_i hlt
+      show (Rice.partSizes xs.size (safePo xs.size (min ord 4) po) (min ord 4)).sum
+        ≤ (Flac.Emit.fixedResA (min ord 4) xs).size
+      have hsz : (Flac.Emit.fixedResA (min ord 4) xs).size = xs.size - min ord 4 := by
+        rw [← Array.length_toList, Flac.Emit.fixedResA_toList, Flac.Fixed.residual,
+          Flac.Fixed.length_diffN, Array.length_toList]
+      rw [partSizes_sum (safePo_dvd hlt) (safePo_ord hlt), hsz]
+      omega
+    · exact trivial
+  | lpc cs shift po ks =>
+    show SubPlan.EmitOk (if 0 < ((cs.take 32).map clamp12).length ∧
+      ((cs.take 32).map clamp12).length < xs.size then _ else _) xs
+    split
+    · rename_i hg
+      show (Rice.partSizes xs.size
+          (safePo xs.size ((cs.take 32).map clamp12).length po)
+          ((cs.take 32).map clamp12).length).sum
+        ≤ (Flac.Emit.lpcResA ((cs.take 32).map clamp12) (min shift 15) xs).size
+      have hsz : (Flac.Emit.lpcResA ((cs.take 32).map clamp12) (min shift 15) xs).size
+          = xs.size - ((cs.take 32).map clamp12).length := by
+        rw [← Array.length_toList, Flac.Emit.lpcResA_toList,
+          Flac.Lpc.length_residual, Array.length_toList]
+      rw [partSizes_sum (safePo_dvd hg.2) (safePo_ord hg.2), hsz]
+      omega
+    · exact trivial
+
 end Flac.Encode
