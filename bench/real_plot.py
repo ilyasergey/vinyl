@@ -40,7 +40,7 @@ FAMILY = {
     "vinyl":        dict(color="#7c3aed", marker="o", lw=2.2, zorder=5),
     "vinyl decode": dict(color="#7c3aed", marker="s", lw=2.2, zorder=5),
     "flac -5":      dict(color="#64748b", marker="^", lw=1.6),
-    "flac -8":      dict(color="#0d9488", marker="D", lw=1.8, zorder=4),
+    "flac -8":      dict(color="#059669", marker="D", lw=1.8, zorder=4),
     "flac decode":  dict(color="#1e293b", marker="v", lw=1.6),
 }
 # Compression curves: -j changes scheduling only, so one thread count per
@@ -51,6 +51,33 @@ CATS = ["alignment", "artificial", "single-instrument", "solo-instrument",
         "vocal", "vocal-orchestra", "orchestra", "pop", "speech",
         "speech-clean", "speech-other"]
 SUITES = ["sqam", "librispeech-test-clean", "librispeech-test-other"]
+
+# A hue per (implementation, thread count).  Same hue with a different dash
+# was not distinguishable in practice, and same hue at two lightnesses cannot
+# work on a light surface here: the light step lands at 2.4:1 contrast against
+# a 3:1 floor, and the dark step loses enough chroma to read gray.  So the
+# single-threaded runs get their own hues.
+#
+# violet / orange / green pass the palette validator's six checks on every
+# pair, worst at ΔE 9.4 deutan and 13.6 tritan.  A blue was tried here first
+# and rejected: against the violet it was the weakest pair in the set (ΔE 9.2
+# deutan, 3.0 tritan) and read as the same colour.  The fourth series is a
+# deliberate near-black neutral — it clears contrast and separates from all
+# three hues by lightness, which is also how libFLAC's decoder is drawn.
+SINGLE_THREAD_HUE = {
+    "vinyl": "#c2410c",
+    "vinyl decode": "#c2410c",
+    "flac -8": "#1e293b",
+}
+
+
+def job_style(family, count):
+    """Style for one (family, thread count) curve."""
+    style = dict(FAMILY[family])
+    if count != max(threadsets[family]):
+        style["color"] = SINGLE_THREAD_HUE.get(family, style["color"])
+    return style
+
 
 JOB = re.compile(r"^(?P<family>.+?) -j(?P<threads>\d+)$")
 
@@ -157,9 +184,10 @@ def throughput_panel(ax, jobs, kind, gap_pair, gap_note=""):
             continue
         ys = sorted(speed[(family, count)])
         n = max(n, len(ys))
-        ax.plot(range(1, len(ys) + 1), ys, ms=3.5, **FAMILY[family],
-                label=f"{family} · {count} thread{'s' if count > 1 else ''}"
-                      f" — median {statistics.median(ys):.3g} MB/s",
+        ax.plot(range(1, len(ys) + 1), ys, ms=3.5, **job_style(family, count),
+                label=f"{family}, "
+                      f"{'single-threaded' if count == 1 else f'{count} threads'}"
+                      f"  —  {statistics.median(ys):.3g} MB/s",
                 ls="-" if count == max(threadsets[family]) else "--")
     ax.set_xlabel(f"benchmark units (each {kind}r sorted slowest → fastest)")
     ax.set_ylabel(f"{kind} throughput, raw MB/s (higher = faster)")
@@ -176,14 +204,16 @@ def throughput_panel(ax, jobs, kind, gap_pair, gap_note=""):
         lo_med = statistics.median(speed[lo])
         hi_med = statistics.median(speed[hi])
         for med, job in ((lo_med, lo), (hi_med, hi)):
-            ax.axhline(med, color=FAMILY[job[0]]["color"], ls="--", lw=1, alpha=0.6)
+            ax.axhline(med, color=job_style(*job)["color"], ls="--", lw=1, alpha=0.6)
         x = n * 0.86
         ax.annotate("", xy=(x, hi_med), xytext=(x, lo_med),
                     arrowprops=dict(arrowstyle="<->", color="#111827", lw=1.1))
-        ax.text(0.985, 0.03,
-                f"×{max(hi_med, lo_med) / min(hi_med, lo_med):.2f} median gap "
-                f"vs {hi[0]} -j{hi[1]}{gap_note}",
-                transform=ax.transAxes, ha="right", va="bottom",
+        ax.text(0.985, 0.97,
+                f"×{max(hi_med, lo_med) / min(hi_med, lo_med):.2f} median gap vs "
+                f"{hi[0]}, "
+                f"{'single-threaded' if hi[1] == 1 else f'{hi[1]} threads'}"
+                f"{gap_note}",
+                transform=ax.transAxes, ha="right", va="top",
                 fontsize=9, color="#111827",
                 bbox=dict(boxstyle="round,pad=0.35", fc="#f8fafc",
                           ec="#cbd5e1", lw=0.8))
@@ -191,9 +221,10 @@ def throughput_panel(ax, jobs, kind, gap_pair, gap_note=""):
     ax.grid(alpha=0.25, which="both")
     # Curves rise left to right, so the legend belongs top-left — but with a
     # thread sweep there are enough entries to sit on the curves.  Give it its
-    # own headroom instead, measured in decades of the log axis.
+    # own headroom instead, measured in decades of the log axis; that same
+    # band is what keeps the top-right corner free for the gap caption.
     plotted = sum(1 for j in jobs if j in speed)
-    ncol = 2 if plotted > 3 else 1
+    ncol = 2 if plotted > 4 else 1
     rows = -(-plotted // ncol)
     lo, hi = min(allv) * 0.85, max(allv) * 1.1
     ax.set_ylim(lo, hi * 10 ** (0.085 * rows))
@@ -203,8 +234,7 @@ def throughput_panel(ax, jobs, kind, gap_pair, gap_note=""):
 fig2, (ax2, ax4) = plt.subplots(2, 1, figsize=(9, 9.5), dpi=150)
 throughput_panel(
     ax2,
-    [("vinyl", HEAD), ("vinyl", 1), ("flac -8", HEAD), ("flac -8", 1),
-     ("flac -5", 1)],
+    [("vinyl", HEAD), ("vinyl", 1), ("flac -8", HEAD), ("flac -8", 1)],
     "encode", (("vinyl", HEAD), ("flac -8", HEAD)), gap_note=" (thread-matched)")
 throughput_panel(
     ax4, [("vinyl decode", HEAD), ("vinyl decode", 1), ("flac decode", 1)],
