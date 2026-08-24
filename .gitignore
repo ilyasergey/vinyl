@@ -16,6 +16,8 @@ lake-manifest.json.lock
 bench/out/
 conformance/out/
 bench/corpus/
+bench/real_data/
+bench/real_out/
 
 # Scratch files from the README libFLAC cross-check walkthrough
 /*.flac

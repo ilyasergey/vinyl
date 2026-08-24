@@ -204,14 +204,55 @@ def welchF (xs : Array Int) : FloatArray := Id.run do
     out := out.push (floatOfInt (xs.getD i 0) * (f1 - t * t))
   return out
 
-/-- Autocorrelation of the windowed samples. -/
+/-- One autocorrelation lag, accumulator unboxed. -/
+private def acorr1 (w : FloatArray) (lag : Nat) : (i : Nat) → Float → Float
+  | i, acc =>
+    if h : i < w.size then
+      have h2 : i - lag < w.size := by omega
+      acorr1 w lag (i + 1) (acc + w[i] * w[i - lag])
+    else acc
+  termination_by i => w.size - i
+
+/-- Lags `lag`, `lag+1` and `lag+2` in **one** pass. At step `i` the pass
+    reads `w[i]` and `w[i-lag]` and carries `w[i-lag-1]`/`w[i-lag-2]` in
+    `p1`/`p2`, so a (lag, sample) pair costs two thirds of a load where
+    three separate passes each re-read both operands. Every lag still
+    accumulates ascending in `i` from `+0.0`, so the sums are bit-identical
+    to the one-lag-at-a-time form. -/
+private def acorr3 (w : FloatArray) (lag : Nat) :
+    (i : Nat) → (a0 a1 a2 p1 p2 : Float) → Float × Float × Float
+  | i, a0, a1, a2, p1, p2 =>
+    if h : i < w.size then
+      have h2 : i - lag < w.size := by omega
+      let x := w[i]
+      let y := w[i - lag]
+      acorr3 w lag (i + 1) (a0 + x * y) (a1 + x * p1) (a2 + x * p2) y p1
+    else (a0, a1, a2)
+  termination_by i => w.size - i
+
+/-- Autocorrelation lags `0 … maxLag` of the windowed samples, three lags
+    per pass over the data (the remainder, and blocks too short for the
+    fused pass to have a prologue, go through `acorr1`). -/
 def autocorrF (w : FloatArray) (maxLag : Nat) : Array Float := Id.run do
-  let mut r := Array.replicate (maxLag + 1) f0
-  for lag in [0 : maxLag + 1] do
-    let mut acc := f0
-    for i in [lag : w.size] do
-      acc := acc + w[i]! * w[i - lag]!
-    r := r.set! lag acc
+  let mut r : Array Float := Array.emptyWithCapacity (maxLag + 1)
+  let mut lag := 0
+  for _ in [0 : maxLag + 1] do
+    if maxLag < lag then
+      break
+    -- the fused pass needs `w[0]`, `w[1]`, `w[lag]` and `w[lag+1]`
+    if h : lag + 2 ≤ maxLag ∧ lag + 1 < w.size ∧ 1 < w.size then
+      have h0 : 0 < w.size := by omega
+      have h1 : 1 < w.size := h.2.2
+      have hl : lag < w.size := by omega
+      have hl1 : lag + 1 < w.size := h.2.1
+      let (a0, a1, a2) :=
+        acorr3 w lag (lag + 2)
+          (w[lag] * w[0] + w[lag + 1] * w[1]) (w[lag + 1] * w[0]) f0 w[1] w[0]
+      r := ((r.push a0).push a1).push a2
+      lag := lag + 3
+    else
+      r := r.push (acorr1 w lag lag f0)
+      lag := lag + 1
   return r
 
 /-- Levinson–Durbin recursion: order-`ord` forward predictor coefficients

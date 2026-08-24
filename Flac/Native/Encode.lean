@@ -182,24 +182,6 @@ private def welchFf (xs : FloatArray) : FloatArray := Id.run do
     out := out.push (xs[i] * (ff1 - t * t))
   return out
 
-/-- One autocorrelation lag, accumulator unboxed. -/
-private def acorrGo (w : FloatArray) (lag : Nat) : (i : Nat) → Float → Float
-  | i, acc =>
-    if h : i < w.size then
-      have h2 : i - lag < w.size := by omega
-      acorrGo w lag (i + 1) (acc + w[i] * w[i - lag])
-    else acc
-  termination_by i => w.size - i
-
-/-- `Heuristics.autocorrF` with proof-carried indexing and an unboxed
-    accumulator; same lags accumulated in the same order, so the same
-    floats. -/
-private def autocorrFf (w : FloatArray) (maxLag : Nat) : Array Float := Id.run do
-  let mut r : Array Float := Array.emptyWithCapacity (maxLag + 1)
-  for lag in [0 : maxLag + 1] do
-    r := r.push (acorrGo w lag lag ff0)
-  return r
-
 /-- Largest legal partition order. Validity is downward-closed, so one
     pass characterises every order the cost search must consider. -/
 private def partitionMaxF (bs ord : Nat) : Nat := Id.run do
@@ -450,7 +432,7 @@ private structure LpcChoice where
 private def lpcChoiceF (b : Nat) (blkF : FloatArray) : Option LpcChoice := Id.run do
   if blkF.size < 16 then
     return none
-  let r := autocorrFf (welchFf blkF) Heuristics.lpcMaxOrder
+  let r := Heuristics.autocorrF (welchFf blkF) Heuristics.lpcMaxOrder
   if !(r.getD 0 ff0 > ff0) then
     return none
   let ord :=
