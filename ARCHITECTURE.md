@@ -251,8 +251,10 @@ trust in `Flac.Encode`. Its statement did not change by a character — the
 `Option` survives for the input guard — so the grep-pinned capstone never
 moved. Retiring the certificate was worth 30% of encode on the 32 MB mono
 probe the bench history uses (68.5 → 97.7 MB/s, taking encode from 1.35×
-`flac -8` to **0.94×**) and 23% on a 47 MB stereo one (0.564 s → 0.434 s).
-Compression is unchanged: the output is byte-identical.
+*single-threaded* `flac -8` to **0.94×**; thread-matched on real audio the
+encoder is still 3.4× behind — see [`bench/README.md`](bench/README.md)) and
+23% on a 47 MB stereo one (0.564 s → 0.434 s). Compression is unchanged: the
+output is byte-identical.
 
 **Why `Float` was never in the way.** Float operations are opaque but
 *deterministic*. A search and the chooser the reference is instantiated

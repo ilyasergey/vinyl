@@ -1,143 +1,414 @@
 # Benchmarks
 
-Vinyl vs libFLAC 1.5.0, measured on the 37-file synthetic 16-bit corpus
-of [`gen_corpus.py`](gen_corpus.py) — six content categories (tonal,
-waveforms, noise, tonal+noise mixes, degenerate signals, stereo pairs).
+Vinyl vs libFLAC 1.5.0, in two suites that answer different questions:
 
-## Real-audio corpus: fetched, not timed yet
+| suite | material | units | raw PCM | what it is for |
+|---|---|---:|---:|---|
+| [**Part 1 — real audio**](#part-1--real-audio-benchmarks) | EBU SQAM + LibriSpeech recordings | 143 | 1.73 GiB | the headline numbers |
+| [**Part 2 — synthetic micro-benchmarks**](#part-2--synthetic-micro-benchmarks) | 37 generated 1 MB signals | 37 | 37 MB | per-category coverage, regression detection |
+| [**Part 3 — optimization history**](#part-3--optimization-history) | a 32 MB probe | 1 | 32 MB | what each tuning stage bought |
 
-The next benchmark suite uses real recordings rather than generated proxy
-signals.  [`real_fetch.py`](real_fetch.py) defaults to the compact 167.4 MiB
-EBU SQAM corpus; the 644.1 MiB LibriSpeech test pair and multi-gigabyte
-FSD50K, MUSDB18-HQ, and MAESTRO corpora are explicit opt-ins.  Audio and
-prepared PCM remain under ignored `bench/real_data/`; the committed fetcher
-verifies publisher identities and writes a per-file hash/format/licence
-manifest.
+All percentages are compression ratios: encoded size as a fraction of the raw
+PCM, so 100% means no compression and **lower is better**. All throughputs are
+raw PCM MB/s of wall time, so **higher is faster**.
+
+Read Part 1 for what the codec does on audio someone would actually encode.
+Read Part 2 for which *content categories* a change moved — its 1 MB files are
+sized for compression coverage, not throughput. **Never quote a number from one
+suite against a baseline from the other**, and never against a dashboard
+produced by the pre-2026-08-23 shell harness (see
+[the timing note](#the-timing-note-that-invalidates-older-dashboards)).
+
+---
+
+## Part 1 — Real-audio benchmarks
+
+### What the real benchmarks are
+
+The synthetic corpus in Part 2 is 37 *generated* signals — sine sweeps, square
+waves, white and brown noise, deliberately degenerate cases like pure silence
+and samples with three wasted low bits. It is good at what it is for: each file
+isolates one property of the format, so a compression regression can be
+attributed to a content category. What it is not is *audio*, and two conclusions
+this repository drew from it turned out to be artifacts of that (see
+[what the real corpus settled](#what-the-real-corpus-settled)).
+
+The real-audio suite encodes actual recordings — instruments, voices, orchestra,
+pop mixes, read speech in clean and noisy conditions — at sizes where a codec
+invocation measures the codec rather than process startup.
+
+#### The corpora
+
+| corpus | selector | archive | prepared PCM | native format | licence |
+|---|---|---:|---:|---|---|
+| **EBU SQAM** (Tech 3253) | `sqam` (default) | 167.4 MiB | 620 MB, 70 tracks | 2ch 44.1 kHz S16 | R&D use; no other commercial use |
+| **LibriSpeech `test-clean`** | `librispeech-test-clean` | 330.6 MiB | 622 MB, 2,620 utterances | 1ch 16 kHz S16 | CC BY 4.0 |
+| **LibriSpeech `test-other`** | `librispeech-test-other` | 313.5 MiB | 615 MB, 2,939 utterances | 1ch 16 kHz S16 | CC BY 4.0 |
+
+**SQAM** is the European Broadcasting Union's sound-quality assessment material:
+70 short tracks chosen to *stress* codecs, categorised by Tech 3253 into
+alignment tones, artificial signals, 36 single instruments, solo instruments,
+vocals, speech, vocal-orchestra, orchestra, and pop. It is already in Vinyl's
+native encoder format, and it is deliberately harder than a music library —
+single instruments recorded dry have far less to correlate away than a mix.
+
+**LibriSpeech** is read English audiobook speech from LibriVox, 16 kHz mono. The
+two `test` splits are the standard held-out sets: `test-clean` is the
+higher-recording-quality half, `test-other` the harder half. Speech at 16 kHz is
+the least compressible material in this suite (about 55% of raw, against 27% for
+single instruments), and it exercises a sample rate and channel count that SQAM
+does not.
+
+#### Why these two, and not the others
+
+[`CORPORA.md`](CORPORA.md) also records identities and fetch commands for
+FSD50K evaluation audio (6.2 GB), MUSDB18-HQ (22.7 GB), and MAESTRO v3 (101 GB).
+Those are deliberately **not** part of this suite: at 1.73 GiB the two corpora
+here already run six measured passes in about fifteen minutes, and adding an
+order of magnitude of audio buys resolution the comparison does not need — the
+gaps being measured are 3× and 5%, not 2%. They remain documented for anyone who
+wants a music-mixture or general-audio corpus later.
+
+#### What a benchmark unit is
+
+`real_fetch.py` writes one canonical S16LE PCM file per source recording.
+That is the right granularity for SQAM, whose tracks are 2.6–46.9 MB. It is not
+the right granularity for LibriSpeech, whose utterances average 0.22 MB: at that
+size a codec invocation is dominated by process startup, which is a real cost
+but not the one being measured here.
+
+[`real_units.py`](real_units.py) therefore builds the benchmark units:
+
+- **SQAM** — one unit per track, benchmarked in place. 70 units, median 5.9 MB.
+- **LibriSpeech** — one unit per *speaker*, concatenating that speaker's
+  utterances in sorted order into a single stream. 73 units (40 clean, 33
+  other), 5.1–19.8 MB. Concatenation is raw-PCM only: no resampling, no gain,
+  no reordering, and both codecs receive byte-identical input. Speaker is the
+  coarsest grouping the corpus labels, which keeps the streams large without
+  mixing voices inside a unit.
+
+`units.csv` records each unit's format, byte count, source-file count, and
+SHA-256, so a run is reproducible against a specific set of streams.
+
+#### Reproducing it
 
 ```sh
-python3 bench/real_fetch.py --list
-python3 bench/real_fetch.py --accept-ebu-terms  # default: SQAM only
+python3 bench/real_fetch.py --list                  # what is available
+python3 bench/real_fetch.py --accept-ebu-terms      # SQAM (review EBU terms first)
+python3 bench/real_fetch.py --corpus librispeech    # both LibriSpeech test splits
+./bench/real_run.sh                                 # units, measure, plot
 ```
 
-No timing or compression results have been recorded for these corpora yet.
-See [`CORPORA.md`](CORPORA.md) for category selectors, exact optional-download
-commands and checksums, licence restrictions, native-format caveats, and the
-prepared-corpus layout.  [`real_corpora.lock.json`](real_corpora.lock.json)
-pins the exact SQAM and LibriSpeech archives fetched in this session.
+[`CORPORA.md`](CORPORA.md) has the category selectors, licence restrictions,
+checksums and prepared-corpus layout; [`real_corpora.lock.json`](real_corpora.lock.json)
+pins the exact archives these numbers were produced from, with locally observed
+SHA-256 digests.
 
-## Synthetic regression dashboard
+`BENCH_RUNS` sets measured repetitions (default 5), `BENCH_THREADS` the thread
+count both codecs get for their multithreaded rows (default: all cores),
+`BENCH_SUITES` restricts to a comma-separated subset, and `BENCH_LIMIT` caps the
+unit count for a smoke run. Audio, prepared PCM, streams and encoder output all
+live under ignored directories; nothing in this section is committed except the
+scripts, the figures, `real_results.csv` and `real_summary.md`.
+
+### How the real suite is measured
+
+Timing is the same instrument as Part 2: one persistent Python parent holding a
+`perf_counter_ns`, one untimed warmup per case, then `BENCH_RUNS` measured runs
+whose order is shuffled with a fixed seed so no implementation keeps the same
+thermal and cache position. The reported number is the median. Correctness
+checks run outside every timed interval.
+
+Three things differ from the synthetic suite, each because real audio made them
+measurable:
+
+**1. Sizes are recorded twice.** libFLAC writes 8,826 bytes of padding,
+seektable and vendor comment per file at its defaults; Vinyl writes STREAMINFO
+alone, 42 bytes. `real_results.csv` therefore carries both `bytes` (whole file)
+and `audio_bytes` (the coded frames, found by walking the metadata block headers
+— [`flacsize.py`](flacsize.py)). Only the payload column can support a
+compression claim. On these units the distinction is cosmetic — 8.8 kB against a
+15 MB stream — which is exactly why it had to be measured here: it is *not*
+cosmetic on Part 2's 1 MB files.
+
+**2. libFLAC is measured at both thread counts.** libFLAC 1.5.0 takes `-j`, and
+Vinyl's encoder is frame-parallel, so the default single-threaded row alone
+would compare 8 Vinyl threads against 1 libFLAC thread. Both are recorded:
+`flac -8` at its default one thread, and `flac -8 -j8` at the same count Vinyl
+uses. `-j` changes scheduling only — the two produce byte-identical output on
+**143/143** units, verified from the recorded sizes. libFLAC's *decoder* has no
+threading option, so the decode comparison is unavoidably 8 threads against 1
+and is labelled as such on the figure.
+
+**3. Every unit is cross-decoded.** Per unit, outside the timed intervals: `flac
+-t` accepts Vinyl's stream and its MD5 signature; Vinyl's `--decode-fast`
+reproduces the input exactly; and **Vinyl's decoder reproduces libFLAC's `-8`
+stream exactly**. All three passed on all 143 units — the harness aborts on the
+first mismatch. The third is the interesting one: 1.73 GiB of libFLAC-encoded
+real audio, at the preset that uses the widest search, decoded byte-for-byte by
+the verified decoder. That is interoperability evidence, not a theorem, which is
+why it is tested.
+
+### Compression
+
+**Top** — per-unit cactus: each encoder's audio-frame ratios sorted ascending, so
+a curve that stays lower compresses better. **Bottom** — aggregate ratio (total
+coded bytes ÷ total raw bytes) per content category. `flac -8 -j8` is omitted
+from both: it is byte-identical to `flac -8` and would draw a duplicate curve.
+
+![Compression vs libFLAC on real audio](real_compression.png)
+
+| category | units | vinyl | flac -5 | flac -8 |
+|---|---:|---|---|---|
+| alignment | 2 | 22.0% | 22.0% | **20.9%** |
+| artificial | 5 | 7.6% | 7.8% | **7.4%** |
+| single-instrument | 36 | 29.0% | 27.4% | **27.1%** |
+| solo-instrument | 6 | 32.4% | 30.8% | **30.5%** |
+| vocal | 5 | 34.9% | 33.2% | **32.6%** |
+| vocal-orchestra | 4 | 41.3% | 39.6% | **39.3%** |
+| orchestra | 4 | 34.1% | 32.2% | **32.1%** |
+| pop | 2 | 40.4% | 38.9% | **38.4%** |
+| speech | 6 | 31.9% | 30.8% | **30.4%** |
+| speech-clean | 40 | 57.5% | 55.9% | **55.2%** |
+| speech-other | 33 | 55.2% | 53.6% | **52.9%** |
+| **TOTAL** | **143** | 47.6% | 46.1% | **45.5%** |
+
+**`flac -8` compresses real audio better than Vinyl in every category**, and so
+does `flac -5`. Per unit, Vinyl's payload is smaller than `flac -8`'s on
+**1 of 143** units and smaller than `flac -5`'s on **3 of 143**; the median unit
+is **4.7% larger** than `flac -8`'s (range −8.5% to +12.9%) and **3.1% larger**
+than `flac -5`'s (range −23.7% to +8.6%).
+
+Including metadata does not change this — whole-file totals are 47.6% / 46.1% /
+45.6% — because 8.8 kB is nothing against a 15 MB unit. That equality is the
+point: it is the control that shows the metadata correction in Part 2 is real
+rather than an accounting preference.
+
+### Speed
+
+Per-unit throughput, log scale, sorted slowest→fastest per implementation; a
+curve that sits higher is faster. Dashed lines mark the two medians the arrow
+spans. Thread counts are on every legend entry, because a frame-parallel codec
+beside a single-threaded one is the whole comparison. **Top** — encode.
+**Bottom** — decode (the shipped buffered decoder).
+
+![Throughput vs libFLAC on real audio](real_performance.png)
+
+Corpus throughput — total raw MB ÷ total seconds, which weights by size rather
+than by unit and so is the number to quote for aggregate speed:
+
+| suite | vinyl | flac -5 | flac -8 | flac -8 -j8 | vinyl decode | flac decode |
+|---|---|---|---|---|---|---|
+| | 8 threads | 1 thread | 1 thread | 8 threads | 8 threads | 1 thread |
+| sqam | 101 MB/s | 122 MB/s | 62 MB/s | **256 MB/s** | **214 MB/s** | 197 MB/s |
+| librispeech-test-clean | 95 MB/s | 153 MB/s | 89 MB/s | **374 MB/s** | **207 MB/s** | 187 MB/s |
+| librispeech-test-other | 88 MB/s | 151 MB/s | 86 MB/s | **355 MB/s** | **195 MB/s** | 183 MB/s |
+| **TOTAL** | 94 MB/s | 140 MB/s | 77 MB/s | **319 MB/s** | **205 MB/s** | 189 MB/s |
+
+Three separate comparisons, all of which need stating:
+
+- **Against thread-matched libFLAC, encode is 3.4× behind** (94 vs 319 MB/s
+  corpus; ×3.21 on per-unit medians). Vinyl is faster on **0 of 143** units.
+  This is the honest wall-clock encode number.
+- **Against single-threaded `flac -8`, encode is 1.22× ahead** (94 vs 77 MB/s;
+  faster on 129 of 143 units). This is the preset's default configuration and
+  the historical reference in Part 3, but it is 8 threads against 1.
+- **Against single-threaded `flac -5`, encode is 1.49× behind** (94 vs
+  140 MB/s; faster on 5 of 143 units) — and `flac -5` also compresses better.
+  So there is no libFLAC preset here that Vinyl beats on both axes.
+
+**Decode is 1.08× ahead** (205 vs 189 MB/s corpus, ×1.11 on medians; faster on
+120 of 143 units) — with 8 threads against libFLAC's 1, because libFLAC has no
+multithreaded decoder to match. Per core the verified decoder is well behind;
+per invocation on a multicore machine it is ahead. Total CPU time is not
+recorded, so the per-core figure is not quantified here.
+
+The SQAM column is where the two encoders diverge most: `flac -8` drops to
+62 MB/s on stereo 44.1 kHz material against 86–89 MB/s on mono speech, while
+Vinyl runs slightly *faster* on SQAM (101 MB/s) than on LibriSpeech. Stereo
+costs libFLAC's `-8` an exhaustive mid/side decision that Vinyl's certified
+heuristic decides directly.
+
+### What the real corpus settled
+
+Two claims this repository carried from the synthetic corpus do not survive.
+
+**"Vinyl's compression beats `flac -8`."** It does not, and it never did — the
+comparison was whole-file. libFLAC's 8,826 bytes of metadata are about 2.2% of
+the ~400 kB it emits for a 1 MB synthetic file, four times the 0.5% relative
+difference the claim rested on. Re-measured on coded frames, the synthetic corpus
+gives Vinyl 39.6% against `flac -8`'s **39.0%** (Part 2), and real audio gives
+47.6% against 45.5%. `flac -8` was ahead on both corpora all along. The old
+`bench/README.md` flagged this as unresolved and said the real-corpus run must
+settle it before a speed baseline was chosen; this is that run, and it settles it
+the other way.
+
+**"Encode is at parity with `flac -8`."** At one thread each it would be — but
+libFLAC 1.5.0 has `-j` and Vinyl has been frame-parallel since session 6, so
+parity against the single-threaded default was measuring a thread count, not a
+codec. Thread-matched, the gap is 3.4×.
+
+What holds up:
+
+- **Decode is genuinely competitive**, 1.08× ahead of libFLAC on real audio at
+  8 threads against 1 — and that is the direction where the proofs are deepest
+  (every decoder fast path is proven equal to its bit-level specification,
+  frame-parallel decoding and serialization included).
+- **Interoperability is solid.** 143/143 units round-trip through Vinyl, pass
+  `flac -t`, and — in the other direction — libFLAC's `-8` output decodes
+  byte-exactly under the verified decoder.
+- **The ratio is close, not competitive.** 4.7% behind `flac -8` on the median
+  unit is a search-quality gap, not a format gap:
+  `Flac.Heuristics.lpcCandidates` carries the measured tradeoff curve, and
+  [where the remaining encode gap is](#where-the-remaining-encode-gap-is)
+  describes what libFLAC's `-8` buys with several apodization windows that Vinyl
+  does not have.
+
+### Known gaps in this suite
+
+- **No CPU-time accounting.** Every number is wall clock. The thread counts are
+  labelled everywhere, but a per-core comparison would need `rusage` per
+  invocation, which the harness does not record yet.
+- **`flac -0` is not measured on real audio**, so Vinyl's ratio is bracketed
+  from above by `flac -5` but not from below.
+- **16-bit only, two sample rates.** Both corpora are S16; the codec and the
+  theorems cover depths 1–32. No 24-bit or 96 kHz material is benchmarked.
+- **SQAM may not be redistributed.** The fetcher verifies publisher identity and
+  records hashes, but the audio stays local; a third party reproducing these
+  numbers must accept the EBU terms themselves.
+
+---
+
+## Part 2 — Synthetic micro-benchmarks
+
+Thirty-seven generated 16-bit signals from [`gen_corpus.py`](gen_corpus.py) in
+six content categories — tonal, waveforms, noise, tonal+noise mixes, degenerate
+signals, stereo pairs — at 1 MB each. Each file isolates one property of the
+format, which is what makes this suite useful for attributing a compression
+change to a category. It is a **micro-benchmark**, not a proxy for audio: for
+that, read [Part 1](#part-1--real-audio-benchmarks).
 
 Regenerate everything with:
 
 ```sh
-./bench/run.sh        # five measured runs per case by default
-BENCH_RUNS=9 ./bench/run.sh
-python3 bench/plot.py # re-render plots/tables from an existing results.csv
+./bench/run.sh          # five measured runs per case by default
+BENCH_RUNS=15 ./bench/run.sh
+python3 bench/plot.py   # re-render plots/tables from an existing results.csv
 ```
 
 `corpus/`, `out/`, `results.csv`, `summary.md`, and the two PNGs are all
-generated artifacts. Each case receives an untimed warmup. The measured
-encode/decode commands are then shuffled with a fixed seed, and
-`results.csv` records their median wall time. Correctness checks (`flac -t`
-and a byte-for-byte PCM comparison) run outside the timed intervals.
+generated artifacts.
 
-Timing is deliberately owned by one persistent Python parent process. The
-original shell harness launched `python3` separately for every timestamp;
-the startup of the second timestamp process added roughly 19–22 ms to every
-codec invocation. That fixed surcharge was especially large beside
-libFLAC's 7–10 ms work on these mostly 1 MB files, so the old dashboard
-substantially understated the relative gap. Results produced by the old
-harness must not be compared with results produced by the current one.
+### The timing note that invalidates older dashboards
 
-All percentages are compression ratios: encoded size as a fraction of
-the raw PCM. 0% would mean the file vanished, 100% means no compression
-at all — lower is better.
+Timing is owned by one persistent Python parent process. The original shell
+harness launched `python3` separately for every timestamp; the startup of the
+second timestamp process added roughly 19–22 ms to every codec invocation. That
+fixed surcharge was especially large beside libFLAC's 7–10 ms of work on these
+1 MB files, so the old dashboard substantially understated the relative gap.
+**Results produced by the pre-2026-08-23 harness must not be compared with
+results produced by the current one.**
 
-## Compression
+### Read the corpus numbers with the file size in mind
 
-**Top** — per-file cactus: each encoder's ratios sorted ascending; a
-curve that stays lower compresses better. **Bottom** — aggregate ratio
-(total encoded bytes ÷ total raw bytes) per content category:
+These files are 1 MB each by design: `gen_corpus.py` sizes them for compression
+coverage, not throughput. At that size **process startup is a third of the
+measurement** — 3.1 ms of Lean runtime init against libFLAC's 2.7 ms, on an
+8–9 ms decode — and only 0.09 ms of Vinyl's share is this project's own module
+initialization (a trivial Lean binary also takes 3.10 ms; the binary is already
+statically linked against Lean, so there is no dynamic-loading cost to remove).
+
+### Compression
+
+Ratios are the **audio-frame payload**, metadata excluded. This matters far more
+here than in Part 1: libFLAC's default 8,826 bytes of padding, seektable and
+vendor comment are about 2.2% of the ~400 kB it emits for a 1 MB file, several
+times the difference between the encoders being compared.
+
+**Top** — per-file cactus: each encoder's ratios sorted ascending; a curve that
+stays lower compresses better. **Bottom** — aggregate ratio per content
+category:
 
 ![Compression vs libFLAC](compression.png)
 
 | category | vinyl | flac -0 | flac -5 | flac -8 |
 |---|---|---|---|---|
-| tonal | **19.7%** | 40.2% | 22.3% | 20.1% |
-| wave | **39.2%** | 44.5% | 43.9% | 40.9% |
-| noise | 77.8% | 77.9% | **77.5%** | **77.5%** |
-| mixed | 72.0% | 72.6% | 71.0% | **70.9%** |
-| degen | **22.1%** | 46.6% | 22.9% | 22.9% |
-| stereo | 27.2% | 31.8% | 26.7% | **26.6%** |
-| **TOTAL** | **39.6%** | 49.4% | 40.9% | 39.8% |
+| tonal | 19.8% | 39.4% | 21.5% | **19.3%** |
+| wave | **39.2%** | 43.7% | 43.1% | 40.1% |
+| noise | 77.8% | 77.1% | **76.7%** | **76.7%** |
+| mixed | 72.0% | 71.7% | 70.2% | **70.0%** |
+| degen | 22.1% | 45.8% | **22.0%** | **22.0%** |
+| stereo | 27.2% | 31.4% | 26.3% | **26.2%** |
+| **TOTAL** | 39.6% | 48.6% | 40.2% | **39.0%** |
 
-These are the complete files emitted by the current commands, not comparable
-audio-frame payloads.  libFLAC's files include its default 8,192-byte padding,
-seektable, and vendor comment; Vinyl emits only STREAMINFO.  Across files this
-small, that metadata is larger than the displayed 0.2-point difference.
-Consequently the table does **not** establish that Vinyl beats or
-compression-matches `flac -8`.  The real-audio run must use minimal metadata
-and compare frame payload sizes before selecting a speed baseline.
+`flac -8` is ahead overall and in five of six categories; Vinyl wins `wave` and
+sits between `flac -5` and `flac -8` on the total. Whole-file totals — the
+accounting this dashboard used until 2026-08-24 — are 39.6% / 49.4% / 40.9% /
+39.8%, which is where the retracted "beats `flac -8`" claim came from. The
+0.2-point whole-file lead was smaller than the metadata difference producing it.
+See [what the real corpus settled](#what-the-real-corpus-settled).
 
-## Speed
+### Speed
 
-Per-file throughput (log scale), sorted slowest→fastest per codec; a
-curve that sits higher is faster. Dashed lines mark the two medians the
-arrow spans, and the arrow names the baseline it is drawn against.  The
-encode panel retains **`flac -8` as a historical reference**, not as an
-established compression match; the decode panel uses libFLAC's decoder.
-All four encoder curves are plotted regardless, with medians in the legend,
-so the `-0`/`-5` presets stay visible for context.
-**Top** — encode. **Bottom** — decode (the shipped buffered decoder):
+**Top** — encode. **Bottom** — decode (the shipped buffered decoder). Per-file
+throughput on a log scale, sorted slowest→fastest per implementation; dashed
+lines mark the two medians the arrow spans.
 
 ![Throughput vs libFLAC](performance.png)
 
-Current fifteen-run medians (2026-08-24, after M6b): Vinyl encode 70.7 MB/s
-and Vinyl decode 123.6 MB/s, versus 108.4 MB/s for `flac -5` encode,
-74.7 MB/s for `flac -8` encode, and 124.9 MB/s for libFLAC decode. That is
-a **1.01× decode gap** and a 1.53× encode gap against `flac -5` — **1.06×
-against the `flac -8` reference**, from 1.27× before the runtime certificate
-was retired. On files large enough that process startup does not dominate,
-encode is *ahead* of `flac -8` (0.94× at 32 MB; see the size sweep below).
-Neither encode gap should be called compression-matched until the
-metadata-normalized real-corpus frontier has been measured.
+Fifteen-run medians, 2026-08-24:
 
-Repeating the whole run moves these medians, and by different amounts in
-the two directions: across six passes the *decode* gap held within 1%
-(1.01–1.03×) while the *encode* gap ranged 1.02–1.07×. Encoding is
-`Task`-parallel, so at 1 MB it loses more to whatever else the machine is
-running than single-threaded libFLAC does — measure it on an otherwise idle
-machine, or don't quote the third digit. This is why the gaps are quoted to
-two significant figures and why the stage tables further down use a 32 MB
-probe instead: a single large file resolves a 5% change, where the corpus
-medians do not.
+| | Vinyl (8 threads) | libFLAC (1 thread) | gap |
+|---|---|---|---|
+| decode | 124.9 MB/s | 125.6 MB/s | 1.01× |
+| encode | 75.0 MB/s | 74.9 MB/s (`flac -8`) | 1.00× |
+| encode | 75.0 MB/s | 107.6 MB/s (`flac -5`) | 1.44× |
 
-### Read the corpus medians with the file size in mind
+**These are 8 threads against 1.** libFLAC 1.5.0 takes `-j`, which this
+dashboard does not exercise; on real audio the thread-matched encode gap is
+3.4× ([Part 1](#speed)). Read the `flac -8` row as continuity with the stage
+tables in Part 3, not as a parity claim.
 
-These files are 1 MB each, by design: `gen_corpus.py` sizes them for
-*compression* coverage, not throughput. At that size **process startup is
-a third of the measurement** — 3.1 ms of Lean runtime init against
-libFLAC's 2.7 ms, on an 8–9 ms decode — and only 0.09 ms of Vinyl's share
-is this project's own module initialization (a trivial Lean binary also
-takes 3.10 ms; the binary is already statically linked against Lean, so
-there is no dynamic-loading cost to remove).
+Run-to-run spread differs by direction: repeating the whole run moves the
+*decode* gap by ~1% but the *encode* gap by ~5% (1.02–1.07× across six passes).
+Encoding is `Task`-parallel, so at 1 MB it is far more sensitive to whatever
+else the machine is doing than single-threaded libFLAC is. Quote these gaps to
+two significant figures, only ever against baselines from the same run — and
+prefer the size sweep below, or the 32 MB probe in Part 3, for judging a change.
 
-Same material, medians against file size:
+### Throughput against file size
+
+Same material, medians, single-threaded libFLAC throughout:
 
 | PCM | Vinyl decode | libFLAC | gap | Vinyl encode | `flac -8` | gap |
 |---|---|---|---|---|---|---|
-| 1 MB | 104.4 MB/s | 121.7 MB/s | 1.17× | 70.9 MB/s | 70.7 MB/s | **1.00×** |
-| 2 MB | 140.3 MB/s | 150.9 MB/s | 1.08× | 82.3 MB/s | 81.8 MB/s | **0.99×** |
-| 4 MB | 178.8 MB/s | 168.7 MB/s | **0.94×** | 89.6 MB/s | 87.0 MB/s | **0.97×** |
-| 8 MB | 198.7 MB/s | 178.6 MB/s | **0.90×** | 94.8 MB/s | 89.4 MB/s | **0.94×** |
-| 16 MB | 209.7 MB/s | 185.9 MB/s | **0.89×** | 95.9 MB/s | 90.5 MB/s | **0.94×** |
-| 32 MB | 217.2 MB/s | 189.6 MB/s | **0.87×** | 97.0 MB/s | 91.6 MB/s | **0.94×** |
+| 1 MB | 104.4 MB/s | 121.7 MB/s | 1.17× | 70.9 MB/s | 70.7 MB/s | 1.00× |
+| 2 MB | 140.3 MB/s | 150.9 MB/s | 1.08× | 82.3 MB/s | 81.8 MB/s | 0.99× |
+| 4 MB | 178.8 MB/s | 168.7 MB/s | 0.94× | 89.6 MB/s | 87.0 MB/s | 0.97× |
+| 8 MB | 198.7 MB/s | 178.6 MB/s | 0.90× | 94.8 MB/s | 89.4 MB/s | 0.94× |
+| 16 MB | 209.7 MB/s | 185.9 MB/s | 0.89× | 95.9 MB/s | 90.5 MB/s | 0.94× |
+| 32 MB | 217.2 MB/s | 189.6 MB/s | 0.87× | 97.0 MB/s | 91.6 MB/s | 0.94× |
 
-Both directions overtake libFLAC once startup stops dominating: encode from
-2 MB, decode from 4 MB, settling ~6% and ~13% faster. Each row is the
-better of two passes, which is the least-contended estimate a working
-machine allows. The 32 MB probe below is the instrument for judging a
-*change*.
+Both directions overtake *single-threaded* libFLAC once startup stops
+dominating: encode from 2 MB, decode from 4 MB. Each row is the better of two
+passes, which is the least-contended estimate a working machine allows. Part 1
+measures the same effect on real units of the same size and reaches the same
+place for decode (205 vs 189 MB/s) — and the opposite place for encode, once
+libFLAC is given the same threads.
+
+---
+
+## Part 3 — Optimization history
+
+Where each tuning stage got its speed, kept for anyone pushing further. Two
+things to know before reading the tables:
+
+- **Ratios quoted inside these stage tables are whole-file**, the accounting in
+  use at the time. Statements like "still ahead of `flac -8`" are superseded by
+  [Part 1](#what-the-real-corpus-settled); what the ratio columns still
+  establish is what each stage did *not* change, which is what they were for.
+- **Gap columns are against single-threaded `flac -8`.** They are stage-to-stage
+  measurements, not a codec comparison; for that, see Part 1.
 
 ### Sessions 6–7: parallelism and the array-typed decoder
 
@@ -275,9 +546,10 @@ per tap as the floor.
 
 ### Where the remaining encode gap is
 
-There is no longer an encode *gap* on a large file — the encoder is 6%
-ahead of `flac -8` from 8 MB up — so what follows is where the remaining
-*work* is, for anyone pushing further.
+On a large file the encoder is 6% ahead of *single-threaded* `flac -8`;
+thread-matched on real audio it is 3.4× behind, and 4.7% behind on ratio
+([Part 1](#speed)). So the gap is real, and this is where it lives, for
+anyone pushing further.
 
 1. **The runtime certificate is gone.** It was ~30% of encode wall:
    decoding the encoder's own output to check it. Milestone M6b replaced it
@@ -313,14 +585,15 @@ init, not decoding. Decode work now divides as: the Rice reader ~43%
 because it is the proven path and `Int → Int64` conversion per tap would
 cost what it saves), `crc16` 6%, serialization ~9%, array pushes ~3%.
 
-Compare medians only *within the same run*; machine load and thermal
-state move absolute throughput, which is why the figure plots both codecs
-together and interleaves their measurements. And do not compare against
-any dashboard produced by the pre-2026-08-23 shell harness, which charged
-a fixed ~20 ms timestamp-process startup to every codec invocation and so
-understated the gaps (see the timing note above).
+Compare medians only *within the same run*; machine load and thermal state
+move absolute throughput, which is why every figure plots both codecs
+together and interleaves their measurements. And never against a dashboard
+from the pre-2026-08-23 harness — see
+[the timing note](#the-timing-note-that-invalidates-older-dashboards).
 
-Both Vinyl paths retain zero proof debt: decoder fast paths are proved equal
-to their specifications, while the production encoder currently certifies
-each call by decoding its own output with the verified decoder and comparing
-it with the input (falling back to the verified encoder on mismatch).
+Both Vinyl paths retain zero proof debt. Decoder fast paths are proved equal
+to their bit-level specifications, and since M6b the production *encoder* is
+proved too: `Flac.Encode.encodePcm16_eq` shows it computes
+`Flac.Stream.encode` at the configuration its own search denotes, so the
+byte-level round trip follows from the reference capstone with no runtime
+decode and no fallback.

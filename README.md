@@ -126,64 +126,83 @@ round-trip fuzzing). `scripts/check.sh` is the ratchet: full build,
 suite. To run the cross-check yourself on one file, see
 [Cross-checking against libFLAC](#cross-checking-against-libflac) below.
 
+The real-audio benchmark doubles as the largest of these rigs: on all 143 units
+— 1.73 GiB of SQAM and LibriSpeech recordings — `flac -t` accepts Vinyl's
+stream and its MD5, Vinyl's decoder reproduces the input exactly, and Vinyl's
+decoder reproduces **libFLAC's `flac -8` output byte-for-byte**.
+
 ## Benchmarks
 
-On the 37-file synthetic corpus of `bench/gen_corpus.py`, the encoder's
-overall compression ratio **beats `flac -8`** (39.6% vs 39.8% of raw) —
-the certified heuristics choose well. Speed is therefore measured against
-`flac -8`, the preset whose ratio Vinyl matches. Fifteen-run medians:
+Two suites, reported separately: **real audio** — 143 units, 1.73 GiB of EBU
+SQAM and LibriSpeech recordings — and the **synthetic micro-benchmark** corpus
+of 37 generated 1 MB signals. Methodology, corpus descriptions and the full
+tables are in [`bench/README.md`](bench/README.md).
+
+Compression, as the coded audio-frame payload (libFLAC writes 8.8 kB of
+padding, seektable and vendor comment per file; Vinyl writes 42 bytes of
+STREAMINFO, so whole-file comparisons measure metadata policy):
+
+| corpus | Vinyl | `flac -5` | `flac -8` |
+|---|---|---|---|
+| real audio, 143 units | 47.6% | 46.1% | **45.5%** |
+| synthetic, 37 files | 39.6% | 40.2% | **39.0%** |
+
+**`flac -8` compresses better than Vinyl on both corpora** — in all eleven
+real-audio categories, and on 142 of 143 real units. The median real unit is
+4.7% larger than `flac -8`'s output. An earlier version of this section claimed
+Vinyl beat `flac -8` on the synthetic corpus; that was a whole-file comparison,
+and libFLAC's fixed metadata was four times the difference being claimed. It is
+[retracted](bench/README.md#what-the-real-corpus-settled).
+
+Speed on the real corpus, total raw MB ÷ total seconds. Vinyl's encoder and
+decoder are frame-parallel, and libFLAC 1.5.0 takes `-j`, so the thread count is
+part of every row:
 
 | | Vinyl | libFLAC | gap |
 |---|---|---|---|
-| decode | 123.6 MB/s | 124.9 MB/s | **1.01×** |
-| encode | 70.7 MB/s | 74.7 MB/s (`flac -8`) | **1.06×** |
-| encode vs `flac -5` | 70.7 MB/s | 108.4 MB/s | 1.53× |
+| **decode** | 205 MB/s (8 thr) | 189 MB/s (1 thr) | **0.92×** |
+| encode vs `flac -8 -j8` | 94 MB/s (8 thr) | 319 MB/s (8 thr) | 3.40× |
+| encode vs `flac -8` | 94 MB/s (8 thr) | 77 MB/s (1 thr) | 0.82× |
+| encode vs `flac -5` | 94 MB/s (8 thr) | 140 MB/s (1 thr) | 1.49× |
 
-Run-to-run spread differs by direction: repeating the whole run moves the
-*decode* gap by ~1% but the *encode* gap by ~5% (1.02–1.07× across six
-passes). Encoding is `Task`-parallel, so at 1 MB it is far more sensitive
-to whatever else the machine is doing than single-threaded libFLAC is.
-Read these gaps to two significant figures, only ever against baselines
-from the same run — and prefer the size sweep below, or the 32 MB probe in
-[`bench/README.md`](bench/README.md), for judging a change.
+The gap column is libFLAC ÷ Vinyl, so **below 1.00 means Vinyl is faster**.
 
-These corpus files are 1 MB each, so **process startup is charged to every
-measurement** — 3.1 ms of Lean runtime init against libFLAC's 2.7 ms, on
-an 8–9 ms decode. Throughput against file size, same material, medians:
+**Decode is the direction that holds up**: 1.08× ahead of libFLAC per
+invocation, faster on 120 of 143 units — though with 8 threads against 1,
+because libFLAC has no multithreaded decoder to match. **Encode does not**:
+thread-matched, `flac -8` is 3.4× faster *and* compresses better, and even
+single-threaded `flac -5` is 1.5× faster while compressing better. There is no
+libFLAC preset here that Vinyl beats on both axes.
 
-| PCM | Vinyl decode | libFLAC | gap | Vinyl encode | `flac -8` | gap |
-|---|---|---|---|---|---|---|
-| 1 MB | 104.4 MB/s | 121.7 MB/s | 1.17× | 70.9 MB/s | 70.7 MB/s | **1.00×** |
-| 2 MB | 140.3 MB/s | 150.9 MB/s | 1.08× | 82.3 MB/s | 81.8 MB/s | **0.99×** |
-| 4 MB | 178.8 MB/s | 168.7 MB/s | **0.94×** | 89.6 MB/s | 87.0 MB/s | **0.97×** |
-| 8 MB | 198.7 MB/s | 178.6 MB/s | **0.90×** | 94.8 MB/s | 89.4 MB/s | **0.94×** |
-| 16 MB | 209.7 MB/s | 185.9 MB/s | **0.89×** | 95.9 MB/s | 90.5 MB/s | **0.94×** |
-| 32 MB | 217.2 MB/s | 189.6 MB/s | **0.87×** | 97.0 MB/s | 91.6 MB/s | **0.94×** |
+Per-unit profiles — compression cactus above, throughput below:
 
-So **both directions overtake libFLAC once process startup stops
-dominating**: the encoder from 2 MB up, the decoder from 4 MB, both
-settling ~6% and ~13% faster respectively. At 1 MB Lean's fixed process
-init decides the comparison, which is exactly what the corpus medians
-above measure.
+![Compression vs libFLAC on real audio](bench/real_compression.png)
 
-Decoding gets there because frames decode *and serialize* in parallel —
-and provably so. A worker decoding the frame at a given bit position runs
-literally the call the serial loop would run there, and returns the frame
-reader's own equation as a proof field, so nothing trusts either the
-thread or the sync-code scan that guessed the position
-(`readFramesFast_eq`). Serialization moved into those same workers once
-`recombineA_model` established that **a frame is a serialization window**;
-`decodeBytes_spec` then says the bytes written are exactly
-`pcmBytesRange` of the decoded samples. That last step *narrowed* the
-trusted surface — the window concatenation the previous serializer
-performed was asserted in prose and unprovable, because it reasons through
-`Task`.
+![Throughput vs libFLAC on real audio](bench/real_performance.png)
 
-**The runtime certificate is gone.** The fast encoder used to decode its
-own output with the verified decoder and compare, falling back to the
-verified encoder on any mismatch — which is what made
+### What is proven, and what the benchmark tests instead
+
+Every decoder fast path is proven equal to its bit-level specification —
+frame-parallel decoding ([`readFramesFast_eq`](Flac/Spec/Decode.lean#L2119)),
+parallel PCM serialization
+([`pcm16FastPar_eq`](Flac/Spec/Decode.lean#L2638)), and frame-parallel
+*serialization*, where each worker emits its own frame's bytes and
+[`decodeBytes_spec`](Flac/Spec/PcmBytes.lean#L702) proves the result is exactly
+the interleaved PCM of the decoded samples. That last step *narrowed* the
+trusted surface: the window concatenation the previous serializer performed was
+asserted in prose and unprovable, because it reasons through `Task`.
+
+Interoperability is not proven, so it is measured. On all 143 real units,
+outside the timed intervals: `flac -t` accepts Vinyl's stream and its MD5;
+Vinyl's decoder reproduces the input exactly; and **Vinyl's decoder reproduces
+libFLAC's `-8` output byte-for-byte** — 1.73 GiB of real audio encoded at
+libFLAC's widest search, decoded by the verified decoder with no mismatch.
+
+**The runtime certificate is gone.** The fast encoder used to decode its own
+output with the verified decoder and compare, falling back to the verified
+encoder on any mismatch — which is what made
 `decodePcm16_encodePcm16Fast` hypothesis-free without proving anything
-about the encoder. That cost 30% of encode time on the 32 MB probe — the
+about the encoder. That cost 30% of encode time on a 32 MB probe — the
 encoder went 68.5 → 97.7 MB/s when it came out — and it is now a theorem
 instead: `Flac.Encode.encodePcm16_eq`. The capstone's *statement* did not
 change by a character; only its proof did, and what it rests on shrank.
@@ -197,12 +216,12 @@ folded into the stream straight off the search's `FloatArray`s. Emission
 now goes through the exact `Int` residual, which cost 6% and bought
 provability. [`ARCHITECTURE.md`](ARCHITECTURE.md) has the whole chain.
 
-**The candidate search.** libFLAC's `-8` evaluates exactly one LPC
-order per apodization window and one fixed order, buying its ratio with
-several *windows*; Vinyl uses one window and costs three LPC orders plus
-all five fixed orders exactly, and computes its nine autocorrelation lags
-three per pass — a more expensive search than libFLAC runs
-at any preset, and the reason the ratio comes out ahead.
+**Where the ratio gap comes from.** libFLAC's `-8` evaluates exactly one LPC
+order per apodization window and one fixed order, buying its ratio with several
+*windows*; Vinyl uses one window and costs three LPC orders plus all five fixed
+orders exactly, computing its nine autocorrelation lags three per pass. That is
+a more expensive search than libFLAC runs at any preset, and on synthetic signals
+it came close — but on real audio the several windows win, which is the 4.7%.
 `Flac.Heuristics.lpcCandidates` carries the whole measured tradeoff curve.
 
 Both searches run in exact `Float` arithmetic over unboxed `FloatArray`:
@@ -214,21 +233,9 @@ computes, so it is not a theorem and cannot be one; it is a compression
 question, and a differential test pins it against the verified encoder on
 every session. The *bytes* do not depend on it.
 
-Every decoder fast path is proven equal to its bit-level specification.
-See [`bench/README.md`](bench/README.md) for the methodology, the
-per-stage history, and regeneration instructions.
-
-Compression, per file (sorted; lower is better) and aggregated per
-content category:
-
-![Compression vs libFLAC](bench/compression.png)
-
-Throughput per file (log scale; higher is faster), encode and decode:
-
-![Throughput vs libFLAC](bench/performance.png)
-
-Per-category tables, how to read the plots in detail, and how to
-regenerate them: [`bench/README.md`](bench/README.md).
+Per-category tables, the corpus descriptions, the size sweep, the stage-by-stage
+optimization history, and regeneration instructions:
+[`bench/README.md`](bench/README.md).
 
 ## Building
 
