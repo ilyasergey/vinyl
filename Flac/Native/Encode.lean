@@ -863,6 +863,12 @@ def frameBytesPcm (blockSize ch bps : Nat) (varBlk : Bool)
   (pushFrame (BitWriter.empty ((hi - lo) * ch * 2 + 64)) bps varBlk
     (if varBlk then f * blockSize else f) (frameChannels bytes ch lo hi)).buf
 
+/-- Concatenate the frame workers' buffers in order. Structural, so the
+    concatenation can be related to `Emit.W.pushFrames`' fold. -/
+def concatFrames (out : ByteArray) : List (Task ByteArray) → ByteArray
+  | [] => out
+  | t :: ts => concatFrames (out ++ t.get) ts
+
 /-- Fast byte-level 16-bit encoder (the MD5 input of RFC 9639 §8.2 for
     16-bit interleaved LE PCM is the input byte string itself).
 
@@ -872,8 +878,8 @@ def frameBytesPcm (blockSize ch bps : Nat) (varBlk : Bool)
     second time; both are gone, and the workers read a shared immutable
     `ByteArray` instead. -/
 def encodePcm16 (blockSize ch sr : Nat) (bytes : ByteArray) : ByteArray :=
-  Id.run do
-    if ch = 0 then return ByteArray.empty
+  if ch = 0 then ByteArray.empty
+  else
     let n := bytes.size / (2 * ch)
     -- MD5 is chained, so it cannot be split across workers — but it does
     -- not have to sit on the critical path either. Spawned here and
@@ -885,19 +891,14 @@ def encodePcm16 (blockSize ch sr : Nat) (bytes : ByteArray) : ByteArray :=
       (List.range ((n + blockSize - 1) / blockSize)).map fun f =>
         Task.spawn fun _ => frameBytesPcm blockSize ch 16 false bytes n f
     let md5 := md5Task.get
-    let mut w := BitWriter.empty 64
-    w := w.push 32 0x664C6143
-    w := ((w.push 1 1).push 7 0).push 24 34
-    w := (w.push 16 blockSize).push 16 blockSize
-    w := (w.push 24 0).push 24 0
-    w := ((w.push 20 sr).push 3 (ch - 1)).push 5 (16 - 1)
-    w := w.pushBits 36 n
-    for byte in md5.toList do
-      w := w.push 8 byte.toNat
-    if blockSize = 0 then return w.buf
-    let mut out := w.buf
-    for t in frameTasks do
-      out := out ++ t.get
-    return out
+    -- the marker and STREAMINFO, in `Emit.W.pushStreamPrefix`'s order. The
+    -- digest goes in as one 128-bit field rather than sixteen bytes: once
+    -- per stream either way, and it is then literally the reference's push.
+    let w := (((BitWriter.empty 64).push 32 0x664C6143).push 1 1).push 7 0
+    let w := w.push 24 34
+    let w := ((((((w.push 16 blockSize).push 16 blockSize).push 24 0).push 24
+      0).push 20 sr).push 3 (ch - 1)).push 5 (16 - 1)
+    let w := (w.pushBits 36 n).pushBits 128 (Stream.md5Nat md5)
+    concatFrames w.buf frameTasks
 
 end Flac.Encode
