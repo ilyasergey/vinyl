@@ -1693,4 +1693,75 @@ theorem chunkChannels_getD (nn : Nat) : ∀ (chs : List (List Int)) (f : Nat),
       rw [List.getD_cons_succ, ih f (by omega), dropAll_dropAll,
         show nn + f * nn = (f + 1) * nn from by rw [Nat.succ_mul]; omega]
 
+/-! ## The derived audio is well-formed
+
+`encodePcm16Cfg` checks `Audio.WellFormed` at run time; on the audio the PCM
+pipeline derives from its input, every clause is a *theorem*, so the shipped
+encoder's O(1) guards suffice where the reference would scan. -/
+
+private theorem sInt16_fits (lo hi : UInt8) :
+    Flac.Bits.FitsSInt 16 (Flac.sInt16 lo hi) := by
+  have hlo : lo.toNat < 256 := UInt8.toNat_lt_size lo
+  have hhi : hi.toNat < 256 := UInt8.toNat_lt_size hi
+  have h16 : ((2 ^ 16 : Nat) : Int) = 65536 := by rfl
+  unfold Flac.sInt16 Flac.Bits.FitsSInt
+  simp only []
+  split <;> rename_i hv <;> rw [h16] <;> omega
+
+private theorem pcm16OfByteList_fits : ∀ (m : Nat) (l : List UInt8), l.length = m →
+    ∀ x ∈ Flac.pcm16OfByteList l, Flac.Bits.FitsSInt 16 x := by
+  intro m
+  induction m using Nat.strongRecOn with
+  | ind m ih =>
+    intro l hm x hx
+    match l with
+    | [] => simp [Flac.pcm16OfByteList] at hx
+    | [_] => simp [Flac.pcm16OfByteList] at hx
+    | lo :: hi :: rest =>
+      rw [show Flac.pcm16OfByteList (lo :: hi :: rest)
+        = Flac.sInt16 lo hi :: Flac.pcm16OfByteList rest from rfl] at hx
+      rcases List.mem_cons.1 hx with h | h
+      · rw [h]; exact sInt16_fits lo hi
+      · exact ih rest.length (by simp only [List.length_cons] at hm; omega)
+          rest rfl x h
+
+private theorem getD_fits {L : List Int} (h : ∀ y ∈ L, Flac.Bits.FitsSInt 16 y)
+    (i : Nat) : Flac.Bits.FitsSInt 16 (L.getD i 0) := by
+  by_cases hi : i < L.length
+  · rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi, Option.getD_some]
+    exact h _ (List.getElem_mem hi)
+  · rw [List.getD_eq_getElem?_getD,
+      List.getElem?_eq_none (by omega), Option.getD_none]
+    exact fitsSInt_zero 16
+
+/-- Every deinterleaved sample fits 16 bits. -/
+theorem deinterleave_fits {ch : Nat} (hch : 0 < ch) (bytes : ByteArray)
+    (c : List Int)
+    (hc : c ∈ Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList)) :
+    ∀ x ∈ c, Flac.Bits.FitsSInt 16 x := by
+  have hL : ∀ y ∈ Flac.pcm16OfByteList bytes.data.toList,
+      Flac.Bits.FitsSInt 16 y :=
+    pcm16OfByteList_fits _ bytes.data.toList rfl
+  have hlen := length_deinterleave (ch := ch)
+    (Flac.pcm16OfByteList bytes.data.toList)
+  obtain ⟨j, hj, hjc⟩ := List.mem_iff_getElem.1 hc
+  intro x hx
+  obtain ⟨t, ht, htx⟩ := List.mem_iff_getElem.1 hx
+  have hjch : j < ch := by rw [hlen] at hj; exact hj
+  have hgc : (Flac.deinterleave ch
+      (Flac.pcm16OfByteList bytes.data.toList)).getD j [] = c := by
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hj, Option.getD_some]
+    exact hjc
+  have hxg : c.getD t 0 = x := by
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem ht, Option.getD_some]
+    exact htx
+  rw [← hxg, ← hgc]
+  by_cases htn : t < (Flac.pcm16OfByteList bytes.data.toList).length / ch
+  · rw [getD_deinterleave hch _ hjch htn]
+    exact getD_fits hL _
+  · rw [List.getD_eq_getElem?_getD, List.getElem?_eq_none ?_, Option.getD_none]
+    · exact fitsSInt_zero 16
+    · rw [length_getD_deinterleave hch _ hjch]
+      omega
+
 end Flac.Encode

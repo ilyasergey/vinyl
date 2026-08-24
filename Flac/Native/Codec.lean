@@ -233,7 +233,8 @@ def encodePcm16FastGo (blockSize ch sampleRate : Nat) (bytes out : ByteArray) :
     carry the round-trip guarantee (`Flac.decodePcm16_encodePcm16Fast`). -/
 def encodePcm16Fast (blockSize ch sampleRate : Nat) (bytes : ByteArray) :
     Option ByteArray :=
-  if 0 < ch ∧ bytes.size % (2 * ch) = 0 then
+  if 0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧ sampleRate < 2 ^ 20
+      ∧ bytes.size / (2 * ch) < 2 ^ 36 ∧ 16 ≤ blockSize ∧ blockSize ≤ 65535 then
     encodePcm16FastGo blockSize ch sampleRate bytes
       (Encode.encodePcm16 blockSize ch sampleRate bytes)
   else none
