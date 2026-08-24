@@ -521,6 +521,43 @@ def choosePlan (b : Nat) (blk : Array Int) : SubPlan :=
 def sumAbsArr (xs : Array Int) : Nat :=
   xs.foldl (fun a x => a + x.natAbs) 0
 
+/-! ### Sanitizing the plan
+
+The searches compute their scalars in `Float`, so nothing about those
+*values* can be proven. Everything `Subframe.SubCfg.Valid` needs of them is
+scalar, though, so clamping at the plan boundary makes each bound hold *by
+construction* — no reasoning about the search required. Every clamp is a
+no-op on what the searches actually return (`Heuristics.riceParam` stops at
+14, `partitionMaxF` checks divisibility and the order bound, the coefficient
+quantizer clamps to 12 bits), so the emitted stream is unchanged; the
+difference is only that the bound is now provable.
+
+This is the fast counterpart of `Frame.ChannelAsg.orVerbatim`, and it is
+O(1) per subframe rather than a scan, which is why retiring the runtime
+certificate costs nothing here. -/
+
+/-- The partition order to code with: the searched one when it is legal,
+    else 0 (legal whenever `ord < bs`). -/
+def safePo (bs ord po : Nat) : Nat :=
+  if bs % p2 po = 0 ∧ ord < bs / p2 po ∧ po ≤ 6 then po else 0
+
+/-- A coefficient the 12-bit field can hold. -/
+@[inline] def clamp12 (c : Int) : Int := if Flac.Bits.FitsSInt 12 c then c else 0
+
+/-- Clamp a plan's scalars into the ranges `Subframe.SubCfg.Valid`
+    requires. `bs` is the (wasted-bit-scaled) block length. -/
+def SubPlan.sanitize (bs : Nat) : SubPlan → SubPlan
+  | .constant => .constant
+  | .verbatim => .verbatim
+  | .fixed ord po ks =>
+    let o := min ord 4
+    if o < bs then .fixed o (safePo bs o po) ks else .verbatim
+  | .lpc cs shift po ks =>
+    let cs := (cs.take 32).map clamp12
+    if 0 < cs.length ∧ cs.length < bs then
+      .lpc cs (min shift 15) (safePo bs cs.length po) ks
+    else .verbatim
+
 /-! ## Search / emission split
 
 `chooseSub`/`chooseFrame` make every heuristic decision a frame needs;
@@ -550,7 +587,8 @@ def chooseSub (b : Nat) (blk : Array Int) : SubPrep :=
     let m : Int := ((p2 wa : Nat) : Int)
     blk.map (· / m)
   let scaledF := blockF scaled
-  ⟨b, wa, choosePlanF (b - wa) scaled scaledF, scaled, scaledF⟩
+  ⟨b, wa, (choosePlanF (b - wa) scaled scaledF).sanitize scaled.size, scaled,
+    scaledF⟩
 
 /-- One frame's decisions: the 4-bit channel code, the block size, and one
     `SubPrep` per subframe — the array mirror of `Frame.ChannelAsg` paired
@@ -624,7 +662,7 @@ def pushRiceRange (k mask : Nat) (res : Array Int) :
     fast plan carries `ks : Array Nat`; `Rice.Partition` is what
     `Emit.W.pushParts` consumes. -/
 def riceChoices (po : Nat) (ks : Array Nat) : List Rice.Partition :=
-  (List.range (p2 po)).map fun j => .rice (ks.getD j 10)
+  (List.range (p2 po)).map fun j => .rice (min (ks.getD j 10) 14)
 
 /-- The partitions of a coded residual, one `(choice, size)` pair at a time
     — the shape of `Emit.W.pushParts`. -/
@@ -679,11 +717,9 @@ def SubPlan.EmitOk (p : SubPlan) (xs : Array Int) : Prop :=
   | .constant => True
   | .verbatim => True
   | .fixed ord po ks =>
-    (∀ j, ks.getD j 10 ≤ 32) ∧
-      (Rice.partSizes xs.size po ord).sum ≤ (Emit.fixedResA ord xs).size
+    (Rice.partSizes xs.size po ord).sum ≤ (Emit.fixedResA ord xs).size
   | .lpc cs shift po ks =>
-    (∀ j, ks.getD j 10 ≤ 32) ∧
-      (Rice.partSizes xs.size po cs.length).sum ≤ (Emit.lpcResA cs shift xs).size
+    (Rice.partSizes xs.size po cs.length).sum ≤ (Emit.lpcResA cs shift xs).size
 
 /-- Partitioned coded residual (method RICE, the only one the default
     heuristics emit). -/

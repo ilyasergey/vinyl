@@ -420,17 +420,17 @@ theorem sim_pushPartsR (m : Rice.Method) (res : Array Int) :
             (sim_push (by omega) _ _ (sim_push (paramBits_le m) bw w h)))
 
 theorem sim_pushResidual (bs ord po : Nat) (ks : Array Nat) (res : Array Int)
-    (hks : ∀ j, ks.getD j 10 ≤ 32)
     (hb : (Rice.partSizes bs po ord).sum ≤ res.size) :
     Simulates (fun bw => pushResidual bw bs ord po ks res)
       (Emit.W.pushResidual bs ord (riceCfgOf po ks) res) := by
   intro bw w h
+  -- every parameter is clamped to 14 where the choice list is built
   have hk : ∀ k, Rice.Partition.rice k ∈ riceChoices po ks → k ≤ 32 := by
     intro k hm
     unfold riceChoices at hm
     obtain ⟨j, _, hj⟩ := List.mem_map.1 hm
     cases hj
-    exact hks j
+    omega
   exact sim_pushPartsR .rice4 res (riceChoices po ks) (Rice.partSizes bs po ord) 0
     hk (by omega) _ _ (sim_push (by omega) _ _ (sim_push (by omega) bw w h))
 
@@ -447,12 +447,10 @@ theorem sim_pushContent (b : Nat) (pl : SubPlan) (xs : Array Int)
   | constant => exact sim_pushSInt b _ _ _ h
   | verbatim => exact sim_pushSIntSeg b xs 0 xs.size _ _ h
   | fixed ord po ks =>
-    obtain ⟨hks, hb⟩ := hok
-    exact sim_pushResidual xs.size ord po ks _ hks hb _ _
+    exact sim_pushResidual xs.size ord po ks _ hok _ _
       (sim_pushSIntSeg b xs 0 ord _ _ h)
   | lpc cs shift po ks =>
-    obtain ⟨hks, hb⟩ := hok
-    exact sim_pushResidual xs.size cs.length po ks _ hks hb _ _
+    exact sim_pushResidual xs.size cs.length po ks _ hok _ _
       (sim_pushSIntList 12 cs _ _
         (sim_pushSInt 5 _ _ _ (sim_push (by omega) _ _
           (sim_pushSIntSeg b xs 0 cs.length _ _ h))))
