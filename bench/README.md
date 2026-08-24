@@ -48,6 +48,53 @@ Nothing here is a proof claim. What is proven is that the codec is lossless and
 that its fast paths compute their specifications; speed and ratio are measured,
 and are what the rest of this file is about.
 
+### Which gap is quoted
+
+**One accounting, everywhere: corpus rate — total raw MB ÷ total seconds.** It
+is what every table, every figure's dashed levels and legend, and every prose
+"×N" in this file report, so any two numbers here are comparable without
+checking which is which.
+
+The alternative is the *per-unit median*: sort the units by throughput, take the
+middle one, divide. It is not used, and the difference is not cosmetic — on real
+audio at eight threads it reads ×2.43 where the corpus rate reads ×2.22:
+
+| encode, 8 threads | vinyl | `flac -8` | gap |
+|---|---:|---:|---:|
+| corpus rate, ΣMB ÷ Σs | 146.9 MB/s | 326.2 MB/s | **2.22×** |
+| per-unit median | 144.5 MB/s | 351.5 MB/s | 2.43× |
+| per-unit mean | 148.2 MB/s | 313.8 MB/s | 2.12× |
+| coefficient of variation | 0.13 | 0.21 | |
+
+A corpus rate is a harmonic mean weighted by bytes, so it is pulled toward the
+units that take the longest; a median weights every unit alike. The two agree
+when a distribution is tight and diverge when it is not, and libFLAC's is twice
+as spread as Vinyl's here — its median sits *above* its mean, a left tail of
+slow units. Those slow units are the SQAM stereo tracks, which is also where
+Vinyl is least far behind (1.71× on that suite against 2.58× and 2.61× on the
+two LibriSpeech ones), so equal-per-unit weighting flatters Vinyl by ~10%.
+
+Corpus rate wins the tie for three reasons, in order of weight:
+
+1. **Unit boundaries are a corpus construction choice.** SQAM is one unit per
+   track; LibriSpeech is concatenated per *speaker*
+   ([what a benchmark unit is](#what-a-benchmark-unit-is)). Regroup the same
+   audio differently and the median gap moves while the corpus gap barely does.
+   A headline must not depend on how the corpus was cut up.
+2. **It is the wall clock.** Encoding this corpus really does take 2.22× longer.
+3. **It is already the ratchet.** The thread-scaling tables, the parallel
+   speedup figures and the M6 targets in `PROGRESS.md` are all corpus rates.
+
+Per-unit medians are still worth reading — for *ratio*, where the median unit
+says something the byte-weighted total hides, and as the distribution context
+the throughput figures are for. They are labelled "median unit" wherever they
+appear. A bare "×N" in this file is always a corpus rate.
+
+Two other things called "median" here are unrelated to either: each case is run
+several times and the **median repetition** is what lands in the CSV
+([how the real suite is measured](#how-the-real-suite-is-measured)), and the
+size sweep in Part 3 reports medians across its repetitions too.
+
 ## The two suites
 
 | suite | material | units | raw PCM | what it is for |
@@ -152,8 +199,9 @@ column back when the payload total was 39.6%. See
 
 **Top** — encode. **Bottom** — decode (the shipped buffered decoder). Per-file
 throughput on a log scale, sorted slowest→fastest per implementation; dashed
-horizontal lines mark the two medians the arrow spans, and every legend entry
-carries its thread count. Each implementation is drawn **twice**, in its own
+horizontal lines mark the two **corpus rates** the arrow spans — the same
+total-raw-MB ÷ total-seconds accounting as every table here — and every legend
+entry carries its thread count and its corpus rate. Each implementation is drawn **twice**, in its own
 colour — at eight threads and at one — so the per-thread gap is legible
 straight off the figure: Vinyl's single-threaded encode curve sits at the
 bottom, about 4× below `flac -8`'s. The `-0` and `-5` presets are compression
@@ -170,7 +218,7 @@ parallel speedup against the ideal line.
 
 ![Scaling with thread count](threads.png)
 
-Fifteen-run medians aggregated to corpus totals, 2026-08-24:
+Fifteen-run repetition medians, aggregated to corpus totals, 2026-08-24:
 
 | threads | vinyl encode | `flac -8` encode | encode gap | vinyl decode | `flac` decode | decode gap |
 |---:|---|---|---|---|---|---|
@@ -197,9 +245,9 @@ Part 2, or the 32 MB probe in Part 3, for judging a change.
 
 ### Throughput against file size
 
-Same material, medians, single-threaded libFLAC against all-core Vinyl — a
-comparison this table predates the correction of, kept because the *shape* is
-what it is for:
+Same material, repetition medians, single-threaded libFLAC against all-core
+Vinyl — a comparison this table predates the correction of, kept because the
+*shape* is what it is for:
 
 | PCM | Vinyl decode | libFLAC | gap | Vinyl encode | `flac -8` | gap |
 |---|---|---|---|---|---|---|
@@ -310,7 +358,9 @@ scripts, the figures, `real_results.csv` and `real_summary.md`.
 Timing is the same instrument as Part 1: one persistent Python parent holding a
 `perf_counter_ns`, one untimed warmup per case, then `BENCH_RUNS` measured runs
 whose order is shuffled with a fixed seed so no implementation keeps the same
-thermal and cache position. The reported number is the median. Correctness
+thermal and cache position. The reported number is the median across those
+repetitions — not a median across units, which this suite never quotes as a
+gap. Correctness
 checks run outside every timed interval.
 
 Three things differ from the synthetic suite, each because real audio made them
@@ -388,8 +438,10 @@ rather than an accounting preference.
 ### Speed
 
 Per-unit throughput, log scale, sorted slowest→fastest per implementation; a
-curve that sits higher is faster. Dashed horizontal lines mark the two medians
-the arrow spans, and every legend entry carries its thread count. Each
+curve that sits higher is faster. Dashed horizontal lines mark the two
+**corpus rates** the arrow spans, and every legend entry carries its thread
+count and its corpus rate — one accounting across figures, tables and prose
+(see [which gap is quoted](#which-gap-is-quoted)). Each
 implementation is drawn **twice**, in its own colour — at eight threads and at
 one — so the per-thread comparison and the thread-matched one are both on the
 same axes. `flac -5` is compression context and is tabulated below rather than
@@ -438,8 +490,8 @@ Reading the wall-clock comparisons in order of how much they are worth:
 
 - **Per core, encode is 2.7× behind and decode 3.9× behind.** The honest
   per-operation numbers.
-- **Thread-matched at eight, encode is 2.2× behind** (147 vs 326 MB/s), and
-  ×2.43 on the median unit. Vinyl is faster on **0 of 143** units.
+- **Thread-matched at eight, encode is 2.2× behind** (147 vs 326 MB/s).
+  Vinyl is faster on **0 of 143** units.
 - **Against single-threaded `flac -5`, encode is now slightly ahead** at eight
   threads (147 vs 142 MB/s) — but `flac -5` still compresses better, so there
   is still no libFLAC preset Vinyl beats on both axes.
@@ -722,7 +774,7 @@ init, not decoding. Decode work now divides as: the Rice reader ~43%
 because it is the proven path and `Int → Int64` conversion per tap would
 cost what it saves), `crc16` 6%, serialization ~9%, array pushes ~3%.
 
-Compare medians only *within the same run*; machine load and thermal state
+Compare corpus rates only *within the same run*; machine load and thermal state
 move absolute throughput, which is why every figure plots both codecs
 together and interleaves their measurements. And never against a dashboard
 from the pre-2026-08-23 harness — see

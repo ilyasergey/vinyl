@@ -20,7 +20,6 @@ import csv
 import math
 import os
 import re
-import statistics
 import sys
 from collections import defaultdict
 
@@ -187,7 +186,7 @@ def throughput_panel(ax, jobs, kind, gap_pair, gap_note=""):
         ax.plot(range(1, len(ys) + 1), ys, ms=3.5, **job_style(family, count),
                 label=f"{family}, "
                       f"{'single-threaded' if count == 1 else f'{count} threads'}"
-                      f"  —  {statistics.median(ys):.3g} MB/s",
+                      f"  —  {corpus_speed((family, count)):.3g} MB/s",
                 ls="-" if count == max(threadsets[family]) else "--")
     ax.set_xlabel(f"benchmark units (each {kind}r sorted slowest → fastest)")
     ax.set_ylabel(f"{kind} throughput, raw MB/s (higher = faster)")
@@ -201,15 +200,22 @@ def throughput_panel(ax, jobs, kind, gap_pair, gap_note=""):
     ax.yaxis.set_minor_formatter(NullFormatter())
     lo, hi = gap_pair
     if lo in speed and hi in speed:
-        lo_med = statistics.median(speed[lo])
-        hi_med = statistics.median(speed[hi])
-        for med, job in ((lo_med, lo), (hi_med, hi)):
-            ax.axhline(med, color=job_style(*job)["color"], ls="--", lw=1, alpha=0.6)
+        # One accounting everywhere: the dashed levels, the legend, the arrow
+        # and every table are corpus rates — total raw MB ÷ total seconds.  The
+        # per-unit median is *not* used, because unit boundaries are a corpus
+        # construction choice (one per SQAM track, one per LibriSpeech speaker)
+        # and a headline number must not depend on it.  A corpus rate weights
+        # each unit by the time it takes, so on a spread-out curve it sits
+        # below the visual centre; that offset is real, not a plotting error.
+        lo_rate = corpus_speed(lo)
+        hi_rate = corpus_speed(hi)
+        for rate, job in ((lo_rate, lo), (hi_rate, hi)):
+            ax.axhline(rate, color=job_style(*job)["color"], ls="--", lw=1, alpha=0.6)
         x = n * 0.86
-        ax.annotate("", xy=(x, hi_med), xytext=(x, lo_med),
+        ax.annotate("", xy=(x, hi_rate), xytext=(x, lo_rate),
                     arrowprops=dict(arrowstyle="<->", color="#111827", lw=1.1))
         ax.text(0.985, 0.97,
-                f"×{max(hi_med, lo_med) / min(hi_med, lo_med):.2f} median gap vs "
+                f"×{max(hi_rate, lo_rate) / min(hi_rate, lo_rate):.2f} corpus gap vs "
                 f"{hi[0]}, "
                 f"{'single-threaded' if hi[1] == 1 else f'{hi[1]} threads'}"
                 f"{gap_note}",

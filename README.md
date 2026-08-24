@@ -175,8 +175,8 @@ LibriSpeech recordings, no synthetic signals. Log scale; each implementation's
 units are sorted slowest→fastest, so a curve that sits higher is faster, and
 each is drawn twice — at eight threads and at one — so the per-thread and the
 thread-matched comparison are on the same axes. Dashed lines and legend figures
-are per-unit *medians* (the tables above are corpus totals, which weight by
-size). **Top** — encode. **Bottom** — decode, the shipped buffered decoder.
+are corpus rates, the same total-raw-MB ÷ total-seconds accounting as the tables
+above. **Top** — encode. **Bottom** — decode, the shipped buffered decoder.
 
 ![Throughput vs libFLAC on real audio](bench/real_performance.png)
 
@@ -184,16 +184,15 @@ What the curves say:
 
 - **The gap is a constant factor, not a content effect.** Every curve is
   essentially flat across 143 units of very different material — orchestra,
-  solo instrument, clean and noisy speech — so the ×2.4 encode gap at eight
-  threads and the ×3.1 gap at one hold on the median unit and at essentially
-  every quantile. The upturn at the right edge is the handful of artificial and
+  solo instrument, clean and noisy speech — so the ×2.2 encode gap at eight
+  threads and the ×2.7 gap at one hold at essentially every quantile, not just
+  in aggregate. The upturn at the right edge is the handful of artificial and
   alignment units, where all implementations speed up together.
 - **Decode at eight threads is the one place Vinyl is ahead on wall clock.**
-  Its curve sits above `flac -d`'s over almost the whole corpus — ×1.14 on the
-  median unit, 217 MB/s against 192 MB/s on corpus totals — and libFLAC has
-  nothing to answer with: its decoder takes no `-j`, which is why it appears
-  once rather than twice.
-- **Per core it is ~3.1× behind on encode and ~3.9× on decode** — the
+  Its curve sits above `flac -d`'s over almost the whole corpus — ×1.13,
+  217 MB/s against 192 MB/s — and libFLAC has nothing to answer with: its
+  decoder takes no `-j`, which is why it appears once rather than twice.
+- **Per core it is ~2.7× behind on encode and ~3.9× on decode** — the
   single-thread curves sit a near-constant distance below libFLAC's on both
   panels. Two comparable factors rather than one bad path points at
   per-operation cost, pure Lean against `int32` SIMD.

@@ -1750,3 +1750,64 @@ Closing the remaining 1.22× plausibly needs a different kind of change than
 micro-optimisation — fewer passes over the block, or a cheaper search — and
 each further ratio-for-speed trade costs compression that is already 5% behind
 `flac -8`.
+
+## 2026-08-24 — Session 15: one throughput accounting across figures and prose
+
+**Attempted:** resolve a reporting inconsistency, not a performance one. The
+session-14 headline quoted the real-audio encode gap as **2.43×** while every
+table in the same commit quoted **2.22×**. Both were correct and both were
+labelled, but they are different aggregations of the same CSV and the headline
+alternated between them:
+
+| encode, 8 threads | vinyl | `flac -8` | gap |
+|---|---:|---:|---:|
+| corpus rate, ΣMB ÷ Σs | 146.9 MB/s | 326.2 MB/s | 2.22× |
+| per-unit median | 144.5 MB/s | 351.5 MB/s | 2.43× |
+| per-unit mean | 148.2 MB/s | 313.8 MB/s | 2.12× |
+| coefficient of variation | 0.13 | 0.21 | |
+
+They diverge because the dispersion is asymmetric. A corpus rate is a
+byte-weighted harmonic mean, so it is pulled toward the units that take the
+longest; libFLAC's per-unit spread is twice Vinyl's and left-skewed (median
+351.5 *above* mean 313.8), which puts its corpus rate 7% under its median while
+Vinyl's sits 2% over. Those two shifts multiply to exactly the discrepancy:
+2.22 × (351.5/326.2) × (146.9/144.5) = 2.43. The slow-for-libFLAC units are the
+SQAM stereo tracks, which is also where Vinyl is least far behind (1.71× on
+that suite against 2.58× / 2.61× on the two LibriSpeech ones), so per-unit
+weighting flatters Vinyl by ~10%.
+
+**Landed — corpus rate is the one quoted number:**
+
+- `bench/plot.py` and `bench/real_plot.py`: the throughput panels' dashed
+  levels, arrow, caption and legend entries are now corpus rates, replacing
+  per-unit medians. The captions read "corpus gap"; `statistics` is no longer
+  imported by either script. Both scripts carry a comment on why, including
+  that the level sits below the visual centre of a spread-out curve by design.
+- `bench/README.md`: new [Which gap is quoted](bench/README.md#which-gap-is-quoted) section with
+  the table above and the three reasons corpus rate wins — chiefly that unit
+  boundaries are a corpus construction choice (one unit per SQAM track, one per
+  LibriSpeech *speaker*), so a median headline would inherit how the corpus was
+  cut up. The word "median" now appears only for repetition medians, unit
+  sizes, and *ratio* medians, each labelled as such; the throughput reading
+  lists no longer carry a second gap figure.
+- `README.md`: the figure caption says corpus rates; the per-quantile claim is
+  now ×2.2 at eight threads and ×2.7 at one (was ×2.4 / ×3.1, which were
+  median-unit figures); decode ×1.13; per-core encode ~2.7×.
+- All four figures regenerated **from the committed CSVs** — no re-benchmark,
+  deliberately, so the diff is accounting-only and cannot be confused with a
+  measurement change. Every published throughput number is unchanged except the
+  ones that were per-unit medians.
+
+**Convention from here:** a bare "×N" in benchmark prose is a corpus rate.
+Per-unit medians stay available as distribution context and for compression,
+always labelled "median unit". The M6 target is a corpus-rate target.
+
+**Against the 2× goal that reading changes:** real audio is **2.22×**, not
+2.43×, so the remaining factor is **1.11×** rather than 1.22×. The work items
+from session 14 are unchanged and unranked by this — `pushRiceRange` (~11%),
+`FloatArray` construction (~8%), `fixedFoldTail` (~7%), `acorr3` (~6%) — but
+1.11× is within reach of two of them landing, where 1.22× was not.
+
+**Not blocked; no proof debt.** No Lean source touched this session, so
+`scripts/check.sh` state is session 14's: green, `fast == verified`
+byte-for-byte, libFLAC `-8` cross-decodes, `flac -t` accepts.
