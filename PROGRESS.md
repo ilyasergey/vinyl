@@ -1241,3 +1241,85 @@ only `propext`/`Classical.choice`/`Quot.sound`.
 5. Flip and delete, in one commit: point `--encode` at the proven path, drop
    `pcm16Certified`. `encodePcm16Fast` keeps its signature and
    `decodePcm16_encodePcm16Fast` its exact statement.
+
+### Session 10, continued — stage 4, and M6b is done
+
+**The runtime certificate is retired.** `Flac.Encode.encodePcm16_eq`:
+
+    encodePcm16 blockSize ch sr bytes
+      = Stream.encode ⟨blockSize, false, fastChooser 16⟩
+          ⟨deinterleave ch (pcm16OfByteList bytes.data.toList), 16, sr⟩
+
+so `Flac.Stream.decodePcm16_encodePcm16Fast` follows from
+`decodePcm16_encodePcm16Cfg`. `encodePcm16Fast` is now
+`some (Encode.encodePcm16 …)` under O(1) guards; `pcm16Certified`,
+`pcm16CertifiedSlow` and `encodePcm16FastGo` are deleted with their proofs.
+The capstone's statement did not change by a character, so `pin_encode_fast`
+never moved, and it still rests on exactly `propext`, `Classical.choice`,
+`Quot.sound`.
+
+**Measured** (same machine as the `certified-encoder-stable` tag):
+
+| probe | certified | proven | |
+|---|---|---|---|
+| 47 MB stereo | 0.564 s | 0.434 s | 1.30× faster |
+| 32 MB stereo | 0.416 s | 0.327 s | 1.27× faster |
+
+Corpus medians after a full `bench/run.sh`: encode 74.3 MB/s against
+`flac -8`'s 74.9 (**1.01×**, was 1.30×), decode 121.2 against 125.6
+(1.04×), compression unchanged at 39.6% versus 39.8% — output is
+byte-identical, so only the throughput figures moved. Against file size,
+same material, the encoder is now *ahead of* `flac -8` at every size
+measured (0.99× at 1 MB, 0.95× at 32 MB) and the decoder from 4 MB up.
+
+**Stage 4's pieces.** `pushFrame_buf_append` (emission only appends, so a
+worker can build its frame from an empty writer), `sim_empty`,
+`pushFrames_concat` (the reference's fold is the shipped concatenation),
+`sim_prefix` (marker and STREAMINFO in `pushStreamPrefix`'s exact shape —
+the digest as one 128-bit field rather than sixteen bytes, so it is
+literally the reference's push), `pcmBytes_deinterleave` (the reference's
+digest is a digest of the *input*), `chunkChannels_getD` and
+`chunkChannels_length` (frame `k` is frame `k`), `frameBytesPcm_eq`,
+`audio_wellFormed`, `encodePcm16Cfg_fast`.
+
+**Two `Task` boundaries were closed the sound way**, not by trusting the
+`@[extern]` task model:
+- `FrameStep`/`Md5Step` — a worker's payload is its bytes plus the erased
+  proof that they are what the fast function computes for that index,
+  `rfl` at construction. Any value of the type carries the equation, so
+  `concatFrames` is characterised without a word about `Task`; it checks the
+  recorded index and rebuilds the frame otherwise, so a wrong payload costs
+  work, never correctness. Exactly `Flac.Decode.ByteStep`'s pattern.
+- `Stream.pcmBytesA` split serialisation into windows, one `Task` each, and
+  "carried no theorem, because it reasons through `Task`" (its own comment).
+  It is now the plain `pcmBytesRange`. That is what made the digest
+  provable. Nothing on a shipped fast path used it — `--decode-fast`
+  serialises via `Decode.decodeBytes` — and it costs only `--decode`, which
+  is already 297× slower than `--decode-fast` on the same file.
+
+**Five guards replaced the certificate's silent coverage**: `0 < ch ≤ 8`,
+byte count a multiple of `2·ch`, `sampleRate < 2^20`, sample count `< 2^36`,
+`16 ≤ blockSize ≤ 65535`. All were cases where the old path fell through to
+`encodePcm16Cfg` and returned `none` anyway, so behaviour is unchanged;
+rejecting a block size below 16 is also what RFC 9639 §9.1 requires.
+
+`Flac/Spec/Encode.lean` ended the session at 124 theorems / 2114 lines,
+warning-free, no sorry, axioms `propext`/`Classical.choice`/`Quot.sound`.
+
+**Cost of provability, cumulative and measured**: `Int` residual emission
++6%, plan sanitisation +0.2%, the general deinterleave +0.5%, everything
+else free. Against the 23% the certificate gave back.
+
+**Blocked:** nothing.
+
+**Next.** M6b is complete; the remaining ideas are compression and speed
+rather than proof:
+1. Match libFLAC's search *shape* — one LPC order per apodisation window
+   across two or three windows, instead of one window with several orders
+   costed exactly. Roughly half today's LPC work, possibly the same ratio.
+   Still the most promising encode lever.
+2. A windowed bit reader (cached word + count) for the ~34% of decode in
+   the Rice reader; needs a simulation proof against `readRiceSeqScan`.
+3. De-tuple `Flac.Emit.W`'s bit writer, which only matters for
+   `--encode-slow` now.
+4. M7: two-sided verification against RFC 9639.

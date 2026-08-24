@@ -64,6 +64,7 @@ vinyl/
 │       ├── Frame.lean      # multichannel frame round-trip
 │       ├── Stream.lean     # the reference capstone: decodeReference_encode
 │       ├── Heuristics.lean # chooser certificates + default corollary
+│       ├── Encode.lean     # the shipped encoder computes Stream.encode
 │       ├── Reader.lean     # BitReader simulates the List Bool model
 │       └── Decode.lean     # production ≡ reference; the shipped capstones
 ├── FlacTest.lean, FlacTest/
@@ -230,90 +231,92 @@ encoder on the same input for byte-identical output (7.89 s vs 0.07 s on
 4 MB) — roughly 7× from the missing frame parallelism and ~16× from
 lists-and-`Int` instead of arrays-and-`Float`.
 
-The fast *encoder* (`Flac/Native/Encode.lean`) uses the other sound
-pattern: it is unverified by design, like the heuristics, and each call
-is **certified at runtime** — `Flac.encodePcm16Fast` decodes the produced
-bytes with the *verified* decoder and compares them with the input,
-falling back to the fully verified encoder on any mismatch. That decode
-runs `Decode.decodeBytes`, the frame-parallel byte path, which
-`pcm16FastA_eq_range` licenses to stand in for `decodePcm16`'s
-serializer. The byte-level
-round-trip theorem (`Flac.decodePcm16_encodePcm16Fast`) therefore holds
-with no hypotheses and no new trusted code, while the encoder itself is
-free to use mutable arrays, a scalar bit accumulator, and a `Task` per
-frame (frames are byte-aligned and independent; outputs are concatenated
-in order and remain byte-identical to the serial verified encoder under
-the default heuristics — which differential tests check on every corpus
-file).
+The fast *encoder* (`Flac/Native/Encode.lean`) used the other sound
+pattern until session 10: unverified by design, like the heuristics, with
+each call **certified at runtime** by decoding its own output with the
+verified decoder. That is gone. The encoder is now *proven*.
 
-Retiring that runtime decode is now in progress, by a different route than
-the one this document used to describe. Rather than array-izing the *proven*
-emitter, `Flac/Native/Encode.lean` is being proven directly. The project
-owner chose that trade explicitly, accepting that a proof stack pinned to
-the fast encoder will be invalidated by future performance passes; in
-exchange it carries less performance risk, since the code being proven is
-already measured at 1.27× rather than hoped to reach it.
+**The capstone.** `Flac.Encode.encodePcm16_eq` says the shipped encoder
+computes the reference encoder:
 
-**Not in the way: the searches.** They need no verification at all. A
-chooser's *output* carries a decidable validity certificate by
-construction (`riceCfg`, `fixedCfg`, `lpcCfg` clamp order, precision,
-shift, coefficients and Rice parameters into legal range), and
-`EncoderCfg.safeChooser` checks it at runtime with a VERBATIM fallback.
-So the round-trip theorem already holds for *every* chooser — including
-one computing in `Float`, which is unprovable in Lean (its operations are
-compiler intrinsics with no axiomatization). Search quality is a
-compression question, never a correctness one.
+```
+encodePcm16 blockSize ch sr bytes
+  = Stream.encode ⟨blockSize, false, fastChooser 16⟩
+      ⟨deinterleave ch (pcm16OfByteList bytes.data.toList), 16, sr⟩
+```
 
-Nor does `Float` block the *emission* theorem, for a reason worth stating
-precisely: `Float` operations are opaque but **deterministic**. A search and
-the chooser it instantiates need only be the same function applied to equal
-inputs, and `f x = f x` requires no lemma about `f`. What `Float` does
-forbid is a `Float` value reaching the *bytes*.
+so `Flac.Stream.decodePcm16_encodePcm16Fast` follows from
+`decodePcm16_encodePcm16Cfg` with no runtime decode, no fallback, and no
+trust in `Flac.Encode`. Its statement did not change by a character — the
+`Option` survives for the input guard — so the grep-pinned capstone never
+moved. Retiring the certificate was worth 23% of encode: 0.564 s → 0.434 s
+on a 47 MB stereo probe, taking encode from 1.30× `flac -8` to about
+0.95×, while compression stayed byte-identical.
 
-**Which it was doing.** Until session 10 the encoder's residual bits came
-from `FloatArray`s: `pushResidual`/`pushRiceRange` folded float values into
-the stream, and `lpcResidualArrF`'s doc asserted the unprovable step
-outright — "every value is an exact integer, so the bytes emitted from it
-are the bytes an `Int` residual would emit". True, and exactly the claim the
-runtime certificate existed to cover; unprovable, because there are no
-equations to reason from. So emission moved to the exact `Int` residual
-(`Emit.fixedResA`/`lpcResA`), costing 5.6% of encode, and the Float
-emission path was deleted. Searches still run on `Float`: they only choose.
+**Why `Float` was never in the way.** Float operations are opaque but
+*deterministic*. A search and the chooser the reference is instantiated
+with need only be the same function applied to equal inputs, and
+`f x = f x` requires no lemma about `f`. So the searches appear on *both*
+sides of every equation in the chain and are only ever applied. What
+`Float` does forbid is a float reaching the **bytes** — and until session
+10 one did: `pushResidual` folded values straight off the search's
+`FloatArray`s, and `lpcResidualArrF`'s own doc asserted the unprovable
+step ("every value is an exact integer, so the bytes emitted from it are
+the bytes an `Int` residual would emit"). That was precisely the claim the
+certificate existed to cover. Emission now goes through the exact `Int`
+residual (`Emit.fixedResA`/`lpcResA`), at 6% of encode.
 
-**In the way, and now discharged: the writers.** `Flac/Spec/Encode.lean`
-relates the shipped `BitWriter` (a `UInt64` accumulator whose bits at or
-above the pending count are deliberately stale) to `Flac.Emit.W` (a `Nat`
-accumulator, masked at every step) by `Sim`: same bytes, same pending
-count, same pending bits. `Simulates` lifts that to writer transformers and
-composes, so each primitive is one structural induction. The simulation now
-reaches `Emit.W.pushFrame` — a whole frame including both CRCs, which line
-up because `sim_push_buf` says a value read off the writer's own buffer is
-the same on both sides *when the buffers are*.
+**The chain, bottom to top** (all in `Flac/Spec/Encode.lean`):
 
-Two shapes made that possible, both free. `BitWriter.accPush` is one
-accumulator step shared by `push` and the hot residual loop, so the loop —
-which carries `buf`/`acc`/`n` unpacked to avoid allocating per sample — is
-*definitionally* pushing rather than inlining something to be discharged.
-And emission mirrors `Emit.W`'s recursion shapes, so no proof argues about
-`Std.Range.forIn`.
+- `Sim` relates the shipped `BitWriter` — a `UInt64` accumulator whose bits
+  at or above the pending count are deliberately stale — to `Flac.Emit.W`,
+  by "same bytes, same pending count, same pending bits". `Simulates` lifts
+  it to writer transformers and composes, so each primitive is one
+  structural induction. `flush_sim` discharges the fast writer's
+  sloppiness: it never masks because every byte it emits is bits
+  `[n-8, n)` and nothing at or above `n` is read.
+- `sim_pushRiceRange` covers the per-sample loop, which carries
+  `buf`/`acc`/`n` unpacked to avoid allocating. It stays provable because
+  it goes through the same accumulator step `push` does
+  (`BitWriter.accPush`), making each of its pushes *definitionally* a push.
+- `sim_pushFrameOf` reaches a whole frame, both CRCs included: a value read
+  off the writer's own buffer is the same on both sides *because* the
+  buffers are (`sim_push_buf`).
+- `frameChannels_eq` is the input bridge: the window a worker deinterleaves
+  out of the shared PCM bytes is the reference's frame.
+- `SubPlan.sanitize` clamps the search's scalars (Rice parameters to 14,
+  fixed order to 4, coefficients to the 12-bit field, shift to 15,
+  partition order to a legal one) so `Subframe.SubCfg.Valid` holds *by
+  construction* — no scan. Every clamp is a no-op on what the searches
+  return, so output is byte-identical, at 0.2%. `wastedDetectF_dvd` is the
+  one non-scalar clause, and it too is a proof.
+- `chooseFrame_asg_valid` lifts that to `Frame.ChannelAsg.Valid`, so
+  `orVerbatim` — which the reference wraps every chooser in — is the
+  identity on the fast encoder's choices (`safeChooser_fastChooser`). The
+  VERBATIM fallback never fires, and nothing checks that it doesn't.
+- `sim_frame` joins search and emission; `pushFrames_concat` joins the
+  reference's fold to the shipped concatenation, resting on
+  `pushFrame_buf_append` — emission only *appends*, the same locality
+  argument that licensed per-frame serialisation on the decode side.
 
-**Still in the way.** Three things: a byte→array input bridge for
-`frameChannels`; the chooser correspondence (`planOf`, `SubPrep.Denotes`,
-`SubPlan.EmitOk`), whose real work is a fast array-side validity decider,
-since today's `Decidable` instances re-materialize residual lists; and
-stream assembly with the per-frame `Task` collapse, for which
-`pushFrame_spec` (emission only appends) is the same locality argument that
-licensed per-frame serialization on the decode side.
+**`Task` stayed out of every proof**, as on the decode side. Each frame
+worker returns a `FrameStep`: its bytes plus the erased proof that they are
+`frameBytesPcm`'s output for that index, discharged by `rfl` at
+construction. *Any* value of that type carries the equation, so the
+consumer needs no fact about how the worker ran; it checks the recorded
+index and rebuilds the frame otherwise, so a wrong payload costs work,
+never correctness. `Md5Step` does the same for the digest worker. And
+`Stream.pcmBytesA` — which split serialisation into windows, one `Task`
+each, and "carried no theorem, because it reasons through `Task`" — is now
+the plain range, which is what let the STREAMINFO digest become a proven
+function of the samples. Nothing on a shipped fast path used it.
 
-The payoff is measured, not estimated: the certificate is 31% of encode on
-a 47 MB stereo probe, and `Int` emission cost 6.6%, so retiring it lands at
-≈0.75× today's encode — about 0.95× libFLAC. Until the chain closes, master
-keeps the certificate: the proven path is being built alongside it, and only
-the final commit flips `--encode` and deletes `pcm16Certified`.
-`Flac.encodePcm16Fast` keeps its signature and
-`Flac.Stream.decodePcm16_encodePcm16Fast` keeps its exact statement — the
-`Option` survives for the input well-formedness guard — so `pin_encode_fast`
-never moves.
+**What the encoder still checks at run time** is five O(1) guards, exactly
+the conditions the certificate silently covered: `0 < ch ≤ 8`, the byte
+count a multiple of `2·ch`, `sampleRate < 2^20`, the sample count below
+`2^36`, and `16 ≤ blockSize ≤ 65535`. Everything else `Stream.encode`
+checks — `Audio.WellFormed` in full — is discharged by
+`Flac.Encode.audio_wellFormed`.
 
 A smaller stage remains on `Flac.Emit.W`'s own bit writer: `W.flushGo`
 returns `ByteArray × Nat × Nat` (two `Prod` cells per bit push, plus a boxed
@@ -379,8 +382,9 @@ The two serializers are also now tied together: `pcm16FastA_eq_range`
 proves `Flac.pcm16Row`'s `(x % 65536)` byte split equals the `UInt64`-lane
 split of `pcmBytesRange` for *every* `Int`, because `Int.toInt64` is
 reduction mod `2^64` and `2^16` divides `2^64`. That is what lets the
-encoder's runtime certificate run the frame-parallel byte decoder in place
-of a decode followed by a serial serialization.
+decoder's `--decode-fast` path serialize inside its frame workers, and it
+is how the STREAMINFO digest the reference writes is tied to the input
+bytes (`Flac.Encode.pcmBytes_deinterleave`).
 
 ## Trusted vs. tested
 

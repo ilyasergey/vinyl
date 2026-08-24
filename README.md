@@ -86,10 +86,16 @@ frame's bytes and
 exactly the interleaved PCM of the decoded samples. That last one
 *narrowed* the trusted surface: the window concatenation the previous
 serializer performed was asserted in prose and unprovable, because it
-reasons through `Task`. The frame-parallel encoder is still certified per
-call by the verified decoder — the remaining step is a statically verified
-fast emitter to retire that runtime certificate. M7 (two-sided
-verification against RFC 9639) is a stretch goal. See [`PLAN.md`](PLAN.md) §8 for the milestone-by-milestone
+reasons through `Task`.
+
+**M6b has landed too: the shipped encoder is proven, not certified.**
+[`Flac.Encode.encodePcm16_eq`](Flac/Spec/Encode.lean) proves the fast
+encoder — its `Float` search, its `UInt64` bit writer, its per-frame
+workers — *computes* `Flac.Stream.encode` at the `EncoderCfg` whose chooser
+is its own search, so the byte-level round trip follows from the reference
+capstone with no runtime decode and no fallback. The runtime certificate
+that used to buy that guarantee is gone, and with it 23% of encode time.
+M7 (two-sided verification against RFC 9639) is a stretch goal. See [`PLAN.md`](PLAN.md) §8 for the milestone-by-milestone
 roadmap and [`PROGRESS.md`](PROGRESS.md) for the session log. In short:
 bit-level I/O, CRCs, MD5, Rice coding, all subframe types (CONSTANT /
 VERBATIM / FIXED / LPC), 1–8 channels with stereo decorrelation, wasted
@@ -129,9 +135,9 @@ the certified heuristics choose well. Speed is therefore measured against
 
 | | Vinyl | libFLAC | gap |
 |---|---|---|---|
-| decode | 123.7 MB/s | 124.8 MB/s | **1.01×** |
-| encode | 58.4 MB/s | 74.5 MB/s (`flac -8`) | **1.27×** |
-| encode vs `flac -5` | 58.4 MB/s | 107.6 MB/s | 1.84× |
+| decode | 121.2 MB/s | 125.6 MB/s | **1.04×** |
+| encode | 74.3 MB/s | 74.9 MB/s (`flac -8`) | **1.01×** |
+| encode vs `flac -5` | 74.3 MB/s | 109.1 MB/s | 1.47× |
 
 Run-to-run spread on these medians is 2–3%, so read the gaps to two
 significant figures, and only ever against baselines from the *same* run.
@@ -142,15 +148,14 @@ an 8–9 ms decode. Throughput against file size, same material, medians:
 
 | PCM | Vinyl decode | libFLAC | gap | Vinyl encode | `flac -8` | gap |
 |---|---|---|---|---|---|---|
-| 1 MB | 103.9 MB/s | 121.9 MB/s | 1.17× | 54.1 MB/s | 71.3 MB/s | 1.32× |
-| 4 MB | 173.0 MB/s | 164.1 MB/s | **0.95×** | 67.5 MB/s | 84.6 MB/s | 1.25× |
-| 8 MB | 198.6 MB/s | 179.3 MB/s | **0.90×** | 71.3 MB/s | 83.0 MB/s | 1.16× |
-| 32 MB | 213.3 MB/s | 188.5 MB/s | **0.88×** | 73.4 MB/s | 89.9 MB/s | 1.23× |
+| 1 MB | 103.6 MB/s | 120.5 MB/s | 1.16× | 68.0 MB/s | 67.4 MB/s | **0.99×** |
+| 4 MB | 175.6 MB/s | 171.5 MB/s | **0.98×** | 89.8 MB/s | 86.7 MB/s | **0.97×** |
+| 8 MB | 199.1 MB/s | 183.5 MB/s | **0.92×** | 95.0 MB/s | 91.3 MB/s | **0.96×** |
+| 32 MB | 208.0 MB/s | 192.9 MB/s | **0.93×** | 95.1 MB/s | 90.8 MB/s | **0.95×** |
 
-So **Vinyl's decoder overtakes libFLAC's at about 4 MB and runs ~11%
-faster from 8 MB up**; below that, Lean's fixed process init decides the
-comparison. Encoding settles around 1.24× (the 8 MB row's `flac -8`
-figure is an outlier).
+So **both directions overtake libFLAC once process startup stops
+dominating**: the decoder from about 4 MB, the encoder at every size
+measured. Below 1 MB, Lean's fixed process init decides the comparison.
 
 Decoding gets there because frames decode *and serialize* in parallel —
 and provably so. A worker decoding the frame at a given bit position runs
@@ -165,17 +170,24 @@ trusted surface — the window concatenation the previous serializer
 performed was asserted in prose and unprovable, because it reasons through
 `Task`.
 
-Two things account for what remains of the encode gap.
+**The runtime certificate is gone.** The fast encoder used to decode its
+own output with the verified decoder and compare, falling back to the
+verified encoder on any mismatch — which is what made
+`decodePcm16_encodePcm16Fast` hypothesis-free without proving anything
+about the encoder. That cost 23% of encode time, and it is now a theorem
+instead: `Flac.Encode.encodePcm16_eq`. The capstone's *statement* did not
+change by a character; only its proof did, and what it rests on shrank.
 
-**The runtime certificate, ~28% of encode.** The fast encoder is
-unverified by design, so every call decodes its own output with the
-verified decoder and compares — which is what makes
-`decodePcm16_encodePcm16Fast` hypothesis-free. Retiring it in favour of
-the statically verified emitter (milestone M6b) would take encode to
-roughly **0.93×**, i.e. past parity; it is a proof project, not a tuning
-one, and [`ARCHITECTURE.md`](ARCHITECTURE.md) lays out the four stages.
+What made that possible is that `Float` never had to be characterised.
+Float operations are opaque but *deterministic*, so the search and the
+chooser the reference is instantiated with need only be the same function
+on equal inputs — `f x = f x` needs no lemma about `f`. What `Float` does
+forbid is a float reaching the *bytes*, and it used to: residuals were
+folded into the stream straight off the search's `FloatArray`s. Emission
+now goes through the exact `Int` residual, which cost 6% and bought
+provability. [`ARCHITECTURE.md`](ARCHITECTURE.md) has the whole chain.
 
-**The candidate search, ~37%.** libFLAC's `-8` evaluates exactly one LPC
+**The candidate search.** libFLAC's `-8` evaluates exactly one LPC
 order per apodization window and one fixed order, buying its ratio with
 several *windows*; Vinyl uses one window and costs three LPC orders plus
 all five fixed orders exactly, and computes its nine autocorrelation lags
@@ -185,10 +197,12 @@ at any preset, and the reason the ratio comes out ahead.
 
 Both searches run in exact `Float` arithmetic over unboxed `FloatArray`:
 every value they compute is an integer well inside 2^53, so doubles
-represent them exactly and the subframe chosen — and the residual emitted
-— is bit-identical to the `Int` form, at one hardware `fmul`/`fadd` per
-tap instead of `lean_int_mul` on a boxed `Array Int`. A differential test
-pins that against the verified encoder on every session.
+represent them exactly and the subframe *chosen* is the one the `Int` form
+would choose, at one hardware `fmul`/`fadd` per tap instead of
+`lean_int_mul` on a boxed `Array Int`. That claim is about what `Float`
+computes, so it is not a theorem and cannot be one; it is a compression
+question, and a differential test pins it against the verified encoder on
+every session. The *bytes* do not depend on it.
 
 Every decoder fast path is proven equal to its bit-level specification.
 See [`bench/README.md`](bench/README.md) for the methodology, the
