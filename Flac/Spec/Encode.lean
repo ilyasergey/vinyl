@@ -962,4 +962,132 @@ theorem emitOk_sanitize (pl : SubPlan) (xs : Array Int) :
       omega
     · exact trivial
 
+/-! ## Wasted bits are sound
+
+The one part of `Subframe.SubCfg.Valid` that is not scalar: every sample must
+be divisible by `2 ^ wasted`. `wastedDetectF` establishes it by construction —
+it takes the minimum trailing-zero count over the block — so this is a proof,
+not a runtime scan. -/
+
+private theorem tzGo_dvd : ∀ (fuel n : Nat), 2 ^ tzGo fuel n ∣ n := by
+  intro fuel
+  induction fuel with
+  | zero => intro n; simp [tzGo]
+  | succ fuel ih =>
+    intro n
+    show 2 ^ (if n % 2 = 0 then 1 + tzGo fuel (n / 2) else 0) ∣ n
+    split
+    · rename_i he
+      obtain ⟨m, hm⟩ := Nat.dvd_of_mod_eq_zero he
+      have h := ih (n / 2)
+      rw [hm, Nat.mul_div_cancel_left _ (show 0 < 2 by omega)] at h
+      rw [hm, Nat.mul_div_cancel_left _ (show 0 < 2 by omega), Nat.pow_add,
+        Nat.pow_one]
+      exact Nat.mul_dvd_mul_left 2 h
+    · simp [Nat.one_dvd]
+
+private theorem tzGo_dvd_int (fuel : Nat) (x : Int) :
+    ((2 ^ tzGo fuel x.natAbs : Nat) : Int) ∣ x :=
+  Int.ofNat_dvd_left.2 (tzGo_dvd fuel x.natAbs)
+
+private theorem wastedGo_le (b : Nat) (blk : Array Int) :
+    ∀ (fuel i best : Nat), blk.size - i ≤ fuel → wastedGo b blk i best ≤ best := by
+  intro fuel
+  induction fuel with
+  | zero =>
+    intro i best hf
+    rw [wastedGo]
+    rw [dif_neg (by omega)]
+    omega
+  | succ fuel ih =>
+    intro i best hf
+    rw [wastedGo]
+    split
+    · rename_i hlt
+      split
+      · omega
+      · split
+        · exact ih (i + 1) best (by omega)
+        · exact Nat.le_trans (ih (i + 1) _ (by omega)) (Nat.min_le_left ..)
+    · omega
+
+private theorem wastedGo_dvd (b : Nat) (blk : Array Int) :
+    ∀ (fuel i best j : Nat), blk.size - i ≤ fuel → i ≤ j →
+      ((2 ^ wastedGo b blk i best : Nat) : Int) ∣ blk.getD j 0 := by
+  intro fuel
+  induction fuel with
+  | zero =>
+    intro i best j hf hij
+    have : blk.getD j 0 = 0 := by
+      unfold Array.getD
+      rw [dif_neg (by omega)]
+    rw [this]
+    exact Int.dvd_zero _
+  | succ fuel ih =>
+    intro i best j hf hij
+    rw [wastedGo]
+    split
+    · rename_i hlt
+      split
+      · rename_i h0
+        simp
+      · split
+        · rename_i hz
+          rcases Nat.eq_or_lt_of_le hij with he | hlt2
+          · subst he
+            have : blk.getD i 0 = 0 := by
+              unfold Array.getD
+              rw [dif_pos hlt]
+              exact hz
+            rw [this]
+            exact Int.dvd_zero _
+          · exact ih (i + 1) best j (by omega) (by omega)
+        · rcases Nat.eq_or_lt_of_le hij with he | hlt2
+          · have hle : wastedGo b blk (i + 1) (min best (tzGo b blk[i].natAbs))
+                ≤ tzGo b blk[i].natAbs :=
+              Nat.le_trans (wastedGo_le b blk fuel (i + 1) _ (by omega))
+                (Nat.min_le_right ..)
+            have hgi : blk.getD j 0 = blk[i] := by
+              unfold Array.getD
+              rw [dif_pos (by omega)]
+              congr 1
+              omega
+            rw [hgi]
+            exact Int.dvd_trans (Int.ofNat_dvd.2 (Nat.pow_dvd_pow 2 hle))
+              (tzGo_dvd_int b blk[i])
+          · exact ih (i + 1) _ j (by omega) (by omega)
+    · have : blk.getD j 0 = 0 := by
+        unfold Array.getD
+        rw [dif_neg (by omega)]
+      rw [this]
+      exact Int.dvd_zero _
+
+/-- The detected count is a legal wasted-bit count. -/
+theorem wastedDetectF_lt {b : Nat} (hb : 0 < b) (blk : Array Int) :
+    wastedDetectF b blk < b := by
+  unfold wastedDetectF
+  rw [if_neg (by omega)]
+  have := wastedGo_le b blk (blk.size) 0 (b - 1) (by omega)
+  omega
+
+/-- **Every sample is divisible by `2 ^ wastedDetectF b blk`.** -/
+theorem wastedDetectF_dvd (b : Nat) (blk : Array Int) (j : Nat) :
+    ((2 ^ wastedDetectF b blk : Nat) : Int) ∣ blk.getD j 0 := by
+  unfold wastedDetectF
+  split
+  · simp
+  · exact wastedGo_dvd b blk blk.size 0 (b - 1) j (by omega) (by omega)
+
+theorem wastedDetectF_dvd_mem (b : Nat) (blk : Array Int) :
+    ∀ x ∈ blk.toList, ((2 ^ wastedDetectF b blk : Nat) : Int) ∣ x := by
+  intro x hx
+  obtain ⟨j, hj, hval⟩ := List.mem_iff_getElem.1 hx
+  have hgi : blk.getD j 0 = x := by
+    unfold Array.getD
+    rw [dif_pos (by simpa using hj)]
+    rw [← hval]
+    rfl
+  rw [← hgi]
+  exact wastedDetectF_dvd b blk j
+
 end Flac.Encode

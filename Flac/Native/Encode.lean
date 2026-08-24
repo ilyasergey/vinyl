@@ -462,24 +462,27 @@ def lpcSearchF (b : Nat) (blk : Array Int) :
   | none => none
   | some c => some ((c.cs, c.shift, c.po, c.ks), c.cost)
 
-/-- Mirror of `Heuristics.wastedDetect`: the largest `w < b` such that
-    `2^w` divides every sample (`b - 1` for the all-zero block). -/
-def wastedDetectF (b : Nat) (blk : Array Int) : Nat := Id.run do
-  if b = 0 then return 0
-  let mut best := b - 1
-  for x in blk do
-    if best = 0 then return 0
-    if x ≠ 0 then
-      let mut tz := 0
-      let mut w := x.natAbs
-      for _ in [0 : b] do
-        if w % 2 = 0 then
-          tz := tz + 1
-          w := w / 2
-        else
-          break
-      best := min best tz
-  return best
+/-- Trailing zeros of `n`, capped at `fuel`. Structural, so the divisibility
+    it certifies is provable. -/
+def tzGo : (fuel n : Nat) → Nat
+  | 0, _ => 0
+  | fuel + 1, n => if n % 2 = 0 then 1 + tzGo fuel (n / 2) else 0
+
+/-- Fold the per-sample trailing-zero counts, stopping as soon as a sample
+    forces 0. Zero samples are skipped: every power of two divides them. -/
+def wastedGo (b : Nat) (blk : Array Int) : (i best : Nat) → Nat
+  | i, best =>
+    if h : i < blk.size then
+      if best = 0 then 0
+      else if blk[i] = 0 then wastedGo b blk (i + 1) best
+      else wastedGo b blk (i + 1) (min best (tzGo b blk[i].natAbs))
+    else best
+  termination_by i _ => blk.size - i
+
+/-- Detect wasted bits: the largest `w < b` such that every sample is
+    divisible by `2^w` (certified by `Flac.Encode.wastedDetectF_dvd`). -/
+def wastedDetectF (b : Nat) (blk : Array Int) : Nat :=
+  if b = 0 then 0 else wastedGo b blk 0 (b - 1)
 
 /-! ## Subframe plan (mirror of `Heuristics.defaultChooser`) -/
 
@@ -716,9 +719,9 @@ def SubPlan.EmitOk (p : SubPlan) (xs : Array Int) : Prop :=
   match p with
   | .constant => True
   | .verbatim => True
-  | .fixed ord po ks =>
+  | .fixed ord po _ =>
     (Rice.partSizes xs.size po ord).sum ≤ (Emit.fixedResA ord xs).size
-  | .lpc cs shift po ks =>
+  | .lpc cs shift po _ =>
     (Rice.partSizes xs.size po cs.length).sum ≤ (Emit.lpcResA cs shift xs).size
 
 /-- Partitioned coded residual (method RICE, the only one the default
