@@ -930,6 +930,42 @@ def pushRiceRange (k mask : Nat) (res : Array Int) :
     else ⟨buf, acc, n⟩
   termination_by i stop => stop - i
 
+/-- `pushRiceRange` with **one** flush per sample instead of two.
+
+    The split loop pushes the unary field, flushes, pushes the `k`-bit
+    remainder, flushes again. Both fields fit in the accumulator together, so
+    the first flush is avoidable: `flushBytes` emits byte `[j, j+8)` of its
+    accumulator, and shifting the accumulator left by `k` moves that byte to
+    `[j+k, j+k+8)`, so one flush at `n₁ + k` emits exactly the bytes the two
+    flushes did.
+
+    That needs the byte to still be inside the 64-bit word. `n < 8` and
+    `q < 32` give `n₁ ≤ 39`, so `k ≤ 25` suffices — which
+    `Flac.Spec.Encode.pushRiceRangeF_eq` requires and `pushPartsR` checks
+    **once per partition**, not per sample. Every partition the encoder emits
+    has `k ≤ 14` (`Rice.Method.rice4`), so the fallback is unreachable in
+    practice but keeps the loop total for the `k ≤ 32` the simulation admits.
+
+    Worth ~4% of encode. The byte count written is unchanged; what goes away
+    is a call and its loop test per sample. -/
+def pushRiceRangeF (k mask : Nat) (res : Array Int) :
+    (i stop : Nat) → (buf : ByteArray) → (acc : UInt64) → (n : Nat) → BitWriter
+  | i, stop, buf, acc, n =>
+    if h : i < stop then
+      let x := res.getD i 0
+      let u := if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1
+      let q := u >>> k
+      if q < 32 then
+        let acc2 := BitWriter.accPush (BitWriter.accPush acc (q + 1) 1) k u
+        let nF := n + (q + 1) + k
+        pushRiceRangeF k mask res (i + 1) stop
+          (BitWriter.flushBytes buf acc2 nF) acc2 (nF % 8)
+      else
+        let w := (BitWriter.mk buf acc n).pushRiceFolded k u
+        pushRiceRangeF k mask res (i + 1) stop w.buf w.acc w.n
+    else ⟨buf, acc, n⟩
+  termination_by i stop => stop - i
+
 /-- The per-partition Rice parameters as the reference's choice list. The
     fast plan carries `ks : Array Nat`; `Rice.Partition` is what
     `Emit.W.pushParts` consumes. -/
@@ -947,7 +983,11 @@ def pushPartsR (m : Rice.Method) (res : Array Int) :
     let bw' := match ch with
       | .rice k =>
         let w := bw.push m.paramBits k
-        pushRiceRange k (p2 k - 1) res start (start + sz) w.buf w.acc w.n
+        -- the fused loop needs `k ≤ 25`; tested per partition, not per sample
+        if k ≤ 25 then
+          pushRiceRangeF k (p2 k - 1) res start (start + sz) w.buf w.acc w.n
+        else
+          pushRiceRange k (p2 k - 1) res start (start + sz) w.buf w.acc w.n
       | .escape bits =>
         BitWriter.pushSIntSeg bits res start sz
           ((bw.push m.paramBits m.escapeCode).push 5 bits)

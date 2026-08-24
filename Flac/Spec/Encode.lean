@@ -342,6 +342,122 @@ private theorem W_push_mask (w : Emit.W) (k v : Nat) :
   rw [p2_eq, Nat.and_two_pow_sub_one_eq_mod, Nat.and_two_pow_sub_one_eq_mod,
     Nat.mod_mod]
 
+/-! ## Fusing the hot loop's two flushes
+
+`pushRiceRangeF` writes the unary field and the remainder into the
+accumulator and flushes once. The bytes are the same ones the split loop
+wrote: `flushBytes` emits byte `[j, j+8)` of its accumulator, and shifting the
+accumulator left by `k` moves that byte to `[j+k, j+k+8)`, so a flush at
+`n₁ + k` emits the leading bytes of a flush at `n₁` followed by the bytes of
+the second flush. The only way that fails is a byte shifted out of the 64-bit
+word, which the `n₁ + k ≤ 64` guard excludes. -/
+
+/-- The byte `flushBytes` reads at `j + b` from a left-shifted accumulator is
+    the byte it reads at `j` from the original, provided that byte is still
+    inside the word. -/
+private theorem shift_byte {a : UInt64} {b u j : Nat} (hb : b ≤ 32)
+    (hfit : j + b + 8 ≤ 64) :
+    ((BitWriter.accPush a b u) >>> UInt64.ofNat (j + b)).toUInt8
+      = (a >>> UInt64.ofNat j).toUInt8 := by
+  have hacc : (BitWriter.accPush a b u).toNat
+      = a.toNat % 2 ^ (64 - b) * 2 ^ b + u % 2 ^ b := by
+    have hkk : (UInt64.ofNat b).toNat % 64 = b := toNat_ofNat_small (by omega)
+    have hmul : (a <<< UInt64.ofNat b).toNat = a.toNat % 2 ^ (64 - b) * 2 ^ b := by
+      rw [UInt64.toNat_shiftLeft, hkk]
+      show a.toNat <<< b % 2 ^ 64 = _
+      rw [Nat.shiftLeft_eq, show (2 : Nat) ^ 64 = 2 ^ (64 - b) * 2 ^ b from by
+        rw [← Nat.pow_add]; congr 1; omega, Nat.mul_mod_mul_right]
+    show ((a <<< UInt64.ofNat b) ||| _).toNat = _
+    rw [UInt64.toNat_or, hmul, mask_toNat hb,
+      ← Nat.shiftLeft_eq (a.toNat % 2 ^ (64 - b)) b,
+      ← Nat.shiftLeft_add_eq_or_of_lt (Nat.mod_lt _ (Nat.two_pow_pos b)) _,
+      Nat.shiftLeft_eq]
+  refine UInt8.toNat_inj.1 ?_
+  rw [UInt64.toNat_toUInt8, UInt64.toNat_toUInt8, UInt64.toNat_shiftRight,
+    UInt64.toNat_shiftRight, toNat_ofNat_small (by omega),
+    toNat_ofNat_small (by omega), Nat.shiftRight_eq_div_pow,
+    Nat.shiftRight_eq_div_pow, hacc]
+  -- drop the low `b` bits, then compare the two truncations byte-wise
+  have hb1 : (a.toNat % 2 ^ (64 - b) * 2 ^ b + u % 2 ^ b) / 2 ^ b
+      = a.toNat % 2 ^ (64 - b) := by
+    rw [Nat.add_comm, Nat.mul_comm, Nat.add_mul_div_left _ _ (Nat.two_pow_pos b),
+      Nat.div_eq_of_lt (Nat.mod_lt _ (Nat.two_pow_pos b)), Nat.zero_add]
+  have hdrop : (a.toNat % 2 ^ (64 - b) * 2 ^ b + u % 2 ^ b) / 2 ^ (j + b)
+      = a.toNat % 2 ^ (64 - b) / 2 ^ j := by
+    rw [show (2 : Nat) ^ (j + b) = 2 ^ b * 2 ^ j from by
+      rw [← Nat.pow_add]; congr 1; omega, ← Nat.div_div_eq_div_mul, hb1]
+  rw [hdrop]
+  exact byte_seg (Nat.mod_mod_of_dvd _ (Nat.pow_dvd_pow 2 (by omega)))
+
+/-- One flush for two fields. -/
+private theorem flushBytes_fuse (a : UInt64) {b u : Nat} (hb : b ≤ 32) :
+    ∀ n1 : Nat, n1 + b ≤ 64 → ∀ buf : ByteArray,
+      BitWriter.flushBytes (BitWriter.flushBytes buf a n1)
+          (BitWriter.accPush a b u) (n1 % 8 + b)
+        = BitWriter.flushBytes buf (BitWriter.accPush a b u) (n1 + b) := by
+  intro n1
+  induction n1 using Nat.strongRecOn with
+  | ind n1 ih =>
+    intro hfit buf
+    by_cases h8 : n1 < 8
+    · -- nothing to peel yet, and `n1 % 8 = n1`
+      have hin : BitWriter.flushBytes buf a n1 = buf := by
+        rw [BitWriter.flushBytes, dif_pos h8]
+      rw [hin, Nat.mod_eq_of_lt h8]
+    · -- peel the same byte off both sides and recurse at `n1 - 8`
+      have hin : BitWriter.flushBytes buf a n1
+          = BitWriter.flushBytes
+              (buf.push (a >>> UInt64.ofNat (n1 - 8)).toUInt8) a (n1 - 8) := by
+        rw [BitWriter.flushBytes, dif_neg h8]
+      have hout : BitWriter.flushBytes buf (BitWriter.accPush a b u) (n1 + b)
+          = BitWriter.flushBytes
+              (buf.push ((BitWriter.accPush a b u)
+                >>> UInt64.ofNat (n1 + b - 8)).toUInt8)
+              (BitWriter.accPush a b u) (n1 + b - 8) := by
+        rw [BitWriter.flushBytes, dif_neg (show ¬ n1 + b < 8 from by omega)]
+      rw [hin, hout, show n1 + b - 8 = n1 - 8 + b from by omega,
+        shift_byte hb (show n1 - 8 + b + 8 ≤ 64 from by omega),
+        show n1 % 8 = (n1 - 8) % 8 from by omega]
+      exact ih (n1 - 8) (by omega) (by omega) _
+
+/-- `pushRiceFolded` leaves fewer than eight bits pending, like every
+    `push`. -/
+private theorem pushRiceFolded_n (bw : BitWriter) (k u : Nat) :
+    (bw.pushRiceFolded k u).n < 8 := by
+  show ((bw.pushUnary (u >>> k)).push k (u &&& (p2 k - 1))).n < 8
+  rw [BitWriter.push]
+  exact Nat.mod_lt _ (by omega)
+
+/-- The fused hot loop is the split one, for every `k` the encoder emits. -/
+theorem pushRiceRangeF_eq {k : Nat} (hk : k ≤ 25) (mask : Nat) (res : Array Int) :
+    ∀ (len start : Nat) (buf : ByteArray) (acc : UInt64) (n : Nat), n < 8 →
+      pushRiceRangeF k mask res start (start + len) buf acc n
+        = pushRiceRange k mask res start (start + len) buf acc n := by
+  intro len
+  induction len with
+  | zero =>
+    intro start buf acc n _
+    rw [pushRiceRangeF, pushRiceRange]
+    simp only []
+    rw [dif_neg (by omega), dif_neg (by omega)]
+  | succ len ih =>
+    intro start buf acc n hn
+    rw [pushRiceRangeF, pushRiceRange]
+    simp only []
+    rw [dif_pos (show start < start + (len + 1) from by omega),
+      dif_pos (show start < start + (len + 1) from by omega),
+      show start + (len + 1) = start + 1 + len from by omega]
+    by_cases hq : (if 0 ≤ res.getD start 0 then 2 * (res.getD start 0).toNat
+        else 2 * (-res.getD start 0).toNat - 1) >>> k < 32
+    · rw [if_pos hq, if_pos hq]
+      rw [← flushBytes_fuse (BitWriter.accPush acc
+            ((if 0 ≤ res.getD start 0 then 2 * (res.getD start 0).toNat
+              else 2 * (-res.getD start 0).toNat - 1) >>> k + 1) 1)
+            (by omega) _ (by omega) buf, Nat.mod_add_mod]
+      exact ih _ _ _ _ (Nat.mod_lt _ (by omega))
+    · rw [if_neg hq, if_neg hq]
+      exact ih _ _ _ _ (pushRiceFolded_n _ _ _)
+
 /-- The hot loop simulates `Emit.W.pushRiceSeg`. The partition never runs
     past the residual (`start + len ≤ res.size`), which is what lets the
     fast loop test only `i < stop` where the model also tests the array
@@ -412,9 +528,19 @@ theorem sim_pushPartsR (m : Rice.Method) (res : Array Int) :
       simp only [pushPartsR, Emit.W.pushParts]
       cases ch with
       | rice k =>
-        exact ih szs (start + sz) hk' hb' _ _
-          (sim_pushRiceRange (hk k (List.mem_cons_self ..)) res sz start hbnd _ _
-            (sim_push (paramBits_le m) bw w h))
+        -- the fused loop is the split one wherever it is taken; reduce the
+        -- `cases ch` match first, or the `k ≤ 25` test is still under a binder
+        dsimp only
+        by_cases h25 : k ≤ 25
+        · rw [if_pos h25, pushRiceRangeF_eq h25 _ res sz start _ _ _
+            (by simp only [BitWriter.push]; exact Nat.mod_lt _ (by omega))]
+          exact ih szs (start + sz) hk' hb' _ _
+            (sim_pushRiceRange (hk k (List.mem_cons_self ..)) res sz start hbnd _ _
+              (sim_push (paramBits_le m) bw w h))
+        · rw [if_neg h25]
+          exact ih szs (start + sz) hk' hb' _ _
+            (sim_pushRiceRange (hk k (List.mem_cons_self ..)) res sz start hbnd _ _
+              (sim_push (paramBits_le m) bw w h))
       | escape bits =>
         exact ih szs (start + sz) hk' hb' _ _
           (sim_pushSIntSeg bits res start sz _ _
