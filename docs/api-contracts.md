@@ -96,6 +96,28 @@ says what the docstring promises. The residue — does `decode_encodeChecked`
 mean "round-trips"? — stays with the reader, which is one more reason
 theorem statements, not prose, should be the API reference of record.
 
+## The perimeter: two corollaries from the CLI findings
+
+Two later audit findings extend the coverage question from theorems to
+the project's other guarantee mechanisms, and belong to this note's
+discipline rather than to new machinery:
+
+- **The gate's jurisdiction follows the linker, not the proofs.** P9
+  ([`09-lint-surface.md`](09-lint-surface.md)): the shipped binary's
+  `main` lives in the test package, outside both the theorem surface and
+  the merge gate's no-panic lint — a coverage gap in the *lint* tier
+  exactly analogous to P7's gap in the theorem tier. Rule: derive the
+  gate's file scope from what the executables link; any code reachable
+  from a `main` gets at least the no-panic tier.
+- **Prose claims are contracts with no checker.** P10
+  ([`10-prose-claims.md`](10-prose-claims.md)): a docstring asserted
+  "recurses exactly once" about behavior nothing checked, and it was
+  wrong. Rule: a quantified behavioral claim in prose either names the
+  theorem or test that checks it, or is rewritten as description. The
+  `@[covered_by]` mechanism above generalizes: documentation that
+  *derives from* checked artifacts cannot drift; documentation that
+  merely *sits near* code can.
+
 ## Relation to the resource notes
 
 The resource notes ([`cost-semantics.md`](cost-semantics.md),

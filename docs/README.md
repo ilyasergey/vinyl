@@ -100,7 +100,15 @@ Every finding lives in a layer the proofs do not reach.
   P7 — proven properties not attached to the names users call. The four
   rules (guard by default, natural names carry the strongest guarantee,
   an API-to-theorem map at the gate, subtype escalation) and how far the
-  map can be mechanized with a `@[covered_by]` checker.
+  map can be mechanized with a `@[covered_by]` checker; plus the
+  perimeter corollaries from P9/P10 (gate scope follows the linker,
+  prose claims need checkers).
+- [Spec validation](spec-validation.md): checking the model against
+  RFC 9639, motivated by P5/P11 — the four accept/emit set relations and
+  why the existing referees only tested the positive two; an RFC
+  traceability matrix as a gate-checked artifact, must-reject corpora,
+  referee triangulation, and an explicit accept-set predicate as the
+  research goal.
 
 ## See also
 

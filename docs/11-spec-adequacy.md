@@ -69,4 +69,7 @@ the deviation is written down, which before this round it was not.
 - Internal consistency proofs (round-trips) cannot detect model-level
   deviations by construction; budget for an external referee —
   conformance files, differential runs against another implementation —
-  as part of the verification story, not as optional QA.
+  as part of the verification story, not as optional QA. How to organize
+  the referees so this class cannot hide (traceability matrix,
+  must-reject corpora, referee triangulation, an explicit accept-set
+  predicate) is developed in [`spec-validation.md`](spec-validation.md).

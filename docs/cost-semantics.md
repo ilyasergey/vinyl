@@ -330,6 +330,19 @@ cost model is immediately tested against code that cheats for speed.
   equation), so instrumenting it means charging code no correctness
   theorem mentions: a clean test of whether the cost monad can bound work
   the value logic never looks at.
+- **Deciding a guard has a cost.** P8
+  ([issue #8](https://github.com/ilyasergey/vinyl/issues/8),
+  [`08-late-guards.md`](08-late-guards.md)): a decidable predicate is
+  free in the model but its `Decidable` instance is a program, and the
+  data it inspects must exist before it runs — the `ch ≤ 8` check was
+  decided on an `Audio` value whose construction cost was proportional
+  to the rejected `ch`. In the cost monad, the guard's charge is the
+  construction's charge plus the decision procedure's, in evaluation
+  order, so a linear-budget theorem over `encodePcm16CfgC` would have
+  failed exactly at the eager `deinterleave` — guard-order bugs become
+  proof holes the same way allocation bugs do. The open design question
+  is how to charge `Decidable` instances compositionally rather than
+  per-site.
 
 ## 8. A concrete starting path for Vinyl
 
