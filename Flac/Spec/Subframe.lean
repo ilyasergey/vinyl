@@ -39,9 +39,12 @@ theorem typeCode_lt {cfg : SubframeCfg} {b : Nat} {xs : List Int}
     simp only [SubframeCfg.typeCode]
     omega
 
-/-- Content round-trip at a fixed (already wasted-reduced) bit depth. -/
+/-- Content round-trip at a fixed (already wasted-reduced) bit depth.
+    `hfit` is where the decoder's `b`-bit wrap (the anti-divergence
+    bound on predictor restore) is discharged: on samples that fit, the
+    wrap is the identity. -/
 theorem readContent_writeContent (b : Nat) (cfg : SubframeCfg) (xs : List Int)
-    (hv : cfg.Valid b xs) (rest : BitStream) :
+    (hv : cfg.Valid b xs) (hfit : ∀ x ∈ xs, FitsSInt b x) (rest : BitStream) :
     readContent xs.length b cfg.typeCode (writeContent b cfg xs ++ rest)
       = some (xs, rest) := by
   match cfg with
@@ -68,7 +71,7 @@ theorem readContent_writeContent (b : Nat) (cfg : SubframeCfg) (xs : List Int)
       if_pos (by omega : 8 ≤ 8 + ord ∧ 8 + ord ≤ 12)]
     simp only [show 8 + ord - 8 = ord from by omega, hseq,
       readResidual_writeResidual xs.length ord rcfg (Fixed.residual ord xs) hrv,
-      Fixed.restore_residual ord xs (by omega)]
+      Fixed.restore_residual b ord xs (by omega) hfit]
   | .lpc cs shift prec rcfg =>
     obtain ⟨ho1, ho2, hwarm, hp1, hp2, hcs, hsh, hrv⟩ := hv
     have hordlen : cs.length < xs.length := by
@@ -95,20 +98,24 @@ theorem readContent_writeContent (b : Nat) (cfg : SubframeCfg) (xs : List Int)
     simp only [show prec - 1 + 1 = prec from by omega,
       show ((shift : Int)).toNat = shift from by omega, hcseq,
       readResidual_writeResidual xs.length cs.length rcfg (Lpc.residual cs shift xs) hrv,
-      Lpc.restore_residual cs shift xs]
+      Lpc.restore_residual b cs shift xs hfit]
 
 /-- **Subframe round-trip** (wasted bits included): reading back a written
     subframe recovers the block, for every valid configuration. -/
 theorem read_write (b : Nat) (sc : SubCfg) (xs : List Int)
-    (hv : sc.Valid b xs) (rest : BitStream) :
+    (hv : sc.Valid b xs) (hfit : ∀ x ∈ xs, FitsSInt b x) (rest : BitStream) :
     read xs.length b (write b sc xs ++ rest) = some (xs, rest) := by
   obtain ⟨hwlt, hdvd, hinner⟩ := hv
+  have hfitw : ∀ y ∈ xs.map (shiftDown sc.wasted), FitsSInt (b - sc.wasted) y := by
+    intro y hy
+    obtain ⟨x, hxmem, rfl⟩ := List.mem_map.mp hy
+    exact fitsSInt_shiftDown b sc.wasted hwlt x (hfit x hxmem) (hdvd x hxmem)
   have hcontent : ∀ t, readContent xs.length (b - sc.wasted) sc.inner.typeCode
       (writeContent (b - sc.wasted) sc.inner (xs.map (shiftDown sc.wasted)) ++ t)
       = some (xs.map (shiftDown sc.wasted), t) := by
     intro t
     have h := readContent_writeContent (b - sc.wasted) sc.inner
-      (xs.map (shiftDown sc.wasted)) hinner t
+      (xs.map (shiftDown sc.wasted)) hinner hfitw t
     rwa [List.length_map] at h
   have htc : sc.inner.typeCode < 2 ^ 6 := typeCode_lt hinner
   by_cases hw : sc.wasted = 0

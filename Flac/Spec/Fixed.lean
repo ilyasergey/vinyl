@@ -1,16 +1,21 @@
 import Flac.Native.Fixed
+import Flac.Spec.Bits
 
 /-!
 # L3-fixed proofs — fixed-predictor restore round-trip
 
 Restoring from the warmup
-samples and the order-`ord` residual recovers the original samples. The
+samples and the order-`ord` residual recovers the original samples —
+including the decoder's final `b`-bit wrap, which is the identity because
+the original samples fit `b` bits. The
 proof is an induction on `ord`, peeling one differencing step at a time;
 the only interesting ingredients are that `diffN` commutes with `take` and
 that `undiff1` inverts `diff1` given the correct first sample.
 -/
 
 namespace Flac.Fixed
+
+open Flac.Bits (FitsSInt wrapSInt map_wrapSInt_of_fits)
 
 @[simp] theorem diff1_nil : diff1 [] = [] := rfl
 @[simp] theorem diff1_single (x : Int) : diff1 [x] = [] := rfl
@@ -79,11 +84,14 @@ theorem undiff1_diff1 (xs : List Int) (h : xs ≠ []) :
       rw [this]
 
 /-- **L3-fixed keystone**:
-    fixed-predictor decode inverts encode for every order. -/
-theorem restore_residual (ord : Nat) (xs : List Int) (h : ord ≤ xs.length) :
-    restore ord (xs.take ord) (residual ord xs) = xs := by
+    fixed-predictor decode inverts encode for every order, for every
+    block whose samples fit the bit depth (which is when the decoder's
+    wrap is the identity). -/
+theorem restore_residual (b ord : Nat) (xs : List Int) (h : ord ≤ xs.length)
+    (hfit : ∀ x ∈ xs, FitsSInt b x) :
+    restore b ord (xs.take ord) (residual ord xs) = xs := by
   induction ord with
-  | zero => rfl
+  | zero => exact map_wrapSInt_of_fits b xs hfit
   | succ ord ih =>
     have hne : diffN ord xs ≠ [] := by
       intro hc
@@ -91,7 +99,7 @@ theorem restore_residual (ord : Nat) (xs : List Int) (h : ord ≤ xs.length) :
       rw [hc] at hl
       simp only [List.length_nil] at hl
       omega
-    show restore ord ((xs.take (ord + 1)).take ord)
+    show restore b ord ((xs.take (ord + 1)).take ord)
       (undiff1 ((diffN ord (xs.take (ord + 1))).headD 0) (diff1 (diffN ord xs))) = xs
     rw [List.take_take, Nat.min_eq_left (by omega),
       diffN_take ord xs (ord + 1), show ord + 1 - ord = 1 by omega,
@@ -123,14 +131,14 @@ theorem undiffA_toList (x0 : Int) (ds : Array Int) :
 
 /-- The array restore computes the list restore. -/
 theorem restoreA_toList :
-    ∀ (ord : Nat) (warmup : List Int) (res : Array Int),
-      (restoreA ord warmup res).toList = restore ord warmup res.toList := by
-  intro ord
+    ∀ (b ord : Nat) (warmup : List Int) (res : Array Int),
+      (restoreA b ord warmup res).toList = restore b ord warmup res.toList := by
+  intro b ord
   induction ord with
-  | zero => intro w res; rfl
+  | zero => intro w res; simp [restoreA, restore]
   | succ ord ih =>
     intro w res
-    show (restoreA ord (w.take ord) (undiffA ((diffN ord w).headD 0) res)).toList = _
+    show (restoreA b ord (w.take ord) (undiffA ((diffN ord w).headD 0) res)).toList = _
     rw [ih, undiffA_toList]
     rfl
 

@@ -1461,7 +1461,7 @@ theorem chooseSub_cfg_valid {b : Nat} (hb : 0 < b) (blk : Array Int)
     intro x hx
     obtain ⟨y, hy, hxy⟩ := List.mem_map.1 hx
     rw [← hxy]
-    exact Flac.Heuristics.fitsSInt_shiftDown b _ hlt y (hfit y hy) (hdvd y hy)
+    exact Flac.Bits.fitsSInt_shiftDown b _ hlt y (hfit y hy) (hdvd y hy)
   have hlen : (chooseSub b blk).scaled.size
       = (blk.toList.map (Flac.Bits.shiftDown (chooseSub b blk).wasted)).length := by
     rw [← Array.length_toList, hsc]

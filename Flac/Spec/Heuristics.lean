@@ -149,44 +149,6 @@ theorem defaultChooser_valid (b : Nat) (blk : List Int)
 
 /-! ## Wasted-bits detection -/
 
-/-- Scaling down an exactly-divisible sample keeps it in the reduced
-    width: the pointwise width bookkeeping of-/
-theorem fitsSInt_shiftDown (b w : Nat) (hw : w < b) (x : Int)
-    (hfit : FitsSInt b x) (hdvd : ((2 ^ w : Nat) : Int) ∣ x) :
-    FitsSInt (b - w) (shiftDown w x) := by
-  obtain ⟨q, hq⟩ := hdvd
-  have hP : (0 : Int) < ((2 ^ w : Nat) : Int) := by
-    have := Nat.two_pow_pos w
-    omega
-  have hqx : shiftDown w x = q := by
-    rw [shiftDown, hq, Int.mul_ediv_cancel_left _ (by omega)]
-  rw [hqx]
-  obtain ⟨h1, h2⟩ := hfit
-  have hsplit : (2 ^ b : Nat) = 2 ^ w * 2 ^ (b - w) := by
-    rw [← Nat.pow_add]
-    congr 1
-    omega
-  rw [hsplit] at h1 h2
-  constructor
-  · have h1' : ((2 ^ w : Nat) : Int) * -((2 ^ (b - w) : Nat) : Int)
-        ≤ ((2 ^ w : Nat) : Int) * (2 * q) := by
-      calc ((2 ^ w : Nat) : Int) * -((2 ^ (b - w) : Nat) : Int)
-          = -(((2 ^ w * 2 ^ (b - w) : Nat) : Int)) := by
-            rw [Int.natCast_mul]
-            rw [Int.mul_neg]
-        _ ≤ 2 * x := h1
-        _ = ((2 ^ w : Nat) : Int) * (2 * q) := by rw [hq]; ac_rfl
-    have := Int.le_of_mul_le_mul_left h1' hP
-    omega
-  · have h2' : ((2 ^ w : Nat) : Int) * (2 * q)
-        < ((2 ^ w : Nat) : Int) * ((2 ^ (b - w) : Nat) : Int) := by
-      calc ((2 ^ w : Nat) : Int) * (2 * q)
-          = 2 * x := by rw [hq]; ac_rfl
-        _ < ((2 ^ w * 2 ^ (b - w) : Nat) : Int) := h2
-        _ = ((2 ^ w : Nat) : Int) * ((2 ^ (b - w) : Nat) : Int) := by
-            rw [Int.natCast_mul]
-    exact Int.lt_of_mul_lt_mul_left h2' (by omega)
-
 theorem wastedDetect_lt (b : Nat) (hb : 1 ≤ b) (xs : List Int) :
     wastedDetect b xs < b := by
   unfold wastedDetect

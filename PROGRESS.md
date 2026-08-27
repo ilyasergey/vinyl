@@ -1918,3 +1918,53 @@ short, i.e. 157 → 166 MB/s. Remaining: `fixedFoldTail` (~7.5%, already the
 right shape; only lever is fewer fixed orders, which trades ratio),
 `acorr3`/`acorr1` (~8%), `FloatArray` construction (~8%, where the window
 probe showed the cost is the array build not the arithmetic), `crc16` (~4%).
+
+---
+
+## 2026-08-27 — Session 17: P1 fix — wrap predictor restore to the bit depth
+
+**Landed:** the fix for audit finding P1 (issue #1, LPC predictor
+divergence → GMP abort). New primitive `Flac.Bits.wrapSInt n x`: the
+`n`-bit two's-complement representative of `x`'s residue class mod `2^n`,
+in-range test first so the hot path is two comparisons, no division.
+`Lpc.restoreA`/`Lpc.restore` wrap **inside** the recurrence (the wrapped
+sample is what enters the prediction history — `sar` is not a mod-2^b
+homomorphism, and the unwrapped feedback is exactly what diverged).
+`Fixed.restoreA`/`Fixed.restore` wrap as one pointwise pass at order 0
+(the undiff chain is additions only, which commute with residues, so the
+end wrap computes per-step wrapping; `Array.map` runs in place on the
+uniquely-owned decode array). Both `readContent`s pass the subframe bit
+depth down, so wasted-bits subframes wrap at `b - w` and stereo side
+subframes at `b + 1`.
+
+**Proof side:** `wrapSInt_eq_of_fits` (identity on `FitsSInt n`, so every
+capstone keeps its statement) and `fitsSInt_wrapSInt` (the result always
+fits — the adversarial-input bound that was missing, for arbitrary input).
+`restore_residual` (both predictors) gained the hypothesis "all samples
+fit `b`", threaded `readContent_writeContent` → `Subframe.read_write`
+(via `fitsSInt_shiftDown`, moved from `Spec/Heuristics` to `Spec/Bits`) →
+`readChannels_spec` (new private `side_all_fits`/`mid_all_fits` in
+`Spec/Frame`) → `Frame.read_write` → `readFrames_writeFrames` →
+`decodeReference_encode`, where `Audio.WellFormed` supplies it. The
+runtime-checked `SubframeCfg.Valid` certificate is deliberately
+*unchanged*: strengthening it to "all samples fit" would have added a
+per-sample scan to `safeChooser`'s per-frame decide on the encode hot
+path; threading the hypothesis costs the encoder nothing.
+
+**Verified:** `lpc_bomb.flac` (all three decode modes) now exits 0 at
+~5–21 MB peak RSS instead of multi-GB + SIGABRT; output PCM byte-identical
+on a 32 MB synthetic encode/decode round-trip; decode cost of the wrap
+~2% single-threaded on that probe (0.46 s → 0.47–0.48 s), encoder
+untouched. `scripts/check.sh` green, 111 checks (9 new in `wrapTests`,
+including a 4096-sample divergent-predictor regression).
+
+**Knowledge capture:** `docs/robustness-theorems.md` — why round-trip +
+totality proofs cannot catch this bug class (they quantify over the
+encoder's image, not the decoder's domain; totality bounds nothing), the
+taxonomy of theorem kinds vs bug classes (value bounds, output-size
+bounds, stack shape, early validation), and the reusable fix pattern
+(bounded primitive + identity-on-valid lemma + hypothesis threading).
+
+**Next:** end-to-end boundedness theorem (`decodeArrays` samples fit
+`bps + 2` for arbitrary bytes — all local pieces now exist), then P2/P3
+(output-size vs input-size bound in the frame loop).

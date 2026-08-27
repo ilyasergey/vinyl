@@ -125,6 +125,21 @@ def readSInt (n : Nat) (s : BitStream) : Option (Int × BitStream) :=
   | some (v, s') =>
     some (if 2 * v < 2 ^ n then (v : Int) else (v : Int) - ((2 ^ n : Nat) : Int), s')
 
+/-- Reduce `x` to the `n`-bit two's-complement representative of its
+    residue class mod `2^n` — what a conformant fixed-width decoder's
+    register arithmetic computes. Identity on values that already fit
+    (`Flac.Spec.Bits.wrapSInt_eq_of_fits`), and the result always fits
+    (`Flac.Spec.Bits.fitsSInt_wrapSInt`). Applied inside the predictor
+    restore loops so that reconstructed samples can never outgrow the
+    subframe's bit depth on adversarial streams; the in-range test comes
+    first so the hot path never divides. -/
+@[inline] def wrapSInt (n : Nat) (x : Int) : Int :=
+  let P : Int := ((p2 n : Nat) : Int)
+  if -P ≤ 2 * x ∧ 2 * x < P then x
+  else
+    let m := x % P
+    if 2 * m < P then m else m - P
+
 /-! ## Bytes ↔ bits -/
 
 /-- One byte as 8 bits, MSB first. -/

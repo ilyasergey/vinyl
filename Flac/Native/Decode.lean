@@ -268,7 +268,7 @@ def readContent (bs b ty : Nat) (br : BitReader) : Option (Array Int × BitReade
     | some (warmup, br) =>
       match readResidualA bs (ty - 8) br with
       | none => none
-      | some (res, br) => some (Fixed.restoreA (ty - 8) warmup res, br)
+      | some (res, br) => some (Fixed.restoreA b (ty - 8) warmup res, br)
   else if 32 ≤ ty then
     match readSIntSeq b (ty - 31) br with
     | none => none
@@ -288,7 +288,7 @@ def readContent (bs b ty : Nat) (br : BitReader) : Option (Array Int × BitReade
                 match readResidualA bs (ty - 31) br with
                 | none => none
                 | some (res, br) =>
-                  some (Lpc.restoreA cs sh.toNat warmup res, br)
+                  some (Lpc.restoreA b cs sh.toNat warmup res, br)
             else none
   else none
 

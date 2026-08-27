@@ -232,7 +232,8 @@ theorem readFrames_writeFrames (b0 b : Nat) (varBlk : Bool) (blockSize : Nat)
       (∀ j, j < frs.length →
         (if varBlk then (i + j) * blockSize else i + j) < 2 ^ 36) →
       (∀ fr ∈ frs, 1 ≤ (fr.headD []).length ∧ (fr.headD []).length ≤ 65536 ∧
-        (chooser fr).Valid b (fr.headD []).length fr) →
+        (chooser fr).Valid b (fr.headD []).length fr ∧
+        ∀ c ∈ fr, ∀ x ∈ c, FitsSInt b x) →
       readFrames b0 fuel (writeFrames b varBlk blockSize chooser i frs)
         = some frs := by
   intro frs
@@ -245,7 +246,7 @@ theorem readFrames_writeFrames (b0 b : Nat) (varBlk : Bool) (blockSize : Nat)
     match fuel with
     | 0 => simp only [List.length_cons] at hfuel; omega
     | fuel + 1 =>
-      obtain ⟨hl1, hl2, hval⟩ := hv fr (List.mem_cons_self ..)
+      obtain ⟨hl1, hl2, hval, hfitf⟩ := hv fr (List.mem_cons_self ..)
       have hnum0 : (if varBlk then i * blockSize else i) < 2 ^ 36 := by
         have h0 := hnum 0 (by simp)
         simpa using h0
@@ -266,7 +267,7 @@ theorem readFrames_writeFrames (b0 b : Nat) (varBlk : Bool) (blockSize : Nat)
         (fun q hq => hv q (List.mem_cons_of_mem _ hq))
       simp only [writeFrames, readFrames, if_neg hne,
         Frame.read_write b0 b varBlk (if varBlk then i * blockSize else i)
-          (chooser fr) fr _ hb hnum0 hl1 hl2 hval,
+          (chooser fr) fr _ hb hnum0 hl1 hl2 hval hfitf,
         hih]
 
 private theorem mem_zip_map_self {α β : Type} (f : α → β) :
@@ -321,15 +322,17 @@ theorem decodeReference_encode (cfg : EncoderCfg) (a : Audio)
   have heq' : ∀ c ∈ a.channels, c.length = (a.channels.headD []).length := heq
   have hframes : ∀ fr ∈ chunkChannels cfg.blockSize a.channels,
       1 ≤ (fr.headD []).length ∧ (fr.headD []).length ≤ 65536 ∧
-      (cfg.safeChooser a.bps fr).Valid a.bps (fr.headD []).length fr := by
+      (cfg.safeChooser a.bps fr).Valid a.bps (fr.headD []).length fr ∧
+      ∀ c ∈ fr, ∀ x ∈ c, FitsSInt a.bps x := by
     intro fr hfr
     obtain ⟨h1, h2, h3, h4, h5⟩ :=
       chunkFrames_mem cfg.blockSize a.channels (by omega) heq' fr hfr
-    refine ⟨h3, by omega, ?_⟩
-    refine orVerbatim_valid (by omega) h2 (by omega) (by omega) ?_
-    intro c hc x hx
-    obtain ⟨corig, hcorig, hsub⟩ := h5 c hc
-    exact hfit corig hcorig x (hsub x hx)
+    have hfitfr : ∀ c ∈ fr, ∀ x ∈ c, FitsSInt a.bps x := by
+      intro c hc x hx
+      obtain ⟨corig, hcorig, hsub⟩ := h5 c hc
+      exact hfit corig hcorig x (hsub x hx)
+    exact ⟨h3, by omega,
+      orVerbatim_valid (by omega) h2 (by omega) (by omega) hfitfr, hfitfr⟩
   unfold encode decodeReference
   rw [bytesToBits_bitsToBytes _ (writeStream_length_dvd cfg a)]
   unfold writeStream

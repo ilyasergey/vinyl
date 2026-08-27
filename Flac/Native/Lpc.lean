@@ -44,16 +44,25 @@ def residualAux (cs : List Int) (shift : Nat) (hist : List Int) :
 def residual (cs : List Int) (shift : Nat) (xs : List Int) : List Int :=
   residualAux cs shift (xs.take cs.length).reverse (xs.drop cs.length)
 
-def restoreAux (cs : List Int) (shift : Nat) (hist : List Int) :
+/-- Sample reconstruction, wrapped to `b`-bit two's complement *inside*
+    the recurrence: the wrapped sample is what enters the prediction
+    history, exactly as in a fixed-width decoder. Without the wrap a
+    crafted subframe (large coefficient, shift 0) diverges geometrically
+    and the exact-ℤ samples exhaust memory — the wrap bounds every
+    reconstructed sample by construction
+    (`Flac.Spec.Bits.fitsSInt_wrapSInt`), and is the identity on every
+    stream the encoder produced (`Flac.Spec.Lpc.restore_residual`
+    carries the hypothesis). -/
+def restoreAux (b : Nat) (cs : List Int) (shift : Nat) (hist : List Int) :
     List Int → List Int
   | [] => []
   | r :: res =>
-    let x := r + predict cs shift hist
-    x :: restoreAux cs shift (x :: hist) res
+    let x := Bits.wrapSInt b (r + predict cs shift hist)
+    x :: restoreAux b cs shift (x :: hist) res
 
-/-- Restore samples from warmup and residual. -/
-def restore (cs : List Int) (shift : Nat) (warmup res : List Int) : List Int :=
-  warmup ++ restoreAux cs shift warmup.reverse res
+/-- Restore samples from warmup and residual at bit depth `b`. -/
+def restore (b : Nat) (cs : List Int) (shift : Nat) (warmup res : List Int) : List Int :=
+  warmup ++ restoreAux b cs shift warmup.reverse res
 
 /-! ### Array forms (the production decoder's hot path)
 
@@ -208,10 +217,12 @@ body. These are the bodies; `Flac.Emit.lpcResGo{k}` are the loops. -/
 
 /-- `restore` with the residual (and result) as arrays: the array is both
     the accumulating output and the prediction history. Callers guarantee
-    `cs.length ≤ warmup.length` (the subframe grammar always does). -/
-def restoreA (cs : List Int) (shift : Nat) (warmup : List Int) (res : Array Int) :
+    `cs.length ≤ warmup.length` (the subframe grammar always does). The
+    per-sample wrap is two comparisons on the in-range path — noise next
+    to the prediction dot product. -/
+def restoreA (b : Nat) (cs : List Int) (shift : Nat) (warmup : List Int) (res : Array Int) :
     Array Int :=
-  res.foldl (fun out r => out.push (r + predictA cs shift out))
+  res.foldl (fun out r => out.push (Bits.wrapSInt b (r + predictA cs shift out)))
     ((Array.emptyWithCapacity (warmup.length + res.size)) ++ warmup.toArray)
 
 end Flac.Lpc

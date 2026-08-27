@@ -336,6 +336,29 @@ def bitsTests : TestM Unit := do
   checkEq "align pads to byte" (Bits.alignToByte [true, true, false]).length 8
   checkEq "align keeps aligned" (Bits.alignToByte (Bits.byteToBits 1)).length 8
 
+/-! ## Two's-complement wrap — the anti-divergence bound on predictor
+    restore (P1 audit finding, issue #1) -/
+
+def wrapTests : TestM Unit := do
+  -- identity in range, two's-complement wrap out of range
+  checkEq "wrapSInt id in range" (Bits.wrapSInt 16 32767) 32767
+  checkEq "wrapSInt id at low end" (Bits.wrapSInt 16 (-32768)) (-32768)
+  checkEq "wrapSInt wraps high" (Bits.wrapSInt 16 32768) (-32768)
+  checkEq "wrapSInt wraps low" (Bits.wrapSInt 16 (-32769)) 32767
+  checkEq "wrapSInt residue class" (Bits.wrapSInt 4 100) 4
+  checkEq "wrapSInt width 0" (Bits.wrapSInt 0 (-7)) 0
+  -- P1 regression: an order-1 predictor with coefficient 2^14-1 and
+  -- shift 0 diverges as 16383^n in exact ℤ; the in-loop wrap must keep
+  -- every reconstructed sample inside the 16-bit range instead (4096
+  -- samples previously built multi-GB bignums and aborted in GMP)
+  let out := Lpc.restoreA 16 [16383] 0 [1] (Array.replicate 4096 0)
+  check "LPC divergence stays 16-bit bounded"
+    (out.all fun x => -32768 ≤ x && x < 32768)
+  checkEq "LPC divergence output size" out.size 4097
+  -- the fixed-predictor restore wraps its output the same way
+  check "fixed order-0 restore wraps to 8-bit"
+    ((Fixed.restoreA 8 0 [] #[300, -300]).all fun x => -128 ≤ x && x < 128)
+
 /-- With an argument, write sample encoded streams into that directory
     (for differential testing against `flac`/`ffmpeg` from the shell). -/
 def emitSamples (dir : String) : IO Unit := do
@@ -524,7 +547,7 @@ def cliMain (args : List String) : IO UInt32 := do
     IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
     IO.eprintln usage
     return 2
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0

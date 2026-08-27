@@ -113,7 +113,7 @@ def readContent (bs b ty : Nat) (s : BitStream) : Option (List Int × BitStream)
     | some (warmup, s) =>
       match Rice.readResidual bs (ty - 8) s with
       | none => none
-      | some (res, s) => some (Fixed.restore (ty - 8) warmup res, s)
+      | some (res, s) => some (Fixed.restore b (ty - 8) warmup res, s)
   else if 32 ≤ ty then                   -- ty ≤ 63 always (6-bit field)
     match readSIntSeq b (ty - 31) s with
     | none => none
@@ -133,7 +133,7 @@ def readContent (bs b ty : Nat) (s : BitStream) : Option (List Int × BitStream)
                 match Rice.readResidual bs (ty - 31) s with
                 | none => none
                 | some (res, s) =>
-                  some (Lpc.restore cs sh.toNat warmup res, s)
+                  some (Lpc.restore b cs sh.toNat warmup res, s)
             else none
   else none                              -- reserved / invalid
 

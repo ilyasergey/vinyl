@@ -165,6 +165,44 @@ theorem map_shiftUp_shiftDown (w : Nat) (xs : List Int)
     unfold shiftUp shiftDown
     rw [p2_eq, Int.ediv_mul_cancel hx]
 
+/-- Scaling down an exactly-divisible sample keeps it in the reduced
+    width: the pointwise width bookkeeping of wasted bits. -/
+theorem fitsSInt_shiftDown (b w : Nat) (hw : w < b) (x : Int)
+    (hfit : FitsSInt b x) (hdvd : ((2 ^ w : Nat) : Int) ∣ x) :
+    FitsSInt (b - w) (shiftDown w x) := by
+  obtain ⟨q, hq⟩ := hdvd
+  have hP : (0 : Int) < ((2 ^ w : Nat) : Int) := by
+    have := Nat.two_pow_pos w
+    omega
+  have hqx : shiftDown w x = q := by
+    rw [shiftDown, hq, Int.mul_ediv_cancel_left _ (by omega)]
+  rw [hqx]
+  obtain ⟨h1, h2⟩ := hfit
+  have hsplit : (2 ^ b : Nat) = 2 ^ w * 2 ^ (b - w) := by
+    rw [← Nat.pow_add]
+    congr 1
+    omega
+  rw [hsplit] at h1 h2
+  constructor
+  · have h1' : ((2 ^ w : Nat) : Int) * -((2 ^ (b - w) : Nat) : Int)
+        ≤ ((2 ^ w : Nat) : Int) * (2 * q) := by
+      calc ((2 ^ w : Nat) : Int) * -((2 ^ (b - w) : Nat) : Int)
+          = -(((2 ^ w * 2 ^ (b - w) : Nat) : Int)) := by
+            rw [Int.natCast_mul]
+            rw [Int.mul_neg]
+        _ ≤ 2 * x := h1
+        _ = ((2 ^ w : Nat) : Int) * (2 * q) := by rw [hq]; ac_rfl
+    have := Int.le_of_mul_le_mul_left h1' hP
+    omega
+  · have h2' : ((2 ^ w : Nat) : Int) * (2 * q)
+        < ((2 ^ w : Nat) : Int) * ((2 ^ (b - w) : Nat) : Int) := by
+      calc ((2 ^ w : Nat) : Int) * (2 * q)
+          = 2 * x := by rw [hq]; ac_rfl
+        _ < ((2 ^ w * 2 ^ (b - w) : Nat) : Int) := h2
+        _ = ((2 ^ w : Nat) : Int) * ((2 ^ (b - w) : Nat) : Int) := by
+            rw [Int.natCast_mul]
+    exact Int.lt_of_mul_lt_mul_left h2' (by omega)
+
 /-! ## Signed integers -/
 
 /-- Two's-complement round-trip for `n`-bit signed integers. -/
@@ -182,6 +220,39 @@ theorem readSInt_writeSInt (n : Nat) (x : Int) (h : FitsSInt n x)
     omega
   · rw [Nat.mod_eq_of_lt (by omega), if_neg (by omega)]
     omega
+
+/-- `wrapSInt` is the identity exactly where the value already fits —
+    what makes the decoder's wrap invisible on every stream the encoder
+    can produce. -/
+theorem wrapSInt_eq_of_fits (n : Nat) (x : Int) (h : FitsSInt n x) :
+    wrapSInt n x = x := by
+  obtain ⟨h1, h2⟩ := h
+  simp only [wrapSInt, p2_eq]
+  rw [if_pos ⟨h1, h2⟩]
+
+/-- The wrapped value always fits: the decoder-side bound that keeps
+    predictor feedback from diverging on adversarial streams. -/
+theorem fitsSInt_wrapSInt (n : Nat) (x : Int) : FitsSInt n (wrapSInt n x) := by
+  have hP : (0 : Int) < ((2 ^ n : Nat) : Int) := by
+    have := Nat.two_pow_pos n
+    omega
+  simp only [wrapSInt, p2_eq]
+  split
+  · next h => exact h
+  · have h0 : 0 ≤ x % ((2 ^ n : Nat) : Int) := Int.emod_nonneg x (by omega)
+    have hlt : x % ((2 ^ n : Nat) : Int) < ((2 ^ n : Nat) : Int) :=
+      Int.emod_lt_of_pos x hP
+    split <;> exact ⟨by omega, by omega⟩
+
+/-- Pointwise wrap is the identity on lists of fitting values. -/
+theorem map_wrapSInt_of_fits (n : Nat) (xs : List Int)
+    (h : ∀ x ∈ xs, FitsSInt n x) : xs.map (wrapSInt n) = xs := by
+  induction xs with
+  | nil => rfl
+  | cons x t ih =>
+    simp only [List.map_cons]
+    rw [wrapSInt_eq_of_fits n x (h x (List.mem_cons_self ..)),
+      ih (fun y hy => h y (List.mem_cons_of_mem _ hy))]
 
 /-! ## Byte packing -/
 
