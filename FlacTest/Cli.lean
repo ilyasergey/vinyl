@@ -556,15 +556,42 @@ def usage : String :=
   "  vinyl (no arguments)\n" ++
   "      run the unit-test suite"
 
+/-- Strip **every** leading `-j n` / `--threads n` / `--threads=n` in one
+    pass, returning the last count given (matching what the strip-one-then-
+    re-exec loop used to converge to) and the remaining arguments. One pass
+    means `withThreads` re-executes at most once however many flags are
+    stacked (audit finding P10, issue #10 — it used to re-exec once *per*
+    flag, nesting a full Lean runtime each time). Pure, so the "no leading
+    flag survives" property is pinned by unit tests. -/
+def stripThreadFlags (args : List String) : Option String × List String :=
+  go none args
+where
+  go (cur : Option String) : List String → Option String × List String
+    | "-j" :: n :: rest => go (some n) rest
+    | "--threads" :: n :: rest => go (some n) rest
+    | flag :: rest =>
+      if flag.startsWith "--threads=" then
+        go (some (flag.drop "--threads=".length).toString) rest
+      else (cur, flag :: rest)
+    | [] => (cur, [])
+
+/-- The sentinel a re-executed child carries: `withThreads` refuses to
+    spawn when it is present, so however the argument parser evolves, the
+    process tree can never grow past one re-execution deep. -/
+def threadsSentinel : String := "VINYL_THREADS_SET"
+
 /-- Run `args` in a copy of this process whose Lean task pool is capped at
     `n` workers, and return its exit code.
 
     Lean sizes the task pool from `LEAN_NUM_THREADS` when the runtime starts,
     which is before `main` is entered, so a flag cannot resize the pool of the
-    process that parses it — hence the re-execution. The child never sees the
-    flag again, so this recurses exactly once. It costs one extra process
-    (~3 ms of Lean runtime init); `bench/real_run.py` sets the variable
-    directly instead, so no benchmark pays it. -/
+    process that parses it — hence the re-execution. The caller strips *all*
+    leading thread flags first (`stripThreadFlags`), and the child carries
+    `threadsSentinel`, which this function refuses to re-exec past — so one
+    invocation spawns at most one child, no matter what the arguments say.
+    It costs one extra process (~3 ms of Lean runtime init);
+    `bench/real_run.py` sets the variable directly instead, so no benchmark
+    pays it. -/
 def withThreads (n : String) (args : List String) : IO UInt32 := do
   match n.toNat? with
   | none =>
@@ -574,11 +601,15 @@ def withThreads (n : String) (args : List String) : IO UInt32 := do
     if workers = 0 then
       IO.eprintln "--threads: worker count must be at least 1"
       return 2
+    if (← IO.getEnv threadsSentinel).isSome then
+      IO.eprintln "--threads: refusing to re-execute twice (nested thread flags?)"
+      return 2
     let self ← IO.appPath
     let child ← IO.Process.spawn
       { cmd := self.toString
         args := args.toArray
-        env := #[("LEAN_NUM_THREADS", some (toString workers))] }
+        env := #[("LEAN_NUM_THREADS", some (toString workers)),
+                 (threadsSentinel, some "1")] }
     child.wait
 
 /-- Report a bad invocation: the message, then usage, exit 2. A typo in a
@@ -622,16 +653,39 @@ def encodeSlowMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
     IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, channels/blockSize/sampleRate out of range, or sample rate 0 with nonempty audio)"
     return 1
 
-def cliMain (args : List String) : IO UInt32 := do
-  -- the thread flag is leading and consumed here, so every branch below sees
-  -- the command alone, exactly as if the flag had not been given
-  match args with
-  | "-j" :: n :: rest => return ← withThreads n rest
-  | "--threads" :: n :: rest => return ← withThreads n rest
-  | flag :: rest =>
-    if flag.startsWith "--threads=" then
-      return ← withThreads (flag.drop "--threads=".length).toString rest
-  | [] => pure ()
+/-! ## Thread-flag stripping (audit finding P10)
+
+`stripThreadFlags` is pure precisely so this property is testable: user
+input is a *list*, so "leading flag" logic must be stated over runs of
+flags, not single occurrences — the property that matters is that no
+leading thread flag survives a single pass. -/
+
+def threadFlagTests : TestM Unit := do
+  checkEq "P10: single -j" (stripThreadFlags ["-j", "2", "--decode", "a", "b"])
+    (some "2", ["--decode", "a", "b"])
+  checkEq "P10: --threads= form" (stripThreadFlags ["--threads=8", "cmd"])
+    (some "8", ["cmd"])
+  checkEq "P10: stacked mixed flags collapse in one pass, last wins"
+    (stripThreadFlags ["-j", "2", "--threads", "4", "--threads=8", "cmd"])
+    (some "8", ["cmd"])
+  checkEq "P10: 40 stacked flags collapse in one pass"
+    (stripThreadFlags (((List.range 40).flatMap fun _ => ["-j", "2"]) ++ ["cmd"]))
+    (some "2", ["cmd"])
+  checkEq "P10: no leading flag survives (idempotence)"
+    (stripThreadFlags (stripThreadFlags (["-j", "2", "--threads=4", "run"])).2)
+    (none, ["run"])
+  checkEq "P10: non-leading flags are arguments, not flags"
+    (stripThreadFlags ["--decode", "-j", "2"]) (none, ["--decode", "-j", "2"])
+  checkEq "P10: no flags at all" (stripThreadFlags ["--decode", "a"])
+    (none, ["--decode", "a"])
+
+def cliMain (rawArgs : List String) : IO UInt32 := do
+  -- thread flags are leading and ALL consumed here in one pass, so every
+  -- branch below sees the command alone, exactly as if no flag had been
+  -- given, and at most one re-execution happens (audit finding P10)
+  let (threadCount, args) := stripThreadFlags rawArgs
+  if let some n := threadCount then
+    return ← withThreads n args
   if args = ["--help"] ∨ args = ["-h"] then
     IO.println usage
     return 0
@@ -705,7 +759,7 @@ def cliMain (args : List String) : IO UInt32 := do
     IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
     IO.eprintln usage
     return 2
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; encoderGuardTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; encoderGuardTests; threadFlagTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0
