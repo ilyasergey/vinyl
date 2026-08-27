@@ -18,9 +18,9 @@ Whole-file totals, metadata included (libFLAC writes 8.8 kB per file, Vinyl 42 b
 
 | threads | vinyl (encode) | flac -8 (encode) | vinyl decode | flac decode |
 |---:|---|---|---|---|
-| 1 | 31.1 MB/s | 72.8 MB/s | 51.2 MB/s | 133.4 MB/s |
-| 2 | 53.5 MB/s | 113.3 MB/s | 80.4 MB/s | no `-j` |
-| 4 | 88.8 MB/s | 162.1 MB/s | 110.9 MB/s | no `-j` |
-| 8 | 111.2 MB/s | 175.6 MB/s | 123.0 MB/s | no `-j` |
+| 1 | 46.6 MB/s | 87.6 MB/s | 69.8 MB/s | 149.9 MB/s |
+| 2 | 79.6 MB/s | 127.3 MB/s | 108.3 MB/s | no `-j` |
+| 4 | 122.9 MB/s | 171.6 MB/s | 142.6 MB/s | no `-j` |
+| 8 | 158.6 MB/s | 185.3 MB/s | 160.7 MB/s | no `-j` |
 
-Speedup at 8 threads: vinyl 3.57×, flac -8 2.41×, vinyl decode 2.40×.
+Speedup at 8 threads: vinyl 3.40×, flac -8 2.11×, vinyl decode 2.30×.

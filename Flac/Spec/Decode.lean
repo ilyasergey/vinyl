@@ -600,15 +600,19 @@ theorem readSubframe_sim (bs b : Nat) (br : BitReader) :
           by_cases h1 : w.1 = 0
           · rw [if_pos h1, if_pos h1]
             exact readContent_sim bs b q.1 w.2
-          · rw [if_neg h1, if_neg h1, readUnary_sim w.2]
-            cases w.2.readUnary with
+          · rw [if_neg h1, if_neg h1, readUnaryUpTo_sim b w.2]
+            cases w.2.readUnaryUpTo b with
             | none => rfl
             | some k =>
               simp only [Option.map_some]
-              rw [readContent_sim bs (b - (k.1 + 1)) q.1 k.2]
-              cases readContent bs (b - (k.1 + 1)) q.1 k.2 with
-              | none => rfl
-              | some u => simp only [Option.map_some, Array.toList_map]
+              by_cases hk : k.1 + 1 < b
+              · rw [if_pos hk, if_pos hk,
+                  readContent_sim bs (b - (k.1 + 1)) q.1 k.2]
+                cases readContent bs (b - (k.1 + 1)) q.1 k.2 with
+                | none => rfl
+                | some u => simp only [Option.map_some, Array.toList_map]
+              · rw [if_neg hk, if_neg hk]
+                rfl
     · rw [if_neg h0, if_neg h0]
       rfl
 
@@ -903,11 +907,14 @@ theorem posOK_readSubframe (bs b : Nat) : PosOK (readSubframe bs b) := by
           split at h
           · exact posOK_step s1 (posOK_step s2 (posOK_step s3
               (posOK_readContent bs b ty br3 a br' hw3 h)))
-          · match h4 : br3.readUnary with
+          · match h4 : br3.readUnaryUpTo b with
             | none => rw [h4] at h; simp at h
             | some (k, br4) =>
               simp only [h4] at h
-              have s4' := readUnary_spec h4
+              by_cases hk : k + 1 < b
+              case neg => rw [if_neg hk] at h; simp at h
+              rw [if_pos hk] at h
+              have s4' := readUnaryUpTo_spec h4
               have s4 : br4.data = br3.data ∧ br3.pos ≤ br4.pos ∧ br4.pos ≤ br3.size :=
                 ⟨s4'.1, by omega, s4'.2.2⟩
               match h5 : readContent bs (b - (k + 1)) ty br4 with
@@ -2125,6 +2132,99 @@ theorem readFramesFast_eq (b0 : Nat) (d : ByteArray) (fuel pos : Nat)
   · rw [readFramesSteps_eq]
     exact readFramesAt_eq b0 d fuel pos hwf
 
+/-! ### The decoded-output budget on the native loops
+
+The budgeted loops are the plain loops plus one cumulative cost check on
+a `some` result — so every equivalence above transfers through a single
+bridging equation per loop, and the decompression-bomb cap
+(`Flac.Stream.decodeBudget`, audit finding P2) never re-proves any of
+them. -/
+
+/-- The budgeted steps loop is the steps loop with the cost check. -/
+theorem readFramesStepsB_eq (b0 : Nat) (d : ByteArray)
+    (steps : Array (Step b0 d)) :
+    ∀ (budget fuel pos : Nat),
+      readFramesStepsB b0 d steps budget fuel pos
+        = (readFramesSteps b0 d steps fuel pos).bind
+            (fun frs => if frameCostTotalA frs ≤ budget then some frs
+              else none) := by
+  intro budget fuel
+  induction fuel generalizing budget with
+  | zero =>
+    intro pos
+    unfold readFramesStepsB readFramesSteps
+    by_cases h0 : 8 * d.size - pos = 0
+    · rw [if_pos h0]
+      simp [frameCostTotalA]
+    · rw [if_neg h0]
+      rfl
+  | succ fuel ih =>
+    intro pos
+    unfold readFramesStepsB readFramesSteps
+    by_cases h0 : 8 * d.size - pos = 0
+    · rw [if_pos h0, if_pos h0]
+      simp [frameCostTotalA]
+    · rw [if_neg h0, if_neg h0]
+      match stepFor b0 d steps pos with
+      | none => rfl
+      | some (chs, next) =>
+        dsimp only
+        rw [ih]
+        by_cases hc : frameCostA chs ≤ budget
+        · rw [if_pos hc]
+          match readFramesSteps b0 d steps fuel next with
+          | none => rfl
+          | some rest =>
+            show (match (if frameCostTotalA rest ≤ budget - frameCostA chs
+                then some rest else none) with
+              | none => none
+              | some rest => some (chs :: rest))
+              = if frameCostTotalA (chs :: rest) ≤ budget
+                then some (chs :: rest) else none
+            have htot : frameCostTotalA (chs :: rest)
+                = frameCostA chs + frameCostTotalA rest := by
+              simp [frameCostTotalA]
+            by_cases hr : frameCostTotalA rest ≤ budget - frameCostA chs
+            · rw [if_pos hr, if_pos (by omega)]
+            · rw [if_neg hr, if_neg (by omega)]
+        · rw [if_neg hc]
+          match readFramesSteps b0 d steps fuel next with
+          | none => rfl
+          | some rest =>
+            show none = if frameCostTotalA (chs :: rest) ≤ budget
+                then some (chs :: rest) else none
+            have htot : frameCostTotalA (chs :: rest)
+                = frameCostA chs + frameCostTotalA rest := by
+              simp [frameCostTotalA]
+            rw [if_neg (by omega)]
+
+/-- The budgeted shipped loop, against the position-form serial loop —
+    either branch, any steps. -/
+theorem readFramesFastB_eq_At (b0 : Nat) (d : ByteArray)
+    (budget fuel pos : Nat) :
+    readFramesFastB b0 d budget fuel pos
+      = (readFramesAt b0 d fuel pos).bind
+          (fun frs => if frameCostTotalA frs ≤ budget then some frs
+            else none) := by
+  unfold readFramesFastB
+  split <;> rw [readFramesStepsB_eq, readFramesSteps_eq]
+
+/-- The frame cost is computed on arrays exactly as the reference computes
+    it on lists. -/
+theorem frameCostTotalA_toList (frames : List (List (Array Int))) :
+    Stream.frameCostTotal (frames.map (·.map (·.toList)))
+      = frameCostTotalA frames := by
+  induction frames with
+  | nil => rfl
+  | cons fr frs ih =>
+    have hfr : Stream.frameCost (fr.map (·.toList)) = frameCostA fr := by
+      unfold Stream.frameCost frameCostA
+      rw [List.map_map]
+      congr 1
+    simp only [List.map_cons, Stream.frameCostTotal, frameCostTotalA,
+      List.sum_cons] at ih ⊢
+    rw [hfr, ih]
+
 /-! ### Channel reassembly: the left-fold array form computes `recombine` -/
 
 private theorem zipApp_toList (a : List (Array Int)) :
@@ -2229,16 +2329,28 @@ theorem decodeOption_eq_reference (bytes : ByteArray) :
         have := b2 (b1 hwf0)
         show br2.pos ≤ BitReader.size ⟨bytes, 0⟩
         omega
-      have hfast : readFramesFast si.bps br2.data (br2.remaining + 1) br2.pos
-          = readFrames si.bps (br2.remaining + 1) br2 := by
-        rw [show br2.data = bytes from by rw [d2, d1],
-          readFramesFast_eq si.bps bytes (br2.remaining + 1) br2.pos hwf2,
+      have hd2 : br2.data = bytes := by rw [d2, d1]
+      have hfastB : readFramesFastB si.bps br2.data
+            (Flac.Stream.decodeBudget br2.data) (br2.remaining + 1) br2.pos
+          = (readFrames si.bps (br2.remaining + 1) br2).bind
+              (fun frs => if frameCostTotalA frs
+                  ≤ Flac.Stream.decodeBudget bytes then some frs
+                else none) := by
+        rw [hd2, readFramesFastB_eq_At,
+          readFramesAt_eq si.bps bytes (br2.remaining + 1) br2.pos hwf2,
           ← hbr2]
-      rw [hf2, readFrames_sim si.bps (br2.remaining + 1) br2
-        (by omega) (by have := b2 (b1 hwf0); omega), hfast]
+      rw [hf2, Flac.Stream.readFramesB_eq,
+        readFrames_sim si.bps (br2.remaining + 1) br2
+          (by omega) (by have := b2 (b1 hwf0); omega), hfastB]
       match readFrames si.bps (br2.remaining + 1) br2 with
       | none => rfl
-      | some frames => simp only [Option.map_some, recombineA_toList]
+      | some frames =>
+        simp only [Option.map_some, Option.bind_some, frameCostTotalA_toList]
+        by_cases hc : frameCostTotalA frames ≤ Flac.Stream.decodeBudget bytes
+        · rw [if_pos hc, if_pos hc]
+          simp only [Option.map_some, recombineA_toList]
+        · rw [if_neg hc, if_neg hc]
+          rfl
 
 end Flac.Decode
 
@@ -2254,34 +2366,56 @@ theorem decode_ok_iff_reference (bytes : ByteArray) (a : Stream.Audio) :
   | none => simp
   | some a' => simp
 
-/-- General form of the capstone: any encoder configuration — block size,
-    numbering strategy, and *arbitrary* channel-assignment heuristic. -/
+/-- **The shipped decoder cannot amplify** (audit finding P2): whatever
+    `Flac.decode` accepts — arbitrary bytes, not just encoder output — the
+    decoded samples are bounded linearly in the input size:
+    `2·samples ≤ decodeAmpl · bytes.size + decodeFloor`. A stream past the
+    budget is rejected like a corrupt one, before the memory is spent. -/
+theorem decode_size_le {bytes : ByteArray} {a : Stream.Audio}
+    (h : decode bytes = .ok a) :
+    2 * (a.channels.map (·.length)).sum ≤ Stream.decodeBudget bytes :=
+  Stream.decodeReference_size_le ((decode_ok_iff_reference bytes a).mp h)
+
+/-- General form of the capstone: any encoder configuration — block size
+    (16–4608: above that, the decoder's decompression-bomb budget can
+    legitimately reject an all-CONSTANT stream), numbering strategy, and
+    *arbitrary* channel-assignment heuristic. -/
 theorem decode_encode_cfg (cfg : Stream.EncoderCfg) (a : Stream.Audio)
     (hwf : a.WellFormed)
-    (hbs1 : 16 ≤ cfg.blockSize) (hbs2 : cfg.blockSize ≤ 65535) :
-    decode (Stream.encode cfg a) = .ok a :=
+    (hbs1 : 16 ≤ cfg.blockSize) (hbs2 : cfg.blockSize ≤ 4608) :
+    decode (Stream.Unchecked.encode cfg a) = .ok a :=
   (decode_ok_iff_reference _ _).mpr
     (Stream.decodeReference_encode cfg a hwf hbs1 hbs2)
 
-/-- **The capstone**: decoding an encoded stream recovers the samples,
-    for every well-formed audio. `Flac.encode` and `Flac.decode` are the
-    shipped production entry points; `Audio.WellFormed` says exactly
-    "representable as FLAC" (1–8 equal-length channels, bit depth 1–32,
-    samples in range, STREAMINFO field bounds) and is decidable. -/
-theorem decode_encode (a : Stream.Audio) (h : a.WellFormed) :
-    decode (encode a) = .ok a :=
-  decode_encode_cfg _ a h (by show 16 ≤ 4096; omega) (by show 4096 ≤ 65535; omega)
+/-- Conditional capstone for the raw default-configuration encoder: on
+    its stated domain — and only there, which is why it lives under
+    `Unchecked` — it round-trips. -/
+theorem decode_encode_unchecked (a : Stream.Audio) (h : a.WellFormed) :
+    decode (Unchecked.encode a) = .ok a :=
+  decode_encode_cfg _ a h (by show 16 ≤ 4096; omega) (by show 4096 ≤ 4608; omega)
 
-/-- Hypothesis-free capstone for the runtime-checked encoder: whenever
-    `encodeChecked` returns bytes at all, decoding them recovers the
-    samples. The runner's test *is* the theorem's precondition. -/
-theorem decode_encodeChecked {a : Stream.Audio} {bytes : ByteArray}
-    (h : encodeChecked a = some bytes) : decode bytes = .ok a := by
-  unfold encodeChecked at h
+/-- **The capstone**, hypothesis-free: whenever the public encoder
+    returns bytes at all, decoding them recovers the samples.
+    `Flac.encode` and `Flac.decode` are the shipped production entry
+    points; since the P7 round `encode` checks `Audio.WellFormed` —
+    exactly "representable as FLAC" (1–8 equal-length channels, bit depth
+    1–32, samples in range, STREAMINFO field bounds), decidable — at
+    runtime, so the guarantee needs no hypothesis a caller could fail to
+    have read. -/
+theorem decode_encode {a : Stream.Audio} {bytes : ByteArray}
+    (h : encode a = some bytes) : decode bytes = .ok a := by
+  unfold encode at h
   split at h
   · cases h
-    exact decode_encode a ‹_›
+    exact decode_encode_unchecked a ‹_›
   · cases h
+
+/-- The same guarantee under the compatibility alias `encodeChecked`
+    (the checked encoder's name from when the unchecked one held the
+    natural name). -/
+theorem decode_encodeChecked {a : Stream.Audio} {bytes : ByteArray}
+    (h : encodeChecked a = some bytes) : decode bytes = .ok a :=
+  decode_encode h
 
 /-- Hypothesis-free capstone, arbitrary configuration. -/
 theorem decode_encodeCheckedCfg {cfg : Stream.EncoderCfg}
@@ -2688,7 +2822,8 @@ theorem decodePcm16_encodePcm16Cfg {cfg : Stream.EncoderCfg}
   split at h
   case isFalse => cases h
   case isTrue hc =>
-    obtain ⟨hch, hsz⟩ := hc
+    unfold Pcm16ShapeOk at hc
+    obtain ⟨hch, _hch8, hsz, _hsr0⟩ := hc
     have hdec := decode_encodeCheckedCfg h
     unfold decodePcm16
     simp only [hdec]

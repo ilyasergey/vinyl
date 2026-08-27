@@ -11,7 +11,7 @@ encoder emits under the default heuristics: same subframe searches, same
 Rice partitioning, same tie-breaking, byte-for-byte.
 
 That "byte-for-byte" is now a theorem. `Flac.Encode.encodePcm16_eq` proves
-this file's output *is* `Flac.Stream.encode`'s, at the `EncoderCfg` whose
+this file's output *is* `Flac.Stream.Unchecked.encode`'s, at the `EncoderCfg` whose
 chooser is this file's own search (`fastChooser`), so the byte-level
 round-trip theorem `Flac.Stream.decodePcm16_encodePcm16Fast` holds with no
 hypotheses, no runtime certificate, and no trust in the code here. The
@@ -1019,7 +1019,7 @@ def FramePrep.asg (fp : FramePrep) : Frame.ChannelAsg :=
   | _, qs => .independent (qs.map fun q => q.1.cfg)
 
 /-- The reference chooser the shipped encoder's decisions denote: the
-    `EncoderCfg.chooser` to instantiate `Flac.Stream.encode` with so that it
+    `EncoderCfg.chooser` to instantiate `Flac.Stream.Unchecked.encode` with so that it
     emits exactly what the fast encoder emits. Its `Float` search is never
     reasoned about — only applied, on both sides of every equation. -/
 def fastChooser (b : Nat) (fr : List (List Int)) : Frame.ChannelAsg :=

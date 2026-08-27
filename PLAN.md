@@ -38,6 +38,14 @@ theorem Flac.decode_encode (pcm : Audio) (opts : EncoderOptions)
     Flac.decode (Flac.encode pcm opts) = .ok pcm
 ```
 
+*(Landed form, after the P7 hardening round: the public `Flac.encode`
+checks `Audio.WellFormed` at runtime, so the shipped capstone is
+hypothesis-free — `Flac.encode a = some bytes → Flac.decode bytes = .ok a`
+(`Flac.decode_encode`); the conditional statement survives as
+`decode_encode_unchecked` about `Flac.Unchecked.encode`, and the
+configurable form is `decode_encode_cfg`. See
+[`docs/07-api-surface.md`](docs/07-api-surface.md).)*
+
 with
 
 ```lean
@@ -96,8 +104,11 @@ Section 6 — outside the kernel, by design.
 **v1 (the verified core, milestones M0–M5):**
 - Native FLAC container: `fLaC` marker, STREAMINFO, PADDING; frames with
   CRC-8 header / CRC-16 footer.
-- All block sizes 16–65535 (last frame may be shorter), all sample rates
-  encodable in the frame header, 4–32 bits per sample, 1–8 channels.
+- All block sizes 16–65535 on decode (last frame may be shorter), all
+  sample rates encodable in the frame header, 4–32 bits per sample, 1–8
+  channels. The encoder stops at block size 4608: above that its own
+  all-CONSTANT output can exceed the decoder's decompression-bomb budget
+  (audit finding P2), and the round-trip capstone would need a hypothesis.
 - Subframes: CONSTANT, VERBATIM, FIXED (orders 0–4), LPC (orders 1–32,
   coefficient precision 1–15 bits, non-negative quantization shift).
 - Wasted-bits flag (decoder: full support; encoder: emits it when detected —

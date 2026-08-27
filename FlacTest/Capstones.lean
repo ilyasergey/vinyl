@@ -19,7 +19,7 @@ they answer "is the thing I ran the thing that was proved?":
 | `--decode-pcm16` | `Flac.decodePcm16A` | `pin_decodePcm16A` |
 | `--decode-fast` | `Flac.Decode.decodeBytes` | `pin_decodeBytes` |
 | `--decode-fast` (fallback) | `Flac.Decode.decodeArrays` | `pin_decodeArrays` |
-| `--decode` | `Stream.decodeReference` | `pin_reference` |
+| `--decode` | `Flac.Decode.decodeOption` | `pin_reference` |
 
 The CLI *call sites* are pinned separately, by grep, in
 `scripts/check.sh` — which function a `do` block invokes is not something
@@ -33,18 +33,40 @@ to be `Stream.pcmBytesRange` of the samples `decodeArrays` returns
 `--decode` still serializes with `Stream.pcmBytesA`; the theorem-backed
 byte-level decode of the reference pipeline is `--decode-pcm16`. See
 `ARCHITECTURE.md`.
+
+Since the P6 round, `--decode` decodes with `Flac.Decode.decodeOption`
+rather than executing `Stream.decodeReference` directly: `pin_reference`
+(`decodeOption_eq_reference`) proves them *pointwise equal*, and the
+reference decoder — which materializes the input as `List Bool` and
+rescans it per frame — stays what it always was, the specification-shaped
+path, no longer something the CLI runs on untrusted input.
 -/
 
 namespace FlacTest.Capstones
 
 open Flac Flac.Stream
 
-/-- **The capstone**: the shipped pair round-trips every well-formed audio. -/
+/-- **The capstone**: whenever the public encoder returns bytes, the
+    shipped pair round-trips them — no hypotheses (P7: the natural name
+    is the checked form, so this is the guarantee a caller cannot avoid
+    holding). -/
 theorem pin_decode_encode :
-    ∀ (a : Audio), a.WellFormed → Flac.decode (Flac.encode a) = .ok a :=
+    ∀ {a : Audio} {bytes : ByteArray},
+      Flac.encode a = some bytes → Flac.decode bytes = .ok a :=
   @Flac.decode_encode
 
-/-- The runtime-checked encoder needs no hypothesis. -/
+/-- API pin (P7): the shortest-path public encoder is the checked one —
+    its *type* refuses off-envelope audio. -/
+example : Audio → Option ByteArray := Flac.encode
+
+/-- The raw encoder, relocated under `Unchecked`, keeps the conditional
+    capstone on its stated domain. -/
+theorem pin_decode_encode_unchecked :
+    ∀ (a : Audio), a.WellFormed →
+      Flac.decode (Flac.Unchecked.encode a) = .ok a :=
+  @Flac.decode_encode_unchecked
+
+/-- The compatibility alias carries the same hypothesis-free guarantee. -/
 theorem pin_encodeChecked :
     ∀ {a : Audio} {bytes : ByteArray},
       Flac.encodeChecked a = some bytes → Flac.decode bytes = .ok a :=

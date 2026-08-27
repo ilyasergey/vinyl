@@ -6,31 +6,52 @@ import Flac.Native.Encode
 /-!
 # The shipped encoder entry points
 
-`Flac.encode` pairs with `Flac.decode` (in `Flac.Native.Decode`); the
-checked variants test the (decidable) precondition at runtime, so a `some`
-result carries the round-trip theorem with no hypotheses.
+`Flac.encode` pairs with `Flac.decode` (in `Flac.Native.Decode`). Since
+the P7 round (issue #7), the natural names are the *checked* forms: they
+test the (decidable) precondition at runtime, so a `some` result carries
+the round-trip theorem with no hypotheses, and `none` is the
+precondition's voice. The raw total encoders — which mod-wrap
+out-of-envelope audio into valid-looking streams denoting different
+samples — live under `Unchecked` namespaces and say so in their
+docstrings.
 -/
 
 namespace Flac
 
-/-- **The encoder**: default heuristics (wasted-bit detection,
-    fixed/LPC order search, Rice parameter search, stereo-mode decision),
-    4096-sample blocks. -/
-def encode (a : Flac.Stream.Audio) : ByteArray :=
-  Flac.Stream.encode ⟨4096, false, Heuristics.defaultAsgChooser a.bps⟩ a
+/-- The raw encoder at the default configuration (wasted-bit detection,
+    fixed/LPC order search, Rice parameter search, stereo-mode decision;
+    4096-sample blocks). Unchecked: precondition `Audio.WellFormed`, and
+    off-domain audio is silently mod-wrapped — see
+    `Flac.Stream.Unchecked.encode`. The checked form under the natural
+    name is `Flac.encode`. -/
+def Unchecked.encode (a : Flac.Stream.Audio) : ByteArray :=
+  Flac.Stream.Unchecked.encode ⟨4096, false, Heuristics.defaultAsgChooser a.bps⟩ a
 
-/-- The encoder with its precondition checked at runtime: a `some` result
+/-- **The encoder**: default heuristics (wasted-bit detection, fixed/LPC
+    order search, Rice parameter search, stereo-mode decision),
+    4096-sample blocks, precondition checked at runtime. A `some` result
     carries the round-trip guarantee with **no hypotheses at all**
-    (`Flac.decode_encodeChecked`). -/
+    (`Flac.decode_encode`); `none` means the audio is not representable
+    as a FLAC stream (`Audio.WellFormed` fails). -/
+def encode (a : Flac.Stream.Audio) : Option ByteArray :=
+  if a.WellFormed then some (Unchecked.encode a) else none
+
+/-- Alias for `Flac.encode`, kept from when the checked encoder was the
+    differently-named sibling of an unchecked `encode`
+    (`Flac.decode_encodeChecked` restates the guarantee under this
+    name). -/
 def encodeChecked (a : Flac.Stream.Audio) : Option ByteArray :=
-  if a.WellFormed then some (encode a) else none
+  encode a
 
 /-- Checked encode under an arbitrary configuration (block size and
-    heuristic supplied by the caller). -/
+    heuristic supplied by the caller). Block sizes stop at 4608: above
+    that, an all-CONSTANT stream (silence) can exceed the decoder's
+    decompression-bomb budget (`Flac.Stream.decodeBudget`), and the
+    round-trip guarantee would no longer be unconditional. -/
 def encodeCheckedCfg (cfg : Flac.Stream.EncoderCfg) (a : Flac.Stream.Audio) :
     Option ByteArray :=
-  if a.WellFormed ∧ 16 ≤ cfg.blockSize ∧ cfg.blockSize ≤ 65535 then
-    some (Flac.Stream.encode cfg a)
+  if a.WellFormed ∧ 16 ≤ cfg.blockSize ∧ cfg.blockSize ≤ 4608 then
+    some (Flac.Stream.Unchecked.encode cfg a)
   else none
 
 /-! ## Byte-level 16-bit PCM pipeline
@@ -75,12 +96,28 @@ def deinterleave (ch : Nat) (l : List Int) : List (List Int) :=
 def interleave (chs : List (List Int)) : List Int :=
   interleaveN (chs.headD []).length chs
 
+/-- The O(1) shape guard shared by both byte-level encoders, checked
+    before anything sized by its arguments is built (audit finding P8; the
+    two entry points used to disagree about guard order, and the slow one
+    materialized `ch` channel lists before `Audio.WellFormed` ever saw
+    `ch`): channel count positive and within FLAC's limit of 8, byte count
+    an even split into 16-bit channels, and a nonzero sample rate whenever
+    there is audio to stamp it on (RFC 9639 §8.2, audit finding P11 —
+    rate 0 is defensible only for empty content). -/
+def Pcm16ShapeOk (ch sampleRate : Nat) (bytes : ByteArray) : Prop :=
+  0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧
+  (bytes.size = 0 ∨ 0 < sampleRate)
+
+instance (ch sr : Nat) (bytes : ByteArray) : Decidable (Pcm16ShapeOk ch sr bytes) := by
+  unfold Pcm16ShapeOk; exact inferInstance
+
 /-- Byte-level encoder, arbitrary configuration: interleaved signed 16-bit
     little-endian PCM with `ch` channels. Checks its whole precondition at
-    runtime (byte-count shape plus audio well-formedness). -/
+    runtime — the O(1) shape guard first, so nothing sized by `ch` exists
+    until `ch` has passed, then audio well-formedness. -/
 def encodePcm16Cfg (cfg : Flac.Stream.EncoderCfg) (ch sampleRate : Nat)
     (bytes : ByteArray) : Option ByteArray :=
-  if 0 < ch ∧ bytes.size % (2 * ch) = 0 then
+  if Pcm16ShapeOk ch sampleRate bytes then
     encodeCheckedCfg cfg
       ⟨deinterleave ch (pcm16OfByteList bytes.data.toList), 16, sampleRate⟩
   else none
@@ -194,22 +231,22 @@ def decodePcm16A (flac : ByteArray) : Except String ByteArray :=
 
 `Flac.Encode` is unverified by design (like the heuristics) — but it is now
 *proven*, not certified per call. `Flac.Encode.encodePcm16_eq` shows it
-computes `Flac.Stream.encode` at the chooser its own search denotes, so the
+computes `Flac.Stream.Unchecked.encode` at the chooser its own search denotes, so the
 byte-level round trip `Flac.Stream.decodePcm16_encodePcm16Fast` follows from
 the reference capstone with no runtime decode and no fallback.
 
 What used to be here — decode the produced bytes with the verified decoder,
 compare with the input, fall back to the verified encoder on mismatch — cost
 31% of encode. The five conditions it silently covered are now O(1) guards
-below; everything else `Stream.encode` checks at run time is discharged by a
+below; everything else `Stream.Unchecked.encode` checks at run time is discharged by a
 theorem (`Flac.Encode.audio_wellFormed`). -/
 
 /-- **The fast byte-level encoder.** `some` results carry the round-trip
     guarantee (`Flac.Stream.decodePcm16_encodePcm16Fast`). -/
 def encodePcm16Fast (blockSize ch sampleRate : Nat) (bytes : ByteArray) :
     Option ByteArray :=
-  if 0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧ sampleRate < 2 ^ 20
-      ∧ bytes.size / (2 * ch) < 2 ^ 36 ∧ 16 ≤ blockSize ∧ blockSize ≤ 65535 then
+  if Pcm16ShapeOk ch sampleRate bytes ∧ sampleRate < 2 ^ 20
+      ∧ bytes.size / (2 * ch) < 2 ^ 36 ∧ 16 ≤ blockSize ∧ blockSize ≤ 4608 then
     some (Encode.encodePcm16 blockSize ch sampleRate bytes)
   else none
 

@@ -63,6 +63,67 @@ def readUnary : BitStream → Option (Nat × BitStream)
     | none => none
     | some (q, s') => some (q + 1, s')
 
+/-- `readUnary` with the run counted in an accumulator, so the recursive
+    call is in tail position: a Rice-residual run can be as long as the
+    remaining input (its enclosing partition bounds the *value*, not the
+    reader's recursion depth), so the reader must not keep a stack frame
+    per zero bit (audit finding P6). -/
+def readUnaryAcc : Nat → BitStream → Option (Nat × BitStream)
+  | _, [] => none
+  | q, true :: s => some (q, s)
+  | q, false :: s => readUnaryAcc (q + 1) s
+
+theorem readUnaryAcc_eq (q : Nat) (s : BitStream) :
+    readUnaryAcc q s
+      = (readUnary s).map fun p : Nat × BitStream => (q + p.1, p.2) := by
+  induction s generalizing q with
+  | nil => rfl
+  | cons b s ih =>
+    cases b with
+    | true => simp [readUnaryAcc, readUnary]
+    | false =>
+      show readUnaryAcc (q + 1) s = _
+      rw [ih]
+      show _ = (match readUnary s with
+        | none => none
+        | some (r, s') => some (r + 1, s')).map
+          fun p : Nat × BitStream => (q + p.1, p.2)
+      cases readUnary s with
+      | none => rfl
+      | some p =>
+        show some (q + 1 + p.1, p.2) = some (q + (p.1 + 1), p.2)
+        rw [Nat.add_assoc, Nat.add_comm 1 p.1]
+
+def readUnaryTR (s : BitStream) : Option (Nat × BitStream) :=
+  readUnaryAcc 0 s
+
+/-- Swap the compiled implementation of `readUnary` for the accumulator
+    form. Kernel-checked, so every theorem keeps reading the structural
+    definition above while the executable runs the constant-stack loop. -/
+@[csimp] theorem readUnary_eq_readUnaryTR : @readUnary = @readUnaryTR := by
+  funext s
+  unfold readUnaryTR
+  rw [readUnaryAcc_eq]
+  cases readUnary s <;> simp
+
+/-- Unary read with an a-priori cap on the run length: `none` unless the
+    terminating one bit lies within the next `lim` bits.
+
+    `readUnary` is the RFC's code, and it is right for Rice residuals,
+    where a run is bounded by the partition it sits in. A wasted-bits
+    count has no such enclosing bound (RFC 9639 §9.2.2 constrains only the
+    resulting depth), so reading it needs the cap supplied here — reading
+    the field must not cost more than the field is allowed to mean.
+    Characterized by `Flac.Spec.Bits.readUnaryUpTo_eq`. -/
+def readUnaryUpTo : (lim : Nat) → BitStream → Option (Nat × BitStream)
+  | 0, _ => none
+  | _ + 1, [] => none
+  | _ + 1, true :: s => some (0, s)
+  | lim + 1, false :: s =>
+    match readUnaryUpTo lim s with
+    | none => none
+    | some (q, s') => some (q + 1, s')
+
 /-- Zero-bits needed to pad `len` bits to a byte boundary. -/
 def padLen (len : Nat) : Nat := (8 - len % 8) % 8
 
@@ -124,6 +185,21 @@ def readSInt (n : Nat) (s : BitStream) : Option (Int × BitStream) :=
   | none => none
   | some (v, s') =>
     some (if 2 * v < 2 ^ n then (v : Int) else (v : Int) - ((2 ^ n : Nat) : Int), s')
+
+/-- Reduce `x` to the `n`-bit two's-complement representative of its
+    residue class mod `2^n` — what a conformant fixed-width decoder's
+    register arithmetic computes. Identity on values that already fit
+    (`Flac.Spec.Bits.wrapSInt_eq_of_fits`), and the result always fits
+    (`Flac.Spec.Bits.fitsSInt_wrapSInt`). Applied inside the predictor
+    restore loops so that reconstructed samples can never outgrow the
+    subframe's bit depth on adversarial streams; the in-range test comes
+    first so the hot path never divides. -/
+@[inline] def wrapSInt (n : Nat) (x : Int) : Int :=
+  let P : Int := ((p2 n : Nat) : Int)
+  if -P ≤ 2 * x ∧ 2 * x < P then x
+  else
+    let m := x % P
+    if 2 * m < P then m else m - P
 
 /-! ## Bytes ↔ bits -/
 

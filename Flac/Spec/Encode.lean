@@ -16,7 +16,7 @@ a `Nat` accumulator, masked at every step.
 `Sim` relates the two, `Simulates` lifts it to writer transformers, and it
 composes by `simulates_comp`. Together with `Flac.Emit.emitFast_eq_encode`
 this is the road to identifying the shipped encoder's bytes with
-`Flac.Stream.encode`'s — with no runtime certificate.
+`Flac.Stream.Unchecked.encode`'s — with no runtime certificate.
 -/
 
 namespace Flac.Encode
@@ -1461,7 +1461,7 @@ theorem chooseSub_cfg_valid {b : Nat} (hb : 0 < b) (blk : Array Int)
     intro x hx
     obtain ⟨y, hy, hxy⟩ := List.mem_map.1 hx
     rw [← hxy]
-    exact Flac.Heuristics.fitsSInt_shiftDown b _ hlt y (hfit y hy) (hdvd y hy)
+    exact Flac.Bits.fitsSInt_shiftDown b _ hlt y (hfit y hy) (hdvd y hy)
   have hlen : (chooseSub b blk).scaled.size
       = (blk.toList.map (Flac.Bits.shiftDown (chooseSub b blk).wasted)).length := by
     rw [← Array.length_toList, hsc]
@@ -2164,13 +2164,13 @@ theorem sim_prefix {blockSize ch sr : Nat} (hch : 0 < ch) (bytes : ByteArray)
 
 /-- **The shipped encoder computes the reference encoder.** Its `Float`
     search, its `UInt64` writer, its per-frame workers — all of it produces
-    exactly the bytes `Flac.Stream.encode` produces for the audio the PCM
+    exactly the bytes `Flac.Stream.Unchecked.encode` produces for the audio the PCM
     pipeline derives, with the search itself as the chooser. -/
 theorem encodePcm16_eq {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
     (hbs : 0 < blockSize) (bytes : ByteArray)
     (hsz : bytes.size % (2 * ch) = 0) :
     encodePcm16 blockSize ch sr bytes
-      = Stream.encode ⟨blockSize, false, fastChooser 16⟩
+      = Stream.Unchecked.encode ⟨blockSize, false, fastChooser 16⟩
           ⟨Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList),
             16, sr⟩ := by
   have hns := numSamples_eq hch bytes sr
@@ -2212,13 +2212,15 @@ theorem encodePcm16_eq {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
     chooser: every runtime check the reference performs is discharged by a
     theorem, so a `some` needs only the O(1) guards. -/
 theorem encodePcm16Cfg_fast {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
-    (bytes : ByteArray) (hsz : bytes.size % (2 * ch) = 0) (hsr : sr < 2 ^ 20)
+    (bytes : ByteArray) (hsz : bytes.size % (2 * ch) = 0)
+    (hsr0 : bytes.size = 0 ∨ 0 < sr) (hsr : sr < 2 ^ 20)
     (hn : bytes.size / (2 * ch) < 2 ^ 36) (hbs16 : 16 ≤ blockSize)
-    (hbs : blockSize ≤ 65535) :
+    (hbs : blockSize ≤ 4608) :
     Flac.encodePcm16Cfg ⟨blockSize, false, fastChooser 16⟩ ch sr bytes
       = some (encodePcm16 blockSize ch sr bytes) := by
   unfold Flac.encodePcm16Cfg
-  rw [if_pos ⟨hch, hsz⟩]
+  rw [if_pos (show Flac.Pcm16ShapeOk ch sr bytes by
+    unfold Flac.Pcm16ShapeOk; exact ⟨hch, hch8, hsz, hsr0⟩)]
   unfold Flac.encodeCheckedCfg
   rw [if_pos ⟨audio_wellFormed hch hch8 bytes hsr hn, hbs16, hbs⟩,
     encodePcm16_eq hch hch8 (by omega) bytes hsz]
@@ -2227,11 +2229,12 @@ theorem encodePcm16Cfg_fast {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch �
     certificate**: decoding what it produced returns exactly the input PCM. -/
 theorem decodePcm16_encodePcm16_direct {blockSize ch sr : Nat} (hch : 0 < ch)
     (hch8 : ch ≤ 8) (bytes : ByteArray) (hsz : bytes.size % (2 * ch) = 0)
-    (hsr : sr < 2 ^ 20) (hn : bytes.size / (2 * ch) < 2 ^ 36)
-    (hbs16 : 16 ≤ blockSize) (hbs : blockSize ≤ 65535) :
+    (hsr0 : bytes.size = 0 ∨ 0 < sr) (hsr : sr < 2 ^ 20)
+    (hn : bytes.size / (2 * ch) < 2 ^ 36)
+    (hbs16 : 16 ≤ blockSize) (hbs : blockSize ≤ 4608) :
     Flac.decodePcm16 (encodePcm16 blockSize ch sr bytes) = .ok bytes :=
   Flac.decodePcm16_encodePcm16Cfg
-    (encodePcm16Cfg_fast hch hch8 bytes hsz hsr hn hbs16 hbs)
+    (encodePcm16Cfg_fast hch hch8 bytes hsz hsr0 hsr hn hbs16 hbs)
 
 end Flac.Encode
 
@@ -2249,9 +2252,11 @@ theorem decodePcm16_encodePcm16Fast {blockSize ch sr : Nat}
   split at h
   case isFalse => cases h
   case isTrue hg =>
-    obtain ⟨hch, hch8, hsz, hsr, hn, hbs16, hbs⟩ := hg
+    obtain ⟨hshape, hsr, hn, hbs16, hbs⟩ := hg
+    unfold Flac.Pcm16ShapeOk at hshape
+    obtain ⟨hch, hch8, hsz, hsr0⟩ := hshape
     cases h
-    exact Flac.Encode.decodePcm16_encodePcm16_direct hch hch8 bytes hsz hsr hn
-      hbs16 hbs
+    exact Flac.Encode.decodePcm16_encodePcm16_direct hch hch8 bytes hsz hsr0 hsr
+      hn hbs16 hbs
 
 end Flac.Stream

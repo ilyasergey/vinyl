@@ -420,6 +420,80 @@ theorem readUnary_sim (br : BitReader) :
     unfold toStream
     rw [show br.pos + (q + 1) = br.pos + q + 1 from by omega]
 
+/-- `readUnaryGo` at *arbitrary* fuel, not just enough fuel: the fuel is
+    exactly a cap on the run length. (`readUnaryGo_sim` is this with the
+    cap discharged by the hypothesis `8 * d.size - pos ≤ fuel`.) -/
+theorem readUnaryGo_sim_lt (d : ByteArray) :
+    ∀ (fuel pos q : Nat),
+      readUnaryGo d q pos fuel
+        = (Bits.readUnary ((bytesToBits d).drop pos)).bind
+            (fun p => if p.1 < fuel then some (q + p.1, pos + p.1 + 1) else none) := by
+  intro fuel
+  induction fuel with
+  | zero =>
+    intro pos q
+    show none = _
+    cases Bits.readUnary ((bytesToBits d).drop pos) with
+    | none => rfl
+    | some p => simp
+  | succ fuel ih =>
+    intro pos q
+    by_cases hp : pos < 8 * d.size
+    · have hcons := toStream_cons ⟨d, pos⟩ (by simp only [size]; omega)
+      simp only [toStream] at hcons
+      rw [hcons]
+      unfold readUnaryGo
+      rw [bitFast_eq]
+      by_cases hbit : bit d pos
+      · rw [if_pos hbit, hbit]
+        show _ = (Bits.readUnary (true :: _)).bind _
+        simp [Bits.readUnary]
+      · rw [if_neg hbit]
+        rw [Bool.not_eq_true] at hbit
+        rw [hbit]
+        show _ = (Bits.readUnary (false :: _)).bind _
+        rw [ih (pos + 1) (q + 1)]
+        simp only [Bits.readUnary]
+        cases Bits.readUnary ((bytesToBits d).drop (pos + 1)) with
+        | none => rfl
+        | some p =>
+          by_cases h : p.1 < fuel
+          · simp only [Option.bind_some, h, if_true,
+              show p.1 + 1 < fuel + 1 from by omega, if_true,
+              Option.some.injEq, Prod.mk.injEq]
+            omega
+          · simp only [Option.bind_some, h, if_false, Option.bind_none,
+              show ¬(p.1 + 1 < fuel + 1) from by omega, if_false]
+    · unfold readUnaryGo
+      rw [if_neg (by rw [bitFast_eq, bit_oob d pos (by omega)]; simp),
+        ih (pos + 1) (q + 1),
+        List.drop_eq_nil_of_le (as := bytesToBits d)
+          (by simp only [length_bytesToBits]; omega),
+        List.drop_eq_nil_of_le (as := bytesToBits d)
+          (by simp only [length_bytesToBits]; omega)]
+      rfl
+
+theorem readUnaryUpTo_sim (lim : Nat) (br : BitReader) :
+    Bits.readUnaryUpTo lim (toStream br)
+      = (br.readUnaryUpTo lim).map (fun p => (p.1, toStream p.2)) := by
+  unfold BitReader.readUnaryUpTo
+  rw [Bits.readUnaryUpTo_eq, readUnaryGo_sim_lt br.data lim br.pos 0]
+  show (Bits.readUnary ((bytesToBits br.data).drop br.pos)).bind _ = _
+  match hr : Bits.readUnary ((bytesToBits br.data).drop br.pos) with
+  | none => rfl
+  | some (q, s') =>
+    by_cases h : q < lim
+    · simp only [Option.bind_some, h, if_true, Option.map_some,
+        Option.some.injEq, Prod.mk.injEq]
+      refine ⟨by omega, ?_⟩
+      rw [readUnary_drop hr]
+      show ((bytesToBits br.data).drop br.pos).drop (q + 1) = _
+      rw [List.drop_drop]
+      show (bytesToBits br.data).drop (br.pos + (q + 1)) = toStream _
+      unfold toStream
+      rw [show br.pos + (q + 1) = br.pos + q + 1 from by omega]
+    · simp only [Option.bind_some, h, if_false, Option.map_none]
+
 theorem readSInt_sim (n : Nat) (br : BitReader) :
     Bits.readSInt n (toStream br)
       = (br.readSInt n).map (fun p => (p.1, toStream p.2)) := by
@@ -485,6 +559,20 @@ theorem readUnary_spec {br br' : BitReader} {q : Nat}
     obtain ⟨-, hbr⟩ := h
     subst hbr
     have := readUnaryGo_spec br.data br.remaining 0 br.pos q0 pos0 hg
+    exact ⟨rfl, this.1, this.2⟩
+
+theorem readUnaryUpTo_spec {lim : Nat} {br br' : BitReader} {q : Nat}
+    (h : br.readUnaryUpTo lim = some (q, br')) :
+    br'.data = br.data ∧ br.pos < br'.pos ∧ br'.pos ≤ br.size := by
+  unfold BitReader.readUnaryUpTo at h
+  match hg : readUnaryGo br.data 0 br.pos lim with
+  | none => rw [hg] at h; simp at h
+  | some (q0, pos0) =>
+    rw [hg] at h
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨-, hbr⟩ := h
+    subst hbr
+    have := readUnaryGo_spec br.data lim 0 br.pos q0 pos0 hg
     exact ⟨rfl, this.1, this.2⟩
 
 theorem readSInt_spec {n : Nat} {br br' : BitReader} {v : Int}

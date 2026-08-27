@@ -147,7 +147,7 @@ def e2eTests : TestM Unit := do
   let mono (bs : Nat) (chooser : List (List Int) → Frame.ChannelAsg)
       (pcm : List Int) : Option (List (List Int)) :=
     (Stream.decodeReference
-      (Stream.encode ⟨bs, false, chooser⟩ ⟨[pcm], 16, 44100⟩)).map (·.channels)
+      (Stream.Unchecked.encode ⟨bs, false, chooser⟩ ⟨[pcm], 16, 44100⟩)).map (·.channels)
   -- 40 samples → frames of 16/16/8 (short last frame)
   let pcm : List Int := (List.range 40).map fun (i : Nat) =>
     (100 * (i : Int)) - 2000 + (if i % 3 == 0 then 7 else -5)
@@ -168,7 +168,7 @@ def e2eTests : TestM Unit := do
   -- 8-bit depth
   let pcm8 : List Int := (List.range 30).map fun (i : Nat) => ((i : Int) % 100) - 50
   checkEq "e2e 8-bit"
-    ((Stream.decodeReference (Stream.encode ⟨16, false, Stream.verbatimChooser⟩
+    ((Stream.decodeReference (Stream.Unchecked.encode ⟨16, false, Stream.verbatimChooser⟩
       ⟨[pcm8], 8, 8000⟩)).map (·.channels)) (some [pcm8])
   -- the certified default heuristics (wasted bits, LPC, fixed, stereo)
   checkEq "e2e defaultAsgChooser mono"
@@ -184,7 +184,7 @@ def e2eTests : TestM Unit := do
   let left : List Int := (List.range 40).map fun (i : Nat) => 500 * (i : Int) - 9000
   let right : List Int := left.map (· + 37)
   let stereo (chooser : List (List Int) → Frame.ChannelAsg) :=
-    (Stream.decodeReference (Stream.encode ⟨16, false, chooser⟩
+    (Stream.decodeReference (Stream.Unchecked.encode ⟨16, false, chooser⟩
       ⟨[left, right], 16, 44100⟩)).map (·.channels)
   checkEq "e2e stereo default" (stereo (Heuristics.defaultAsgChooser 16))
     (some [left, right])
@@ -198,11 +198,11 @@ def e2eTests : TestM Unit := do
   let chans : List (List Int) := (List.range 5).map fun (c : Nat) =>
     (List.range 33).map fun (i : Nat) => ((c : Int) + 1) * ((i : Int) - 16)
   checkEq "e2e 5 channels"
-    ((Stream.decodeReference (Stream.encode ⟨16, false, Heuristics.defaultAsgChooser 16⟩
+    ((Stream.decodeReference (Stream.Unchecked.encode ⟨16, false, Heuristics.defaultAsgChooser 16⟩
       ⟨chans, 16, 44100⟩)).map (·.channels)) (some chans)
   -- variable-blocksize numbering strategy
   checkEq "e2e variable numbering"
-    ((Stream.decodeReference (Stream.encode ⟨16, true, Heuristics.defaultAsgChooser 16⟩
+    ((Stream.decodeReference (Stream.Unchecked.encode ⟨16, true, Heuristics.defaultAsgChooser 16⟩
       ⟨[pcm], 16, 44100⟩)).map (·.channels)) (some [pcm])
 
 /-! ## The fast encoder mirrors the verified one, byte for byte
@@ -214,7 +214,7 @@ Every value involved is an integer well inside `2^53`, so the two must
 
 That much is still not a theorem, and cannot be: it is a claim about what
 `Float` computes. `Flac.Encode.encodePcm16_eq` proves the fast encoder
-computes `Stream.encode` at the chooser its *own* search denotes, which
+computes `Stream.Unchecked.encode` at the chooser its *own* search denotes, which
 needs no such claim; whether that search agrees with the `Int` one is a
 compression question, and it is pinned here as a test. -/
 
@@ -267,7 +267,7 @@ def fusedDecodeTests : TestM Unit := do
      ("short last frame", 1, [(List.range 5000).map fun i => ((i % 700 : Nat) : Int) - 350]),
      ("empty", 1, [[]])]
   for (name, ch, chans) in cases do
-    let flac := Stream.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ⟨chans, 16, 44100⟩
+    let flac := Stream.Unchecked.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ⟨chans, 16, 44100⟩
     match Flac.Decode.decodeBytes flac, Flac.Decode.decodeArrays flac with
     | some (pcm, _), some (arrs, bps, _) =>
       checkEq s!"fused decode = sample path: {name}" pcm
@@ -279,7 +279,7 @@ def fusedDecodeTests : TestM Unit := do
   -- stream large enough to cross it
   let big : List Int := (List.range 200000).map fun i =>
     (((i * i * 2654435761 + i * 40503) % 65536 : Nat) : Int) - 32768
-  let bigFlac := Stream.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ⟨[big], 16, 44100⟩
+  let bigFlac := Stream.Unchecked.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ⟨[big], 16, 44100⟩
   check "fused decode crosses the parallel threshold"
     (Flac.Decode.parThreshold ≤ bigFlac.size)
   checkEq "fused decode = original PCM: 200k samples"
@@ -336,13 +336,185 @@ def bitsTests : TestM Unit := do
   checkEq "align pads to byte" (Bits.alignToByte [true, true, false]).length 8
   checkEq "align keeps aligned" (Bits.alignToByte (Bits.byteToBits 1)).length 8
 
+/-! ## Two's-complement wrap — the anti-divergence bound on predictor
+    restore (P1 audit finding, issue #1) -/
+
+def wrapTests : TestM Unit := do
+  -- identity in range, two's-complement wrap out of range
+  checkEq "wrapSInt id in range" (Bits.wrapSInt 16 32767) 32767
+  checkEq "wrapSInt id at low end" (Bits.wrapSInt 16 (-32768)) (-32768)
+  checkEq "wrapSInt wraps high" (Bits.wrapSInt 16 32768) (-32768)
+  checkEq "wrapSInt wraps low" (Bits.wrapSInt 16 (-32769)) 32767
+  checkEq "wrapSInt residue class" (Bits.wrapSInt 4 100) 4
+  checkEq "wrapSInt width 0" (Bits.wrapSInt 0 (-7)) 0
+  -- P1 regression: an order-1 predictor with coefficient 2^14-1 and
+  -- shift 0 diverges as 16383^n in exact ℤ; the in-loop wrap must keep
+  -- every reconstructed sample inside the 16-bit range instead (4096
+  -- samples previously built multi-GB bignums and aborted in GMP)
+  let out := Lpc.restoreA 16 [16383] 0 [1] (Array.replicate 4096 0)
+  check "LPC divergence stays 16-bit bounded"
+    (out.all fun x => -32768 ≤ x && x < 32768)
+  checkEq "LPC divergence output size" out.size 4097
+  -- the fixed-predictor restore wraps its output the same way
+  check "fixed order-0 restore wraps to 8-bit"
+    ((Fixed.restoreA 8 0 [] #[300, -300]).all fun x => -128 ≤ x && x < 128)
+
+def bombTests : TestM Unit := do
+  -- P2 regression: a conformant all-CONSTANT stream (eight channels of
+  -- silence at block size 65535) amplifies ~50 input bytes into ~1 MB of
+  -- output per frame. `Stream.Unchecked.encode` is total, so it writes such a
+  -- stream happily; every decoder entry point must reject it against
+  -- `Stream.decodeBudget` instead of materializing it.
+  let silence8 : List (List Int) := List.replicate 8 (List.replicate 65535 0)
+  let bomb := Stream.Unchecked.encode ⟨65535, false, Heuristics.defaultAsgChooser 16⟩
+    ⟨silence8, 16, 44100⟩
+  check "P2 bomb: reference decoder rejects"
+    (Stream.decodeReference bomb).isNone
+  check "P2 bomb: production decoder rejects"
+    (match Flac.decode bomb with | .error _ => true | .ok _ => false)
+  check "P2 bomb: fused byte decoder rejects"
+    (Flac.Decode.decodeBytes bomb).isNone
+  -- silence at the default block size is legitimately high-amplification
+  -- (~1600×) and must keep decoding: the budget admits everything the
+  -- guarded encoder can emit (`Flac.Spec.Stream.encode_cost_le_budget`)
+  let silence : List (List Int) := List.replicate 8 (List.replicate 20000 0)
+  let ok := Stream.Unchecked.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩
+    ⟨silence, 16, 44100⟩
+  check "silence at default block size still decodes"
+    (match Flac.decode ok with
+     | .ok a => a.channels == silence
+     | .error _ => false)
+  -- the block-size guard is exactly where the budget proof stops
+  let pcm : ByteArray := ByteArray.mk (Array.replicate 4000 0)
+  check "fast encoder accepts block size 4608"
+    (Flac.encodePcm16Fast 4608 2 44100 pcm).isSome
+  check "fast encoder rejects block size 4609"
+    (Flac.encodePcm16Fast 4609 2 44100 pcm).isNone
+  -- P3 regression: STREAMINFO's totalSamples reaches the decoder only as
+  -- a capacity hint, capped by `outCapacity` against the input size.
+  -- Setting the 36-bit field to all-ones (file bytes 21–25: layout is 108
+  -- header bits before it) must change nothing about the decode — and
+  -- must not reserve ~1.1 TB, which is what this test used to request.
+  let lying := ByteArray.mk <| ok.data.mapIdx fun i b =>
+    if i = 21 then b ||| 0x0F
+    else if 22 ≤ i ∧ i ≤ 25 then 0xFF
+    else b
+  check "P3: lying totalSamples decodes identically (byte path)"
+    (Flac.Decode.decodeBytes lying == Flac.Decode.decodeBytes ok
+      && (Flac.Decode.decodeBytes ok).isSome)
+  check "P3: lying totalSamples decodes identically (sample path)"
+    (match Flac.decode lying with
+     | .ok a => a.channels == silence
+     | .error _ => false)
+  -- the audit's 42-byte shape: header only, no frames, maximal claim
+  let frameless := lying.extract 0 42
+  check "P3: frameless maximal-claim file decodes to empty"
+    ((Flac.Decode.decodeBytes frameless).map (·.1.size) == some 0)
+  -- P4 regression: a run of FF F8 pairs makes every second offset a sync
+  -- candidate (density 1/2). The scan must not gather candidates or spawn
+  -- tasks in proportion to that pattern; `syncCandidates` recognizes the
+  -- impossible density and hands back nothing, so the frame loop rejects
+  -- serially in O(1). Header (fLaC + STREAMINFO, last-block set) taken
+  -- from the encoder, then 100 000 FF F8 pairs (~200 KB) appended.
+  let header := ok.extract 0 42
+  let stormTail : ByteArray := ByteArray.mk <|
+    (List.range 200000).map (fun i => if i % 2 == 0 then (0xFF : UInt8) else 0xF8)
+      |>.toArray
+  let storm := header ++ stormTail
+  check "P4: sync-storm yields no candidates (density bail)"
+    ((Flac.Decode.syncCandidates storm 42).size == 0)
+  check "P4: sync-storm rejected by the byte decoder"
+    (Flac.Decode.decodeBytes storm).isNone
+  check "P4: sync-storm rejected by the production decoder"
+    (match Flac.decode storm with | .error _ => true | .ok _ => false)
+  -- honest audio sits far below the density threshold, so speculation is
+  -- kept (a nonempty candidate set) — the parallel path is not lost
+  check "P4: honest stream keeps its sync candidates"
+    (Flac.Decode.minFrameBytes * (Flac.Decode.syncCandidates ok 42).size < ok.size)
+  -- the task count is bounded by input size, never by candidate density:
+  -- however many candidates, the fan-out spawns at most `maxStepTasks`
+  let n := 10 * Flac.Decode.maxStepTasks * Flac.Decode.stepChunkSize
+  let chunk := Flac.Decode.stepChunkFor n
+  check "P4: task count capped regardless of candidate count"
+    ((n + chunk - 1) / chunk ≤ Flac.Decode.maxStepTasks)
+  -- P5 regression, part one — the accept-set. RFC 9639 §9.2.2 requires the
+  -- wasted count `w` to leave a positive subframe depth, and §5 lists a
+  -- zero-or-negative resulting depth among the streams a decoder must
+  -- refuse. `Nat` subtraction saturates, so `b - w` used to be 0 and the
+  -- subframe decoded at depth 0 instead of being rejected. The writers are
+  -- total and emit the invalid subframe happily; every reader must refuse.
+  let p5 (w : Nat) : ByteArray :=
+    Bits.bitsToBytes <|
+      Bits.writeBits 32 0x664C6143 ++
+      Bits.writeBits 1 1 ++ Bits.writeBits 7 0 ++ Bits.writeBits 24 34 ++
+      Stream.writeStreamInfo 4096 44100 1 16 4096 0 ++
+      Frame.write 16 false 0 (.independent [⟨w, .constant⟩])
+        [List.replicate 4096 0]
+  check "P5: wasted = depth rejected (reference decoder)"
+    (Stream.decodeReference (p5 16)).isNone
+  check "P5: wasted = depth rejected (production decoder)"
+    (match Flac.decode (p5 16) with | .error _ => true | .ok _ => false)
+  check "P5: wasted = depth rejected (fused byte decoder)"
+    (Flac.Decode.decodeBytes (p5 16)).isNone
+  -- `w = b - 1` is the largest count the RFC allows, and the largest the
+  -- encoder's own `SubCfg.Valid` certificate permits: it must still decode
+  check "P5: wasted = depth - 1 still decodes"
+    (match Flac.decode (p5 15) with
+     | .ok a => a.channels == [List.replicate 4096 0]
+     | .error _ => false)
+  -- P5 regression, part two — the cost of *reading* the count. The unary
+  -- run has no enclosing bound (unlike a Rice residual's), so it is read
+  -- with a cap (`readUnaryUpTo b`). A megabit run must be refused in O(b);
+  -- before the cap it recursed once per zero bit in `Bits.readUnary` and
+  -- overflowed the stack on the reference path.
+  let longRun : BitStream :=
+    Bits.writeBits 1 0 ++ Bits.writeBits 6 0 ++ Bits.writeBits 1 1 ++
+      List.replicate 1000000 false ++ [true]
+  check "P5: megabit wasted run refused by the model reader"
+    (Subframe.read 4096 16 longRun).isNone
+  check "P5: megabit wasted run refused by the production reader"
+    (Flac.Decode.readSubframe 4096 16
+      ⟨Bits.bitsToBytes (Bits.alignToByte longRun), 0⟩).isNone
+
+/-! ## Encoder shape guards (audit findings P8 and P11)
+
+Both byte-level encoders now run the shared O(1) `Pcm16ShapeOk` guard
+before anything sized by its arguments exists. These pin the two incidents:
+a channel count whose only rejection used to come from `Audio.WellFormed`,
+checked *after* `ch` channel lists were materialized (P8 — the first check
+below used to OOM), and `sampleRate = 0` stamped on nonempty audio, which
+RFC 9639 §8.2 forbids (P11). -/
+
+def encoderGuardTests : TestM Unit := do
+  let cfg : Stream.EncoderCfg := ⟨4096, false, Heuristics.defaultAsgChooser 16⟩
+  -- P8: empty input satisfies the divisibility guard for every `ch`, so
+  -- `ch ≤ 8` must be part of the same O(1) conjunction
+  check "P8: huge channels + empty input refused (slow)"
+    (Flac.encodePcm16Cfg cfg 4000000000 44100 ByteArray.empty).isNone
+  check "P8: huge channels + empty input refused (fast)"
+    (Flac.encodePcm16Fast 4096 4000000000 44100 ByteArray.empty).isNone
+  check "P8: nine channels refused (slow)"
+    (Flac.encodePcm16Cfg cfg 9 44100 (ByteArray.mk (Array.replicate 18 0))).isNone
+  check "P8: eight channels accepted (slow)"
+    (Flac.encodePcm16Cfg cfg 8 44100 (ByteArray.mk (Array.replicate 16 0))).isSome
+  -- P11: rate 0 is defensible only for empty content
+  let audio := ByteArray.mk (Array.replicate 4000 0)
+  check "P11: rate 0 with audio refused (fast)"
+    (Flac.encodePcm16Fast 4096 1 0 audio).isNone
+  check "P11: rate 0 with audio refused (slow)"
+    (Flac.encodePcm16Cfg cfg 1 0 audio).isNone
+  check "P11: rate 0 with empty input still encodes (fast)"
+    (Flac.encodePcm16Fast 4096 1 0 ByteArray.empty).isSome
+  check "P11: rate 1 with audio encodes (fast)"
+    (Flac.encodePcm16Fast 4096 1 1 audio).isSome
+
 /-- With an argument, write sample encoded streams into that directory
     (for differential testing against `flac`/`ffmpeg` from the shell). -/
 def emitSamples (dir : String) : IO Unit := do
   let mk (name : String) (bs : Nat) (chooser : List (List Int) → Frame.ChannelAsg)
       (chans : List (List Int)) : IO Unit := do
     let a : Stream.Audio := ⟨chans, 16, 44100⟩
-    IO.FS.writeBinFile s!"{dir}/{name}.flac" (Stream.encode ⟨bs, false, chooser⟩ a)
+    IO.FS.writeBinFile s!"{dir}/{name}.flac" (Stream.Unchecked.encode ⟨bs, false, chooser⟩ a)
     -- raw PCM for byte-compare: interleaved signed little-endian
     IO.FS.writeBinFile s!"{dir}/{name}.pcm" (Stream.pcmBytes 16 chans)
   let sine : List Int := (List.range 4000).map fun (i : Nat) =>
@@ -362,18 +534,6 @@ def emitSamples (dir : String) : IO Unit := do
   mk "stereo-corr" 4096 (Heuristics.defaultAsgChooser 16) [l, r]
   mk "stereo-ms" 4096 (fun _ => .midSide ⟨0, .verbatim⟩ ⟨0, .verbatim⟩) [l, r]
 
-/-- Parse raw signed 16-bit little-endian mono PCM. -/
-def pcm16OfBytes (b : ByteArray) : List Int :=
-  (List.range (b.size / 2)).map fun i =>
-    let u : Nat := b[2*i]!.toNat + 256 * b[2*i+1]!.toNat
-    if u < 32768 then (u : Int) else (u : Int) - 65536
-
-/-- Deinterleave raw 16-bit LE PCM into `ch` channels. -/
-def deinterleave (ch : Nat) (xs : List Int) : List (List Int) :=
-  let arr := xs.toArray
-  (List.range ch).map fun c =>
-    (List.range (arr.size / ch)).map fun i => arr.getD (i * ch + c) 0
-
 def usage : String :=
   "vinyl - a formally verified FLAC codec (see README.md)\n\n" ++
   "  vinyl --encode <in.pcm> <out.flac> <blockSize> <channels> [<sampleRate>]\n" ++
@@ -383,7 +543,8 @@ def usage : String :=
   "  vinyl --encode-slow <in.pcm> <out.flac> <blockSize> <channels> [<sampleRate>]\n" ++
   "      encode with the fully verified encoder (the fast path's fallback)\n" ++
   "  vinyl --decode <in.flac> <out.pcm>\n" ++
-  "      decode with the verified reference decoder (raw 16-bit LE out)\n" ++
+  "      decode to samples, then serialize (raw 16-bit LE out); computes\n" ++
+  "      the reference decoder (Flac.Decode.decodeOption_eq_reference)\n" ++
   "  vinyl --decode-fast <in.flac> <out.pcm>\n" ++
   "      decode with the shipped buffered decoder (raw 16-bit LE out)\n" ++
   "  vinyl --decode-pcm16 <in.flac> <out.pcm>\n" ++
@@ -396,15 +557,42 @@ def usage : String :=
   "  vinyl (no arguments)\n" ++
   "      run the unit-test suite"
 
+/-- Strip **every** leading `-j n` / `--threads n` / `--threads=n` in one
+    pass, returning the last count given (matching what the strip-one-then-
+    re-exec loop used to converge to) and the remaining arguments. One pass
+    means `withThreads` re-executes at most once however many flags are
+    stacked (audit finding P10, issue #10 — it used to re-exec once *per*
+    flag, nesting a full Lean runtime each time). Pure, so the "no leading
+    flag survives" property is pinned by unit tests. -/
+def stripThreadFlags (args : List String) : Option String × List String :=
+  go none args
+where
+  go (cur : Option String) : List String → Option String × List String
+    | "-j" :: n :: rest => go (some n) rest
+    | "--threads" :: n :: rest => go (some n) rest
+    | flag :: rest =>
+      if flag.startsWith "--threads=" then
+        go (some (flag.drop "--threads=".length).toString) rest
+      else (cur, flag :: rest)
+    | [] => (cur, [])
+
+/-- The sentinel a re-executed child carries: `withThreads` refuses to
+    spawn when it is present, so however the argument parser evolves, the
+    process tree can never grow past one re-execution deep. -/
+def threadsSentinel : String := "VINYL_THREADS_SET"
+
 /-- Run `args` in a copy of this process whose Lean task pool is capped at
     `n` workers, and return its exit code.
 
     Lean sizes the task pool from `LEAN_NUM_THREADS` when the runtime starts,
     which is before `main` is entered, so a flag cannot resize the pool of the
-    process that parses it — hence the re-execution. The child never sees the
-    flag again, so this recurses exactly once. It costs one extra process
-    (~3 ms of Lean runtime init); `bench/real_run.py` sets the variable
-    directly instead, so no benchmark pays it. -/
+    process that parses it — hence the re-execution. The caller strips *all*
+    leading thread flags first (`stripThreadFlags`), and the child carries
+    `threadsSentinel`, which this function refuses to re-exec past — so one
+    invocation spawns at most one child, no matter what the arguments say.
+    It costs one extra process (~3 ms of Lean runtime init);
+    `bench/real_run.py` sets the variable directly instead, so no benchmark
+    pays it. -/
 def withThreads (n : String) (args : List String) : IO UInt32 := do
   match n.toNat? with
   | none =>
@@ -414,12 +602,25 @@ def withThreads (n : String) (args : List String) : IO UInt32 := do
     if workers = 0 then
       IO.eprintln "--threads: worker count must be at least 1"
       return 2
+    if (← IO.getEnv threadsSentinel).isSome then
+      IO.eprintln "--threads: refusing to re-execute twice (nested thread flags?)"
+      return 2
     let self ← IO.appPath
     let child ← IO.Process.spawn
       { cmd := self.toString
         args := args.toArray
-        env := #[("LEAN_NUM_THREADS", some (toString workers))] }
+        env := #[("LEAN_NUM_THREADS", some (toString workers)),
+                 (threadsSentinel, some "1")] }
     child.wait
+
+/-- Report a bad invocation: the message, then usage, exit 2. A typo in a
+    numeric argument is a usage error, never a panic (audit finding P9,
+    issue #9) — every argument is parsed with `toNat?` and funneled here
+    on `none`. -/
+def usageError (msg : String) : IO UInt32 := do
+  IO.eprintln s!"{msg}\n"
+  IO.eprintln usage
+  return 2
 
 /-- The fast encoder as a CLI action.  `sampleRate` reaches STREAMINFO only:
     `Flac.Stream.decodePcm16_encodePcm16Fast` holds at every rate the encoder
@@ -436,7 +637,7 @@ def encodeFastMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
     IO.println s!"encoded {bytes.size / (2 * ch)} samples x {ch} channels @ {sampleRate} Hz (round-trip guaranteed by Flac.Stream.decodePcm16_encodePcm16Fast)"
     return 0
   | none =>
-    IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, or channels/blockSize/sampleRate out of range)"
+    IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, channels/blockSize/sampleRate out of range, or sample rate 0 with nonempty audio)"
     return 1
 
 /-- The fully verified encoder as a CLI action; kept for differential testing. -/
@@ -450,26 +651,117 @@ def encodeSlowMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
     IO.println s!"encoded {bytes.size / (2 * ch)} samples x {ch} channels @ {sampleRate} Hz (checked: round-trip guaranteed by Flac.decodePcm16_encodePcm16Cfg)"
     return 0
   | none =>
-    IO.println "ENCODE ERROR: input not FLAC-representable"
+    IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, channels/blockSize/sampleRate out of range, or sample rate 0 with nonempty audio)"
     return 1
 
-def cliMain (args : List String) : IO UInt32 := do
-  -- the thread flag is leading and consumed here, so every branch below sees
-  -- the command alone, exactly as if the flag had not been given
-  match args with
-  | "-j" :: n :: rest => return ← withThreads n rest
-  | "--threads" :: n :: rest => return ← withThreads n rest
-  | flag :: rest =>
-    if flag.startsWith "--threads=" then
-      return ← withThreads (flag.drop "--threads=".length).toString rest
-  | [] => pure ()
+/-! ## The public encoder refuses what the theorems exclude (audit finding P7)
+
+The audit's three probes each violate one `Audio.WellFormed` clause; the
+total reference encoder mod-wraps them into valid-looking streams denoting
+*different* audio. Since the P7 round the natural name `Flac.encode` is
+the checked form, so each probe gets `none`; the raw form lives under
+`Unchecked` and its wrong-value behavior is pinned here as the reason. -/
+
+def apiSurfaceTests : TestM Unit := do
+  let overSample : Stream.Audio := ⟨[[32768]], 16, 44100⟩
+  let overRate : Stream.Audio := ⟨[[0]], 16, 2 ^ 20⟩
+  let nineCh : Stream.Audio := ⟨List.replicate 9 [0], 16, 44100⟩
+  check "P7: out-of-range sample refused" (Flac.encode overSample).isNone
+  check "P7: sample rate 2^20 refused" (Flac.encode overRate).isNone
+  check "P7: nine channels refused" (Flac.encode nineCh).isNone
+  check "P7: the unchecked form really does mod-wrap 2^15 to -2^15"
+    ((Stream.decodeReference (Flac.Unchecked.encode overSample)).map (·.channels)
+      == some [[-32768]])
+  let good : Stream.Audio := ⟨[[100, -100, 32767, -32768]], 16, 44100⟩
+  check "P7: well-formed audio encodes and round-trips"
+    (match Flac.encode good with
+     | some bytes =>
+       (match Flac.decode bytes with
+        | .ok a => a.channels == good.channels
+        | .error _ => false)
+     | none => false)
+
+/-! ## Frame loops in constant stack (audit finding P6)
+
+Frame count is attacker-chosen — a valid CONSTANT frame is ~13 bytes — so
+no frame loop may keep a native stack frame per pending frame. The loops
+now run in accumulator form via kernel-checked `@[csimp]` swaps
+(`readFramesStepsB_eq_readFramesStepsBTR`, `readFramesB_eq_readFramesBTR`,
+`recombine_eq_recombineTR`, `readUnary_eq_readUnaryTR`); these checks pin
+that the swapped loops compute the same values at a frame count past what
+a stack-frame-per-frame loop survives on a true 8 MB stack. -/
+
+def recursionShapeTests : TestM Unit := do
+  -- 100 000 tiny frames through the shipped pipeline (blockSize 16 is the
+  -- smallest the guard admits): encode, then round-trip through the
+  -- byte-level decoder the CLI runs
+  let n := 100000 * 16
+  let pcm := ByteArray.mk (Array.replicate (2 * n) 0)
+  match Flac.encodePcm16Fast 16 1 44100 pcm with
+  | none => check "P6: tiny-frame encode succeeds" false
+  | some flac =>
+    check "P6: reproducer is 100k tiny frames" (100000 * 13 ≤ flac.size)
+    check "P6: 100k tiny frames round-trip (production decoder)"
+      (match Flac.decodePcm16A flac with
+       | .ok out => out == pcm
+       | .error _ => false)
+  -- the reference decoder's loops at a frame count that exercises them
+  -- without its (documented, spec-path) quadratic scan dominating the suite
+  let m := 500 * 16
+  let chs : List (List Int) := [(List.range m).map fun i => ((i % 100 : Nat) : Int) - 50]
+  let refFlac := Stream.Unchecked.encode ⟨16, false, Heuristics.defaultAsgChooser 16⟩ ⟨chs, 16, 44100⟩
+  check "P6: 500 frames round-trip (reference decoder)"
+    ((Stream.decodeReference refFlac).map (·.channels) == some chs)
+  -- the tail-form unary reader takes a run as long as the input in stride
+  check "P6: megabit unary run reads in constant stack"
+    (Bits.readUnary (List.replicate 1000000 false ++ [true]) == some (1000000, []))
+
+/-! ## Thread-flag stripping (audit finding P10)
+
+`stripThreadFlags` is pure precisely so this property is testable: user
+input is a *list*, so "leading flag" logic must be stated over runs of
+flags, not single occurrences — the property that matters is that no
+leading thread flag survives a single pass. -/
+
+def threadFlagTests : TestM Unit := do
+  checkEq "P10: single -j" (stripThreadFlags ["-j", "2", "--decode", "a", "b"])
+    (some "2", ["--decode", "a", "b"])
+  checkEq "P10: --threads= form" (stripThreadFlags ["--threads=8", "cmd"])
+    (some "8", ["cmd"])
+  checkEq "P10: stacked mixed flags collapse in one pass, last wins"
+    (stripThreadFlags ["-j", "2", "--threads", "4", "--threads=8", "cmd"])
+    (some "8", ["cmd"])
+  checkEq "P10: 40 stacked flags collapse in one pass"
+    (stripThreadFlags (((List.range 40).flatMap fun _ => ["-j", "2"]) ++ ["cmd"]))
+    (some "2", ["cmd"])
+  checkEq "P10: no leading flag survives (idempotence)"
+    (stripThreadFlags (stripThreadFlags (["-j", "2", "--threads=4", "run"])).2)
+    (none, ["run"])
+  checkEq "P10: non-leading flags are arguments, not flags"
+    (stripThreadFlags ["--decode", "-j", "2"]) (none, ["--decode", "-j", "2"])
+  checkEq "P10: no flags at all" (stripThreadFlags ["--decode", "a"])
+    (none, ["--decode", "a"])
+
+def cliMain (rawArgs : List String) : IO UInt32 := do
+  -- thread flags are leading and ALL consumed here in one pass, so every
+  -- branch below sees the command alone, exactly as if no flag had been
+  -- given, and at most one re-execution happens (audit finding P10)
+  let (threadCount, args) := stripThreadFlags rawArgs
+  if let some n := threadCount then
+    return ← withThreads n args
   if args = ["--help"] ∨ args = ["-h"] then
     IO.println usage
     return 0
   if let ["--encode", inFile, outFile, bs, ch] := args then
-    return ← encodeFastMain inFile outFile bs.toNat! ch.toNat! 44100
+    match bs.toNat?, ch.toNat? with
+    | some bs, some ch => return ← encodeFastMain inFile outFile bs ch 44100
+    | _, _ =>
+      return ← usageError s!"--encode: blockSize and channels must be numbers, got '{bs}' '{ch}'"
   if let ["--encode", inFile, outFile, bs, ch, rate] := args then
-    return ← encodeFastMain inFile outFile bs.toNat! ch.toNat! rate.toNat!
+    match bs.toNat?, ch.toNat?, rate.toNat? with
+    | some bs, some ch, some rate => return ← encodeFastMain inFile outFile bs ch rate
+    | _, _, _ =>
+      return ← usageError s!"--encode: blockSize, channels and sampleRate must be numbers, got '{bs}' '{ch}' '{rate}'"
   if let ["--decode-pcm16", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
     -- `Flac.decodePcm16A_eq`: same bytes as `Flac.decodePcm16`, no list round-trip
@@ -480,9 +772,15 @@ def cliMain (args : List String) : IO UInt32 := do
       IO.println "decoded (byte-level pipeline)"
       return 0
   if let ["--encode-slow", inFile, outFile, bs, ch] := args then
-    return ← encodeSlowMain inFile outFile bs.toNat! ch.toNat! 44100
+    match bs.toNat?, ch.toNat? with
+    | some bs, some ch => return ← encodeSlowMain inFile outFile bs ch 44100
+    | _, _ =>
+      return ← usageError s!"--encode-slow: blockSize and channels must be numbers, got '{bs}' '{ch}'"
   if let ["--encode-slow", inFile, outFile, bs, ch, rate] := args then
-    return ← encodeSlowMain inFile outFile bs.toNat! ch.toNat! rate.toNat!
+    match bs.toNat?, ch.toNat?, rate.toNat? with
+    | some bs, some ch, some rate => return ← encodeSlowMain inFile outFile bs ch rate
+    | _, _, _ =>
+      return ← usageError s!"--encode-slow: blockSize, channels and sampleRate must be numbers, got '{bs}' '{ch}' '{rate}'"
   if let ["--decode-fast", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
     -- the fused path: each frame is serialized by the worker that decoded
@@ -508,7 +806,12 @@ def cliMain (args : List String) : IO UInt32 := do
         return 0
   if let ["--decode", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
-    match Stream.decodeReference bytes with
+    -- the reference decoder's *semantics* at the production decoder's cost:
+    -- `Flac.Decode.decodeOption_eq_reference` proves them pointwise equal,
+    -- and `Stream.decodeReference` itself stays the specification-shaped
+    -- path (it materializes the input as `List Bool` and rescans it per
+    -- frame — quadratic on purpose-built many-frame files, audit finding P6)
+    match Flac.Decode.decodeOption bytes with
     | none => IO.println "DECODE ERROR"; return 1
     | some a =>
       IO.FS.writeBinFile outFile (Stream.pcmBytes a.bps a.channels)
@@ -524,7 +827,7 @@ def cliMain (args : List String) : IO UInt32 := do
     IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
     IO.eprintln usage
     return 2
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; encoderGuardTests; apiSurfaceTests; recursionShapeTests; threadFlagTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0

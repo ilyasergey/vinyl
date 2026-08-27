@@ -1,3 +1,5 @@
+import Flac.Native.Bits
+
 /-!
 # Fixed predictors, orders 0–4 (RFC 9639 §9.2.4)
 
@@ -31,11 +33,19 @@ def undiff1 (x0 : Int) : List Int → List Int
   | [] => [x0]
   | d :: ds => x0 :: undiff1 (x0 + d) ds
 
-/-- Restore samples from `ord` warmup samples and an order-`ord` residual. -/
-def restore : (ord : Nat) → (warmup : List Int) → (res : List Int) → List Int
-  | 0, _, res => res
+/-- Restore samples from `ord` warmup samples and an order-`ord` residual,
+    reduced to `b`-bit two's complement (RFC-conformant fixed-width wrap).
+
+    The wrap is a single pointwise pass at the end: every step of the
+    undifferencing chain is an addition, and addition commutes with taking
+    residues mod `2^b`, so wrapping only the final values computes exactly
+    what a register decoder wrapping at every step would. On any stream
+    the encoder produced the samples fit `b` bits and the wrap is the
+    identity (`Flac.Spec.Fixed.restore_residual` carries the hypothesis). -/
+def restore (b : Nat) : (ord : Nat) → (warmup : List Int) → (res : List Int) → List Int
+  | 0, _, res => res.map (Bits.wrapSInt b)
   | ord + 1, warmup, res =>
-    restore ord (warmup.take ord) (undiff1 ((diffN ord warmup).headD 0) res)
+    restore b ord (warmup.take ord) (undiff1 ((diffN ord warmup).headD 0) res)
 
 /-! ### Array forms (the production decoder's hot path)
 
@@ -49,10 +59,12 @@ def undiffA (x0 : Int) (ds : Array Int) : Array Int :=
   ds.foldl (fun out d => out.push (out.getD (out.size - 1) 0 + d))
     ((Array.emptyWithCapacity (ds.size + 1)).push x0)
 
-/-- `restore` with the residual (and result) as arrays. -/
-def restoreA : (ord : Nat) → (warmup : List Int) → (res : Array Int) → Array Int
-  | 0, _, res => res
+/-- `restore` with the residual (and result) as arrays. The final wrap
+    pass runs in place when the array is uniquely owned (it always is on
+    the decode path). -/
+def restoreA (b : Nat) : (ord : Nat) → (warmup : List Int) → (res : Array Int) → Array Int
+  | 0, _, res => res.map (Bits.wrapSInt b)
   | ord + 1, warmup, res =>
-    restoreA ord (warmup.take ord) (undiffA ((diffN ord warmup).headD 0) res)
+    restoreA b ord (warmup.take ord) (undiffA ((diffN ord warmup).headD 0) res)
 
 end Flac.Fixed

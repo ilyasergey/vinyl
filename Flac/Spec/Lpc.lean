@@ -1,16 +1,21 @@
 import Flac.Native.Lpc
+import Flac.Spec.Bits
 
 /-!
 # L3-LPC proofs — quantized-LPC restore round-trip
 
-`restoreLpc_residualLpc` fromThe history-passing formulation
+The history-passing formulation
 makes the key induction one line: decoded prefix = original prefix, hence
 the decoder's prediction ≡ the encoder's, hence
 `out[n] = p(n) + (xs[n] - p(n)) = xs[n]` — for *any* coefficients, shift,
-and even any prediction function. No hypotheses needed.
+and even any prediction function. The one hypothesis is that the samples
+fit the bit depth, which is exactly where the decoder's per-sample wrap
+(the anti-divergence bound) is the identity.
 -/
 
 namespace Flac.Lpc
+
+open Flac.Bits (FitsSInt wrapSInt wrapSInt_eq_of_fits)
 
 /-- `dot` computes the folded zip it replaced — pins the RFC 9639 §9.2.6
     prediction sum to the allocation-free implementation. -/
@@ -32,22 +37,27 @@ theorem dot_eq_zip_foldl (cs : List Int) (hs : List Int) :
       rw [← ih hs (acc + c * h)]
       omega
 
-theorem restoreAux_residualAux (cs : List Int) (shift : Nat) :
-    ∀ (ys hist : List Int),
-      restoreAux cs shift hist (residualAux cs shift hist ys) = ys := by
+theorem restoreAux_residualAux (b : Nat) (cs : List Int) (shift : Nat) :
+    ∀ (ys hist : List Int), (∀ x ∈ ys, FitsSInt b x) →
+      restoreAux b cs shift hist (residualAux cs shift hist ys) = ys := by
   intro ys
   induction ys with
-  | nil => intro hist; rfl
+  | nil => intro hist _; rfl
   | cons x ys ih =>
-    intro hist
+    intro hist hfit
     simp only [residualAux, restoreAux]
-    rw [show x - predict cs shift hist + predict cs shift hist = x by omega, ih]
+    rw [show x - predict cs shift hist + predict cs shift hist = x by omega,
+      wrapSInt_eq_of_fits b x (hfit x (List.mem_cons_self ..)),
+      ih (x :: hist) (fun y hy => hfit y (List.mem_cons_of_mem _ hy))]
 
 /-- **L3-LPC keystone**. -/
-theorem restore_residual (cs : List Int) (shift : Nat) (xs : List Int) :
-    restore cs shift (xs.take cs.length) (residual cs shift xs) = xs := by
+theorem restore_residual (b : Nat) (cs : List Int) (shift : Nat) (xs : List Int)
+    (hfit : ∀ x ∈ xs, FitsSInt b x) :
+    restore b cs shift (xs.take cs.length) (residual cs shift xs) = xs := by
   unfold restore residual
-  rw [restoreAux_residualAux, List.take_append_drop]
+  rw [restoreAux_residualAux b cs shift _ _
+      (fun x hx => hfit x (List.drop_subset _ _ hx)),
+    List.take_append_drop]
 
 @[simp] theorem length_residualAux (cs : List Int) (shift : Nat) :
     ∀ (ys hist : List Int), (residualAux cs shift hist ys).length = ys.length := by
@@ -342,25 +352,25 @@ theorem predictA_eq (cs : List Int) (shift : Nat) (out : Array Int) :
     List.take_of_length_le (by simp)]
   simp
 
-private theorem foldl_restore (cs : List Int) (shift : Nat) :
+private theorem foldl_restore (b : Nat) (cs : List Int) (shift : Nat) :
     ∀ (l : List Int) (out : Array Int),
-      (l.foldl (fun out r => out.push (r + predictA cs shift out)) out).toList
-        = out.toList ++ restoreAux cs shift out.toList.reverse l := by
+      (l.foldl (fun out r => out.push (wrapSInt b (r + predictA cs shift out))) out).toList
+        = out.toList ++ restoreAux b cs shift out.toList.reverse l := by
   intro l
   induction l with
   | nil => intro out; simp [restoreAux]
   | cons r l ih =>
     intro out
-    show (l.foldl _ (out.push (r + predictA cs shift out))).toList = _
-    rw [ih (out.push (r + predictA cs shift out)), predictA_eq]
+    show (l.foldl _ (out.push (wrapSInt b (r + predictA cs shift out)))).toList = _
+    rw [ih (out.push (wrapSInt b (r + predictA cs shift out))), predictA_eq]
     simp only [Array.toList_push, restoreAux, List.reverse_append,
       List.reverse_cons, List.reverse_nil, List.nil_append, List.singleton_append,
       List.append_assoc]
 
 /-- The array restore computes the list restore. -/
-theorem restoreA_toList (cs : List Int) (shift : Nat) (warmup : List Int)
+theorem restoreA_toList (b : Nat) (cs : List Int) (shift : Nat) (warmup : List Int)
     (res : Array Int) :
-    (restoreA cs shift warmup res).toList = restore cs shift warmup res.toList := by
+    (restoreA b cs shift warmup res).toList = restore b cs shift warmup res.toList := by
   unfold restoreA restore
   rw [← Array.foldl_toList, foldl_restore]
   simp

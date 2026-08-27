@@ -1248,12 +1248,12 @@ theorem pushStream_spec (cfg : Stream.EncoderCfg) (a : Stream.Audio)
 
 /-- The verified byte emitter computes the reference encoder exactly. -/
 theorem encode_eq (cfg : Stream.EncoderCfg) (a : Stream.Audio) :
-    W.encode cfg a = Stream.encode cfg a := by
+    W.encode cfg a = Stream.Unchecked.encode cfg a := by
   let w := W.empty (64 + 2 * a.channels.length * a.numSamples)
   have hs := pushStream_spec cfg a w (by rfl)
   have hb := aligned_buf_of_bits (w := w) (out := W.pushStream cfg a w)
     (by rfl) hs.2 hs.1 (Stream.writeStream_length_dvd cfg a)
-  unfold W.encode Stream.encode
+  unfold W.encode Stream.Unchecked.encode
   rw [hb]
   have hempty : ByteArray.emptyWithCapacity
       (64 + 2 * a.channels.length * a.numSamples) = ByteArray.empty := by
@@ -1266,7 +1266,7 @@ theorem encode_eq (cfg : Stream.EncoderCfg) (a : Stream.Audio) :
 /-- Public capstone for the fast emitter: byte-for-byte equality with
     the verified reference encoder, without a runtime certificate. -/
 theorem emitFast_eq_encode (cfg : Stream.EncoderCfg) (a : Stream.Audio) :
-    emitFast cfg a = Stream.encode cfg a :=
+    emitFast cfg a = Stream.Unchecked.encode cfg a :=
   encode_eq cfg a
 
 end Flac.Emit

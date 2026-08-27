@@ -101,9 +101,43 @@ private theorem zip_map_left' {α β γ : Type} (f : α → γ) :
     | [] => rfl
     | b :: l2 => simp only [List.map_cons, List.zip_cons_cons, ih]
 
+private theorem exists_of_mem_zipWith {f : Int → Int → Int} :
+    ∀ {l r : List Int} {x : Int}, x ∈ List.zipWith f l r →
+      ∃ a ∈ l, ∃ b ∈ r, x = f a b := by
+  intro l
+  induction l with
+  | nil => intro r x hx; simp at hx
+  | cons a l ih =>
+    intro r x hx
+    match r with
+    | [] => simp at hx
+    | b :: r =>
+      simp only [List.zipWith_cons_cons, List.mem_cons] at hx
+      rcases hx with rfl | hx
+      · exact ⟨a, by simp, b, by simp, rfl⟩
+      · obtain ⟨a', ha', b', hb', rfl⟩ := ih hx
+        exact ⟨a', by simp [ha'], b', by simp [hb'], rfl⟩
+
+/-- Side channels of fitting audio fit `b+1` bits. -/
+private theorem side_all_fits (b : Nat) (l r : List Int)
+    (hl : ∀ x ∈ l, FitsSInt b x) (hr : ∀ x ∈ r, FitsSInt b x) :
+    ∀ x ∈ Stereo.side l r, FitsSInt (b + 1) x := by
+  intro x hx
+  obtain ⟨a, ha, c, hc, rfl⟩ := exists_of_mem_zipWith hx
+  exact Stereo.side_fits b a c (hl a ha) (hr c hc)
+
+/-- Mid channels of fitting audio fit `b` bits. -/
+private theorem mid_all_fits (b : Nat) (l r : List Int)
+    (hl : ∀ x ∈ l, FitsSInt b x) (hr : ∀ x ∈ r, FitsSInt b x) :
+    ∀ x ∈ Stereo.mid l r, FitsSInt b x := by
+  intro x hx
+  obtain ⟨a, ha, c, hc, rfl⟩ := exists_of_mem_zipWith hx
+  exact Stereo.mid_fits b a c (hl a ha) (hr c hc)
+
 theorem readSubframes_pairs (b bs : Nat) :
     ∀ (pairs : List (Subframe.SubCfg × List Int)) (rest : BitStream),
-      (∀ p ∈ pairs, p.2.length = bs ∧ p.1.Valid b p.2) →
+      (∀ p ∈ pairs, p.2.length = bs ∧ p.1.Valid b p.2 ∧
+        ∀ x ∈ p.2, FitsSInt b x) →
       readSubframes bs b pairs.length
         (writeSubframes (pairs.map (fun p => ((b, p.1), p.2))) ++ rest)
         = some (pairs.map Prod.snd, rest) := by
@@ -112,8 +146,8 @@ theorem readSubframes_pairs (b bs : Nat) :
   | nil => intro rest _; rfl
   | cons p ps ih =>
     intro rest hv
-    obtain ⟨hlen, hval⟩ := hv p (List.mem_cons_self ..)
-    have hsub := Subframe.read_write b p.1 p.2 hval
+    obtain ⟨hlen, hval, hfitp⟩ := hv p (List.mem_cons_self ..)
+    have hsub := Subframe.read_write b p.1 p.2 hval hfitp
       (writeSubframes (ps.map (fun p => ((b, p.1), p.2))) ++ rest)
     rw [hlen] at hsub
     simp only [writeSubframes] at hsub ih
@@ -125,7 +159,8 @@ theorem readSubframes_pairs (b bs : Nat) :
     undoing decorrelation recovers the channels. -/
 theorem readChannels_spec (b bs : Nat) (asg : ChannelAsg)
     (chs : List (List Int)) (rest : BitStream)
-    (hv : asg.Valid b bs chs) :
+    (hv : asg.Valid b bs chs)
+    (hfit : ∀ c ∈ chs, ∀ x ∈ c, FitsSInt b x) :
     readChannels bs b (asg.code chs.length)
       (writeSubframes (subframePlan b asg chs) ++ rest) = some (chs, rest) := by
   obtain ⟨hlens, hshape⟩ := hv
@@ -135,7 +170,8 @@ theorem readChannels_spec (b bs : Nat) (asg : ChannelAsg)
     have hziplen : (cfgs.zip chs).length = chs.length := by
       rw [List.length_zip]; omega
     have hpairs := readSubframes_pairs b bs (cfgs.zip chs) rest (fun p hp =>
-      ⟨hlens p.2 (List.of_mem_zip hp).2, hpv p hp⟩)
+      ⟨hlens p.2 (List.of_mem_zip hp).2, hpv p hp,
+        hfit p.2 (List.of_mem_zip hp).2⟩)
     rw [hziplen, Rice.map_snd_zip_eq cfgs chs hclen] at hpairs
     simp only [ChannelAsg.code, subframePlan, zip_map_left']
     unfold readChannels
@@ -148,10 +184,13 @@ theorem readChannels_spec (b bs : Nat) (asg : ChannelAsg)
       obtain ⟨hv0, hv1⟩ := hsh
       have hll : l.length = bs := hlens l (by simp)
       have hrl : r.length = bs := hlens r (by simp)
-      have hs0 := Subframe.read_write b c0 l hv0
+      have hfl : ∀ x ∈ l, FitsSInt b x := hfit l (by simp)
+      have hfr : ∀ x ∈ r, FitsSInt b x := hfit r (by simp)
+      have hs0 := Subframe.read_write b c0 l hv0 hfl
         (Subframe.write (b + 1) c1 (Stereo.side l r) ++ rest)
       rw [hll] at hs0
-      have hs1 := Subframe.read_write (b + 1) c1 (Stereo.side l r) hv1 rest
+      have hs1 := Subframe.read_write (b + 1) c1 (Stereo.side l r) hv1
+        (side_all_fits b l r hfl hfr) rest
       rw [show (Stereo.side l r).length = bs by
         simp only [Stereo.length_side]; omega] at hs1
       simp only [ChannelAsg.code, subframePlan, writeSubframes,
@@ -165,11 +204,13 @@ theorem readChannels_spec (b bs : Nat) (asg : ChannelAsg)
       obtain ⟨hv0, hv1⟩ := hsh
       have hll : l.length = bs := hlens l (by simp)
       have hrl : r.length = bs := hlens r (by simp)
+      have hfl : ∀ x ∈ l, FitsSInt b x := hfit l (by simp)
+      have hfr : ∀ x ∈ r, FitsSInt b x := hfit r (by simp)
       have hs0 := Subframe.read_write (b + 1) c0 (Stereo.side l r) hv0
-        (Subframe.write b c1 r ++ rest)
+        (side_all_fits b l r hfl hfr) (Subframe.write b c1 r ++ rest)
       rw [show (Stereo.side l r).length = bs by
         simp only [Stereo.length_side]; omega] at hs0
-      have hs1 := Subframe.read_write b c1 r hv1 rest
+      have hs1 := Subframe.read_write b c1 r hv1 hfr rest
       rw [hrl] at hs1
       simp only [ChannelAsg.code, subframePlan, writeSubframes,
         List.flatMap_cons, List.flatMap_nil, List.append_nil, List.append_assoc]
@@ -183,11 +224,15 @@ theorem readChannels_spec (b bs : Nat) (asg : ChannelAsg)
       obtain ⟨hv0, hv1⟩ := hsh
       have hll : l.length = bs := hlens l (by simp)
       have hrl : r.length = bs := hlens r (by simp)
+      have hfl : ∀ x ∈ l, FitsSInt b x := hfit l (by simp)
+      have hfr : ∀ x ∈ r, FitsSInt b x := hfit r (by simp)
       have hs0 := Subframe.read_write b c0 (Stereo.mid l r) hv0
+        (mid_all_fits b l r hfl hfr)
         (Subframe.write (b + 1) c1 (Stereo.side l r) ++ rest)
       rw [show (Stereo.mid l r).length = bs by
         simp only [Stereo.length_mid]; omega] at hs0
-      have hs1 := Subframe.read_write (b + 1) c1 (Stereo.side l r) hv1 rest
+      have hs1 := Subframe.read_write (b + 1) c1 (Stereo.side l r) hv1
+        (side_all_fits b l r hfl hfr) rest
       rw [show (Stereo.side l r).length = bs by
         simp only [Stereo.length_side]; omega] at hs1
       simp only [ChannelAsg.code, subframePlan, writeSubframes,
@@ -204,7 +249,8 @@ theorem readHeaderChannels_spec (b0 b : Nat) (strat : Bool) (num : Nat)
     (asg : ChannelAsg) (chs : List (List Int)) (tail : BitStream)
     (hb : bpsOfCode (bpsCode b) b0 = some b) (hnum : num < 2 ^ 36)
     (hbs1 : 1 ≤ (chs.headD []).length) (hbs2 : (chs.headD []).length ≤ 65536)
-    (hv : asg.Valid b (chs.headD []).length chs) :
+    (hv : asg.Valid b (chs.headD []).length chs)
+    (hfit : ∀ c ∈ chs, ∀ x ∈ c, FitsSInt b x) :
     readHeaderChannels b0
       ((writeHeader b strat num (chs.headD []).length (asg.code chs.length)
         ++ writeSubframes (subframePlan b asg chs)) ++ tail)
@@ -213,20 +259,21 @@ theorem readHeaderChannels_spec (b0 b : Nat) (strat : Bool) (num : Nat)
   rw [List.append_assoc]
   simp only [readHeader_writeHeader b0 b strat num (chs.headD []).length
     (asg.code chs.length) _ hb hnum hbs1 hbs2 (code_lt hv)]
-  exact readChannels_spec b (chs.headD []).length asg chs tail hv
+  exact readChannels_spec b (chs.headD []).length asg chs tail hv hfit
 
 theorem readBody_spec (b0 b : Nat) (strat : Bool) (num : Nat)
     (asg : ChannelAsg) (chs : List (List Int)) (tail : BitStream)
     (hb : bpsOfCode (bpsCode b) b0 = some b) (hnum : num < 2 ^ 36)
     (hbs1 : 1 ≤ (chs.headD []).length) (hbs2 : (chs.headD []).length ≤ 65536)
-    (hv : asg.Valid b (chs.headD []).length chs) :
+    (hv : asg.Valid b (chs.headD []).length chs)
+    (hfit : ∀ c ∈ chs, ∀ x ∈ c, FitsSInt b x) :
     readBody b0 (body b strat num asg chs ++ tail) = some (chs, tail) := by
   unfold readBody body alignToByte
   rw [List.append_assoc]
   simp only [withConsumed_spec (readHeaderChannels b0)
       (writeHeader b strat num (chs.headD []).length (asg.code chs.length)
         ++ writeSubframes (subframePlan b asg chs)) _ _
-      (readHeaderChannels_spec b0 b strat num asg chs _ hb hnum hbs1 hbs2 hv),
+      (readHeaderChannels_spec b0 b strat num asg chs _ hb hnum hbs1 hbs2 hv hfit),
     readBits_replicate_false]
   rw [if_pos (by trivial)]
 
@@ -236,12 +283,13 @@ theorem read_write (b0 b : Nat) (strat : Bool) (num : Nat)
     (asg : ChannelAsg) (chs : List (List Int)) (rest : BitStream)
     (hb : bpsOfCode (bpsCode b) b0 = some b) (hnum : num < 2 ^ 36)
     (hbs1 : 1 ≤ (chs.headD []).length) (hbs2 : (chs.headD []).length ≤ 65536)
-    (hv : asg.Valid b (chs.headD []).length chs) :
+    (hv : asg.Valid b (chs.headD []).length chs)
+    (hfit : ∀ c ∈ chs, ∀ x ∈ c, FitsSInt b x) :
     read b0 (write b strat num asg chs ++ rest) = some (chs, rest) := by
   unfold write read
   rw [List.append_assoc]
   simp only [withConsumed_spec (readBody b0) (body b strat num asg chs) _ _
-      (readBody_spec b0 b strat num asg chs _ hb hnum hbs1 hbs2 hv),
+      (readBody_spec b0 b strat num asg chs _ hb hnum hbs1 hbs2 hv hfit),
     readBits_writeBits _ _ _
       (show (Crc.crc16 (bitsToBytes (body b strat num asg chs))).toNat < 2 ^ 16 from
         UInt16.toNat_lt_size _)]

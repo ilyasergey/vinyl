@@ -46,6 +46,30 @@ def recombine (ch : Nat) : List (List (List Int)) → List (List Int)
   | [] => List.replicate ch []
   | fr :: frs => List.zipWith (· ++ ·) fr (recombine ch frs)
 
+theorem recombine_eq_foldr (ch : Nat) (frs : List (List (List Int))) :
+    recombine ch frs
+      = frs.foldr (fun fr acc => List.zipWith (· ++ ·) fr acc)
+          (List.replicate ch []) := by
+  induction frs with
+  | nil => rfl
+  | cons fr frs ih => simp [recombine, ih]
+
+/-- `recombine` as a left fold over the reversed frame list, so frame
+    count (attacker-chosen: a frame can be ~13 bytes) costs no stack
+    (audit finding P6). Same output-linear work — each step copies one
+    block-bounded frame onto the front of its channel. -/
+def recombineTR (ch : Nat) (frs : List (List (List Int))) : List (List Int) :=
+  frs.reverse.foldl (fun acc fr => List.zipWith (· ++ ·) fr acc)
+    (List.replicate ch [])
+
+/-- Swap the compiled `recombine` for the fold form; theorems keep the
+    structural definition. -/
+@[csimp] theorem recombine_eq_recombineTR : @recombine = @recombineTR := by
+  funext ch frs
+  rw [recombine_eq_foldr]
+  unfold recombineTR
+  rw [List.foldl_reverse]
+
 /-- Interleave channels sample-by-sample (the MD5 input order,
     RFC 9639 §8.2). -/
 def interleave (chs : List (List Int)) : List Int :=
@@ -288,6 +312,178 @@ def readFrames (b0 : Nat) : Nat → BitStream → Option (List (List (List Int))
         | none => none
         | some rest => some (chs :: rest)
 
+/-- `readFrames` in accumulator form: the recursive call is in tail
+    position, so recursion depth stays flat however many frames the input
+    packs (audit finding P6 — the cons-after-return form keeps one native
+    stack frame alive per pending frame, and frame count is
+    attacker-chosen). -/
+def readFramesAcc (b0 : Nat) (acc : List (List (List Int))) :
+    Nat → BitStream → Option (List (List (List Int)))
+  | 0, s => if s = [] then some acc.reverse else none
+  | fuel + 1, s =>
+    if s = [] then some acc.reverse
+    else
+      match Frame.read b0 s with
+      | none => none
+      | some (chs, s') => readFramesAcc b0 (chs :: acc) fuel s'
+
+/-- The bridging equation: the accumulator loop computes `readFrames`
+    with the already-collected frames spliced back on the front. -/
+theorem readFramesAcc_eq (b0 : Nat) (acc : List (List (List Int)))
+    (fuel : Nat) (s : BitStream) :
+    readFramesAcc b0 acc fuel s
+      = (readFrames b0 fuel s).map (acc.reverse ++ ·) := by
+  induction fuel generalizing acc s with
+  | zero =>
+    unfold readFramesAcc readFrames
+    by_cases hs : s = [] <;> simp [hs]
+  | succ n ih =>
+    unfold readFramesAcc readFrames
+    by_cases hs : s = []
+    · simp [hs]
+    · rw [if_neg hs, if_neg hs]
+      cases Frame.read b0 s with
+      | none => rfl
+      | some p =>
+        obtain ⟨chs, s'⟩ := p
+        show readFramesAcc b0 (chs :: acc) n s'
+          = (match readFrames b0 n s' with
+             | none => none
+             | some rest => some (chs :: rest)).map (acc.reverse ++ ·)
+        rw [ih]
+        cases readFrames b0 n s' with
+        | none => rfl
+        | some rest => simp
+
+def readFramesTR (b0 fuel : Nat) (s : BitStream) :
+    Option (List (List (List Int))) :=
+  readFramesAcc b0 [] fuel s
+
+/-- Swap the compiled `readFrames` for the tail form; theorems keep the
+    structural definition. -/
+@[csimp] theorem readFrames_eq_readFramesTR : @readFrames = @readFramesTR := by
+  funext b0 fuel s
+  unfold readFramesTR
+  rw [readFramesAcc_eq]
+  cases readFrames b0 fuel s <;> simp
+
+/-! ## Decoded-output budget
+
+A CONSTANT subframe stores one value and materializes `blockSize` copies,
+so decoded output is not bounded by input size: chaining maximal CONSTANT
+frames amplifies a 150 KB stream into gigabytes and kills the process
+(RFC 9639 §11, audit finding P2). The decoder therefore carries a *budget*
+through its frame loop — a frame that would push cumulative output past
+`decodeAmpl · input bytes + decodeFloor` makes the whole decode return
+`none`, exactly like a corrupt stream.
+
+`decodeAmpl` must admit everything the encoder can emit, or the round-trip
+capstones break: an all-CONSTANT frame legitimately costs about
+`80 + 8·ch` bits (`Flac.Spec.Stream.frame_write_length_lb`) for
+`2·ch·blockSize` bytes of output, which at the default block size 4096 and
+8 channels is a ratio of 3641. 4096 covers it; block sizes above 4608 can
+exceed it, which is why the configurable-block-size guards stop there. -/
+
+/-- Maximum decoded bytes (as `2 ·` samples) per input byte. -/
+def decodeAmpl : Nat := 4096
+
+/-- Absolute allowance on top of the proportional cap, so no small stream
+    is ever rejected by rounding. -/
+def decodeFloor : Nat := 65536
+
+/-- The decoded-output budget for a stream. -/
+def decodeBudget (bytes : ByteArray) : Nat :=
+  decodeAmpl * bytes.size + decodeFloor
+
+/-- What one decoded frame costs against the budget: two bytes per sample
+    per channel (the interleaved 16-bit serialization's measure, used for
+    every bit depth). -/
+def frameCost (fr : List (List Int)) : Nat :=
+  2 * (fr.map (·.length)).sum
+
+/-- What a whole frame sequence costs against the budget. -/
+def frameCostTotal (frs : List (List (List Int))) : Nat :=
+  (frs.map frameCost).sum
+
+/-- `readFrames` with the output budget threaded through: identical
+    results, except that a stream whose decoded size passes the budget is
+    rejected (`Flac.Spec.Decode.readFramesB_eq`). -/
+def readFramesB (b0 : Nat) : Nat → Nat → BitStream →
+    Option (List (List (List Int)))
+  | _, 0, s => if s = [] then some [] else none
+  | budget, fuel + 1, s =>
+    if s = [] then some []
+    else
+      match Frame.read b0 s with
+      | none => none
+      | some (chs, s') =>
+        if frameCost chs ≤ budget then
+          match readFramesB b0 (budget - frameCost chs) fuel s' with
+          | none => none
+          | some rest => some (chs :: rest)
+        else none
+
+/-- `readFramesB` in accumulator form (audit finding P6): tail-recursive,
+    so the reference decoder's frame loop runs in constant stack. -/
+def readFramesBAcc (b0 : Nat) (acc : List (List (List Int))) :
+    Nat → Nat → BitStream → Option (List (List (List Int)))
+  | _, 0, s => if s = [] then some acc.reverse else none
+  | budget, fuel + 1, s =>
+    if s = [] then some acc.reverse
+    else
+      match Frame.read b0 s with
+      | none => none
+      | some (chs, s') =>
+        if frameCost chs ≤ budget then
+          readFramesBAcc b0 (chs :: acc) (budget - frameCost chs) fuel s'
+        else none
+
+theorem readFramesBAcc_eq (b0 : Nat) (acc : List (List (List Int)))
+    (budget fuel : Nat) (s : BitStream) :
+    readFramesBAcc b0 acc budget fuel s
+      = (readFramesB b0 budget fuel s).map (acc.reverse ++ ·) := by
+  induction fuel generalizing acc budget s with
+  | zero =>
+    unfold readFramesBAcc readFramesB
+    by_cases hs : s = [] <;> simp [hs]
+  | succ n ih =>
+    unfold readFramesBAcc readFramesB
+    by_cases hs : s = []
+    · simp [hs]
+    · rw [if_neg hs, if_neg hs]
+      cases Frame.read b0 s with
+      | none => rfl
+      | some p =>
+        obtain ⟨chs, s'⟩ := p
+        show (if frameCost chs ≤ budget then
+            readFramesBAcc b0 (chs :: acc) (budget - frameCost chs) n s'
+          else none)
+          = (if frameCost chs ≤ budget then
+              match readFramesB b0 (budget - frameCost chs) n s' with
+              | none => none
+              | some rest => some (chs :: rest)
+            else none).map (acc.reverse ++ ·)
+        by_cases hb : frameCost chs ≤ budget
+        · rw [if_pos hb, if_pos hb, ih]
+          cases readFramesB b0 (budget - frameCost chs) n s' with
+          | none => rfl
+          | some rest => simp
+        · rw [if_neg hb, if_neg hb]
+          rfl
+
+def readFramesBTR (b0 budget fuel : Nat) (s : BitStream) :
+    Option (List (List (List Int))) :=
+  readFramesBAcc b0 [] budget fuel s
+
+/-- Swap the compiled `readFramesB` for the tail form; theorems (and the
+    whole round-trip stack above them) keep the structural definition. -/
+@[csimp] theorem readFramesB_eq_readFramesBTR :
+    @readFramesB = @readFramesBTR := by
+  funext b0 budget fuel s
+  unfold readFramesBTR
+  rw [readFramesBAcc_eq]
+  cases readFramesB b0 budget fuel s <;> simp
+
 /-! ## Top level -/
 
 /-- Interleaved multichannel PCM. -/
@@ -337,8 +533,18 @@ def writeStream (cfg : EncoderCfg) (a : Audio) : BitStream :=
   writeFrames a.bps cfg.variableBlocking cfg.blockSize (cfg.safeChooser a.bps) 0
     (chunkChannels cfg.blockSize a.channels)
 
-/-- **The encoder.** -/
-def encode (cfg : EncoderCfg) (a : Audio) : ByteArray :=
+/-- The **unchecked** reference encoder: its precondition,
+    `Audio.WellFormed`, is the hypothesis of every round-trip theorem
+    (`Flac.Stream.decodeReference_encode`, `Flac.decode_encode_cfg`) and
+    is *not* tested here. The function is total, so off-domain audio does
+    not fail: bit fields wrap modulo their width and the result is a
+    syntactically valid stream — correct CRCs, decodable — denoting
+    *different* audio (audit finding P7, issue #7). Call `Flac.encode` or
+    `Flac.encodeCheckedCfg` (checked, `Option`-valued, hypothesis-free
+    guarantees) unless you hold a `WellFormed` proof; this form exists
+    because the capstones quantify over it and the checked wrappers run
+    it. -/
+def Unchecked.encode (cfg : EncoderCfg) (a : Audio) : ByteArray :=
   bitsToBytes (writeStream cfg a)
 
 /-- Parse just the marker and STREAMINFO (for tools that need the
@@ -355,7 +561,9 @@ def peekInfo (bytes : ByteArray) : Option Info :=
     else none
 
 /-- **The verified reference decoder**: returns the decoded audio —
-    channels, bit depth, and sample rate, as read from the stream. -/
+    channels, bit depth, and sample rate, as read from the stream. Decoded
+    output is bounded by `decodeBudget bytes`; a stream that would exceed
+    it (a decompression bomb) is rejected like a corrupt one. -/
 def decodeReference (bytes : ByteArray) : Option Audio :=
   let s := bytesToBits bytes
   match readBits 32 s with
@@ -365,7 +573,7 @@ def decodeReference (bytes : ByteArray) : Option Audio :=
       match readMeta s.length s with
       | none => none
       | some (si, s) =>
-        match readFrames si.bps (s.length + 1) s with
+        match readFramesB si.bps (decodeBudget bytes) (s.length + 1) s with
         | none => none
         | some frames =>
           some ⟨recombine si.channels frames, si.bps, si.sampleRate⟩

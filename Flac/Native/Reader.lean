@@ -117,6 +117,15 @@ def readUnary (br : BitReader) : Option (Nat × BitReader) :=
   | none => none
   | some (q, pos') => some (q, ⟨br.data, pos'⟩)
 
+/-- The capped unary read (`Flac.Bits.readUnaryUpTo`'s mirror): `lim` is
+    the fuel, so out-of-buffer bits (read as `false`) end the search the
+    same way a short buffer does. Pinned by
+    `Flac.Spec.Reader.readUnaryUpTo_sim`. -/
+def readUnaryUpTo (lim : Nat) (br : BitReader) : Option (Nat × BitReader) :=
+  match readUnaryGo br.data 0 br.pos lim with
+  | none => none
+  | some (q, pos') => some (q, ⟨br.data, pos'⟩)
+
 def readSInt (n : Nat) (br : BitReader) : Option (Int × BitReader) :=
   match readBits n br with
   | none => none

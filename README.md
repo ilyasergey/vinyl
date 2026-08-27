@@ -6,29 +6,25 @@ Vinyl implements a FLAC ([RFC 9639](references/rfc9639.txt)) encoder and
 decoder with no FFI, together with machine-checked proofs. The main
 correctness theorem — kernel-certified losslessness of the shipped
 encoder/decoder pair — is
-[`Flac.decode_encode`](Flac/Spec/Decode.lean#L2271):
+[`Flac.decode_encode`](Flac/Spec/Decode.lean#L2405), and it carries
+**no hypotheses**:
 
 ```lean
-/-- Decoding an encoded stream recovers the audio exactly,
-    for every well-formed input. -/
-theorem Flac.decode_encode (a : Audio) (h : a.WellFormed) :
-    decode (encode a) = .ok a
+/-- If the encoder returns bytes at all, decoding them
+    recovers the audio exactly. -/
+theorem Flac.decode_encode
+    (h : encode a = some bytes) : decode bytes = .ok a
 ```
 
-Here [`Audio.WellFormed`](Flac/Native/Stream.lean#L304) says exactly
-"representable as FLAC" — 1–8 equal-length channels, bit depth 1–32,
-samples in range for the bit depth, and the STREAMINFO field bounds — and
-it is **decidable**, so the precondition can be tested at runtime. The
-checked encoder [`Flac.encodeChecked`](Flac/Native/Codec.lean#L25) does
-exactly that, which turns the runtime check itself into the theorem's
-premise ([`Flac.decode_encodeChecked`](Flac/Spec/Decode.lean#L2278)):
-
-```lean
-/-- If the checked encoder returns bytes at all, decoding them
-    recovers the audio. No hypotheses. -/
-theorem Flac.decode_encodeChecked
-    (h : encodeChecked a = some bytes) : decode bytes = .ok a
-```
+The public [`Flac.encode`](Flac/Native/Codec.lean#L36) tests its
+(decidable) precondition [`Audio.WellFormed`](Flac/Native/Stream.lean#L502)
+at runtime — exactly "representable as FLAC": 1–8 equal-length channels,
+bit depth 1–32, samples in range for the bit depth, and the STREAMINFO
+field bounds — and returns `none` rather than a stream for anything else,
+which is what turns the runtime check itself into the theorem's premise.
+The raw total encoder still exists for proofs and for callers who hold a
+`WellFormed` proof, under a name that says what it is
+(`Flac.Unchecked.encode`, conditional capstone `decode_encode_unchecked`).
 
 At the byte level the same guarantee holds for raw PCM files
 ([`Flac.decodePcm16_encodePcm16`](Flac/Spec/Decode.lean#L2692)):
@@ -90,7 +86,8 @@ reasons through `Task`.
 **The shipped encoder is proven, not certified.**
 [`Flac.Encode.encodePcm16_eq`](Flac/Spec/Encode.lean) proves the fast
 encoder — its `Float` search, its `UInt64` bit writer, its per-frame
-workers — *computes* `Flac.Stream.encode` at the `EncoderCfg` whose chooser
+workers — *computes* the reference encoder (`Flac.Stream.Unchecked.encode`
+since the P7 hardening round) at the `EncoderCfg` whose chooser
 is its own search, so the byte-level round trip follows from the reference
 capstone with no runtime decode and no fallback. The runtime certificate
 that used to buy that guarantee is gone, and with it 30% of encode time.
@@ -128,6 +125,17 @@ round-trip fuzzing). `scripts/check.sh` is the ratchet: full build,
 suite. To run the cross-check yourself on one file, see
 [Cross-checking against libFLAC](#cross-checking-against-libflac) below.
 
+Vinyl has also been through an **independent security and robustness
+audit** (Bartosz Barwikowski, August 2026, at commit `25cf904`; findings
+filed 2026-08-26 as
+[#1–#11](https://github.com/ilyasergey/vinyl/issues?q=label%3Aaudit)).
+None of the eleven findings falsified a theorem — every one lived in a
+layer the proofs deliberately do not reach (evaluation cost, stack
+shape, API surface, prose, the model-vs-RFC gap) — and all eleven were
+fixed by 2026-08-27, each with an incident note in
+[`docs/`](docs/README.md) recording what the proofs could not see and
+what now covers it.
+
 The real-audio benchmark doubles as the largest of these rigs: on all 143 units
 — 1.73 GiB of SQAM and LibriSpeech recordings — `flac -t` accepts Vinyl's
 stream and its MD5, Vinyl's decoder reproduces the input exactly, and Vinyl's
@@ -135,19 +143,21 @@ decoder reproduces **libFLAC's `flac -8` output byte-for-byte**.
 
 ## Benchmarks
 
-**Per thread, Vinyl is ~3× slower than libFLAC 1.5.0 in both directions and
-compresses 2–5% worse. It parallelises better than libFLAC, so the encode gap
-narrows as threads are added — to 1.6× on the synthetic corpus and 2.2× on real
-audio at eight threads — and the decoder passes libFLAC by eight threads.**
+**Per thread, Vinyl is ~2× slower than libFLAC 1.5.0 on encode and 2–4×
+slower on decode, and compresses 2–5% worse. It parallelises better than
+libFLAC, so the encode gap narrows as threads are added — to 1.2× on the
+synthetic corpus and 1.8× on real audio at eight threads — and the decoder
+passes libFLAC by eight threads.**
 
 Wall-clock throughput at equal thread counts, as a ratio against libFLAC
-(corpus totals; first figure the synthetic corpus, second the real-audio one):
+(corpus totals; first figure the synthetic corpus, second the real-audio one;
+measured 2026-08-27 on an 18-core Apple M5 Max):
 
 | threads | encode vs `flac -8` | decode vs `flac -d` |
 |---:|---|---|
-| 1 | 2.4× / 2.7× slower | 2.6× / 3.9× slower |
-| 4 | 1.9× / 2.5× slower | 1.2× / 1.2× slower |
-| 8 | **1.6× / 2.1× slower** | **1.08× slower / 1.15× faster** |
+| 1 | 1.9× / 2.2× slower | 2.1× / 3.7× slower |
+| 4 | 1.4× / 2.1× slower | 1.05× / 1.08× slower |
+| 8 | **1.2× / 1.8× slower** | **1.07× / 1.46× faster** |
 
 | compression, coded frames | Vinyl | `flac -5` | `flac -8` |
 |---|---|---|---|
@@ -156,17 +166,18 @@ Wall-clock throughput at equal thread counts, as a ratio against libFLAC
 
 Three things worth taking from that:
 
-- **Per thread the gap is about 3× in each direction.** That it is close to
-  the *same* factor both ways points at per-operation cost — pure Lean against
-  `int32` SIMD — rather than anything structural about one path. `flac -8` also
-  compresses better on both corpora, and so does `flac -5`, so there is no
-  libFLAC preset Vinyl beats on both speed and ratio.
+- **Per thread the gap is 2.2× on encode and 3.7× on decode** (real audio).
+  Two comparable factors rather than one bad path point at per-operation
+  cost — pure Lean against `int32` SIMD — rather than anything structural
+  about one path. `flac -8` also compresses better on both corpora, and so
+  does `flac -5`, so there is no libFLAC preset Vinyl beats on both speed
+  and ratio.
 - **Vinyl scales better with threads than libFLAC.** From 1 to 8 threads it
-  gains 3.6× (synthetic) and 5.0× (real audio) on encode, against libFLAC's
-  2.4× and 4.1×. Both codecs take a thread count — `vinyl -j N` and
+  gains 3.4× (synthetic) and 6.4× (real audio) on encode, against libFLAC's
+  2.1× and 5.1×. Both codecs take a thread count — `vinyl -j N` and
   `flac -j N` — so the comparison can be made at parity.
 - **Decoding gets faster with more threads, and that is where Vinyl wins on
-  wall clock**: 220 MB/s against libFLAC's 192 MB/s on real audio at eight
+  wall clock**: 369 MB/s against libFLAC's 252 MB/s on real audio at eight
   threads. libFLAC has no threaded decoder to answer with, so its decode row
   is a single value at any thread count.
 
@@ -189,20 +200,20 @@ What the curves say:
   have a step near unit 70, and that step is the corpus boundary — SQAM's
   stereo 44.1 kHz music is `flac -8`'s slow group, because stereo is where it
   pays an exhaustive mid/side decision that Vinyl's heuristic decides directly.
-  So the gap is ~1.6× on SQAM against ~2.6× on LibriSpeech's mono speech, and
-  the ×2.2 aggregate is a mixture rather than a factor that holds pointwise
-  (quantile against quantile it runs 1.7–2.4). The upturn at the right edge of
+  So the gap is ~1.4× on SQAM against ~2.0× on LibriSpeech's mono speech, and
+  the ×1.8 aggregate is a mixture rather than a factor that holds pointwise
+  (quantile against quantile it runs 1.2–1.9). The upturn at the right edge of
   Vinyl's curves is the handful of artificial and alignment units, where all
   implementations speed up together.
 - **Decode at eight threads is the one place Vinyl is ahead on wall clock.**
-  Its curve sits above `flac -d`'s over almost the whole corpus — ×1.12,
-  220 MB/s against 192 MB/s — and libFLAC has nothing to answer with: its
+  Its curve sits above `flac -d`'s over the whole corpus — ×1.46,
+  369 MB/s against 252 MB/s — and libFLAC has nothing to answer with: its
   decoder takes no `-j`, which is why it appears once rather than twice.
-- **Per core it is ~2.7× behind on encode and ~4.0× on decode.** Decode really
-  is a near-constant distance below libFLAC across the corpus (4.0× at the
-  slow end, 3.5× at the fast end); encode is the mixture above. Two comparable
-  factors rather than one bad path points at per-operation cost, pure Lean
-  against `int32` SIMD.
+- **Per core it is ~2.2× behind on encode and ~3.7× on decode.** Decode
+  sits a near-constant 3.5–3.7× below libFLAC over most of the corpus,
+  narrowing to ~2.2× at the fast end; encode is the mixture above. Two
+  comparable factors rather than one bad path points at per-operation cost,
+  pure Lean against `int32` SIMD.
 
 Thread-scaling curves and speedup-against-ideal plots, per-corpus tables, the
 corpus descriptions, the optimization history, and regeneration instructions:
@@ -303,8 +314,9 @@ LEAN_NUM_THREADS=4 lake exe vinyl --encode input.pcm out.flac 4096 2
 
 Encode raw PCM (block size 4096, 2 channels) with the verified encoder —
 if this succeeds, the round-trip is guaranteed by theorem — then decode
-(`--decode` is the reference decoder, `--decode-fast` the shipped one)
-and compare:
+(`--decode` computes the reference decoder, pointwise, via
+`decodeOption_eq_reference`; `--decode-fast` is the frame-parallel
+byte path) and compare:
 
 ```sh
 lake exe vinyl --encode input.pcm out.flac 4096 2
@@ -375,6 +387,9 @@ run over a batch of signals, is
   milestones.
 - [`COVERAGE.md`](COVERAGE.md) — feature-by-feature RFC 9639 coverage
   and conformance-corpus results.
+- [`docs/README.md`](docs/README.md) — the hardening notes: one
+  incident note per audit finding, plus the research notes they
+  motivate (cost/stack semantics, API contracts, spec validation).
 - [`conformance/README.md`](conformance/README.md) — the differential
   testing and fuzzing rigs against libFLAC.
 - [`bench/README.md`](bench/README.md) — compression and speed

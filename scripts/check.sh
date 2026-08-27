@@ -69,8 +69,20 @@ done <<'EOF'
 --decode-pcm16 - Flac.decodePcm16A
 --decode-fast - Flac.Decode.decodeBytes
 --decode-fast - Flac.Decode.decodeArrays
---decode - Stream.decodeReference
+--decode - Flac.Decode.decodeOption
 EOF
+echo "ok"
+
+echo "== stack-shape swaps present (P6: csimp-pinned tail forms)"
+# The input-driven frame loops ship in accumulator form via kernel-checked
+# @[csimp] equations (docs/06-recursion-shape.md). Pin them by name so a
+# refactor cannot silently drop a swap and revert a loop to
+# stack-frame-per-frame.
+for thm in "readUnary_eq_readUnaryTR" "readFrames_eq_readFramesTR" "readFramesB_eq_readFramesBTR" "recombine_eq_recombineTR" "readFramesStepsB_eq_readFramesStepsBTR"; do
+  if ! grep -rq "@\[csimp\] theorem $thm" Flac/Native/; then
+    echo "FAIL: missing csimp stack-shape swap $thm"; fail=1
+  fi
+done
 echo "ok"
 
 echo "== proof-level trust holes: no native_decide/implemented_by/unsafe/extern in Flac/"
@@ -92,6 +104,19 @@ if grep -n '\]!\|\[i\]!\|get!\|headD?!' $DECODE_FILES | grep -v '\-\-'; then
   echo "FAIL: panicking access in decode path"; fail=1
 else
   echo "ok: no panicking access"
+fi
+
+echo "== shipped-binary panic lint: every module a lake exe links"
+# The vinyl executable's main is FlacTest/Cli.lean's cliMain (audit finding
+# P9: a toNat! panic shipped because this directory sat outside the lint).
+# Code reachable from a shipped main gets the no-panic tier no matter which
+# directory it lives in; keep this list in step with the [[lean_exe]] roots
+# in lakefile.toml and their imports.
+BIN_FILES="FlacTest/Cli.lean FlacTest/Capstones.lean FlacTest/Main.lean Vinyl.lean FlacTest.lean"
+if grep -n '\]!\|get!\|headD?!\|head!\|tail!\|toNat!\|toInt!\|panic!' $BIN_FILES | grep -v '\-\-'; then
+  echo "FAIL: panicking call in a shipped executable's modules"; fail=1
+else
+  echo "ok: no panicking calls in executable modules"
 fi
 
 echo "== unit tests"

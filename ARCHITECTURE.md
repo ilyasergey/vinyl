@@ -8,10 +8,14 @@ theorem stack).
 ## The idea in one paragraph
 
 The deliverable is a pure-Lean FLAC encoder/decoder pair together with a
-kernel-checked **round-trip theorem**: `Flac.decode (Flac.encode a) = .ok a`
-for every well-formed input — and, one level up, its runtime-checked and
-byte-level corollaries (`decode_encodeChecked`, `decodePcm16_encodePcm16`),
-which carry the guarantee with *no hypotheses at all*. Everything in the
+kernel-checked **round-trip theorem**: whenever the shipped encoder
+returns bytes at all, decoding them recovers the audio —
+`Flac.encode a = some bytes → Flac.decode bytes = .ok a`
+(`decode_encode`, hypothesis-free: since the P7 hardening round the
+public `encode` checks its decidable precondition at runtime, and the
+raw total encoder lives under `Flac.Unchecked`). Its byte-level
+corollary (`decodePcm16_encodePcm16`) carries the same guarantee for
+raw PCM files. Everything in the
 tree is positioned relative to that theorem: code that the theorem
 quantifies over lives in `Flac/Native/`, the theorems themselves live in
 `Flac/Spec/`, and everything that merely *tests* the result against the
@@ -44,14 +48,15 @@ vinyl/
 │   │   ├── Stereo.lean     # left/side, right/side, mid/side transforms
 │   │   ├── Subframe.lean   # all four subframe types + wasted bits
 │   │   ├── Frame.lean      # multichannel frames, CRC-verified decode
-│   │   ├── Stream.lean     # STREAMINFO, Audio, encode/decodeReference
+│   │   ├── Stream.lean     # STREAMINFO, Audio, Unchecked.encode,
+│   │   │                   #   decodeReference
 │   │   ├── Heuristics.lean # LPC/fixed/stereo search (sanitized at use)
 │   │   ├── Reader.lean     # BitReader: buffered ByteArray bit reader
 │   │   │                   #   (word-level fast paths proven = the spec)
 │   │   ├── Decode.lean     # the shipped production decoder, Flac.decode
 │   │   ├── Encode.lean     # the fast encoder (arrays/Task-parallel frames);
-│   │   │                   #   proven to compute Stream.encode
-│   │   └── Codec.lean      # Flac.encode, checked + fast encoders,
+│   │   │                   #   proven to compute Stream.Unchecked.encode
+│   │   └── Codec.lean      # Flac.encode (checked) + Unchecked + fast,
 │   │                       #   PCM16 pipeline
 │   └── Spec/               # ALL theorems; no sorry, no axioms, ever
 │       ├── Bits.lean       # L0 round-trips, packing, withConsumed_spec
@@ -64,7 +69,7 @@ vinyl/
 │       ├── Frame.lean      # multichannel frame round-trip
 │       ├── Stream.lean     # the reference capstone: decodeReference_encode
 │       ├── Heuristics.lean # chooser certificates + default corollary
-│       ├── Encode.lean     # the shipped encoder computes Stream.encode
+│       ├── Encode.lean     # the shipped encoder computes the reference one
 │       ├── Reader.lean     # BitReader simulates the List Bool model
 │       └── Decode.lean     # production ≡ reference; the shipped capstones
 ├── FlacTest.lean, FlacTest/
@@ -219,7 +224,7 @@ heuristic.
 
 The writer-side ratchet now exists as well. `Flac.Emit.emitFast` writes a
 complete stream into a byte buffer, and `Flac.Emit.emitFast_eq_encode` proves
-byte-for-byte equality with `Stream.encode`; the proof stack covers the bit
+byte-for-byte equality with `Stream.Unchecked.encode`; the proof stack covers the bit
 writer, residuals, subframes, CRC-bearing frames, STREAMINFO, frame sequences,
 and the full stream. This path is deliberately not the public PCM16 fast path
 yet, and the reason is its *plumbing*, not its emission: `W.pushFrames`
@@ -241,7 +246,7 @@ computes the reference encoder:
 
 ```
 encodePcm16 blockSize ch sr bytes
-  = Stream.encode ⟨blockSize, false, fastChooser 16⟩
+  = Stream.Unchecked.encode ⟨blockSize, false, fastChooser 16⟩
       ⟨deinterleave ch (pcm16OfByteList bytes.data.toList), 16, sr⟩
 ```
 
@@ -315,12 +320,14 @@ each, and "carried no theorem, because it reasons through `Task`" — is now
 the plain range, which is what let the STREAMINFO digest become a proven
 function of the samples. Nothing on a shipped fast path used it.
 
-**What the encoder still checks at run time** is five O(1) guards, exactly
-the conditions the certificate silently covered: `0 < ch ≤ 8`, the byte
-count a multiple of `2·ch`, `sampleRate < 2^20`, the sample count below
-`2^36`, and `16 ≤ blockSize ≤ 65535`. Everything else `Stream.encode`
-checks — `Audio.WellFormed` in full — is discharged by
-`Flac.Encode.audio_wellFormed`.
+**What the encoder still checks at run time** is a handful of O(1)
+guards, exactly the conditions the certificate silently covered plus the
+two the audit added: the shared `Pcm16ShapeOk` shape guard — `0 < ch ≤ 8`,
+the byte count a multiple of `2·ch`, and a nonzero sample rate on
+nonempty input (P8/P11) — then `sampleRate < 2^20`, the sample count
+below `2^36`, and `16 ≤ blockSize ≤ 4608`. Everything else
+`Stream.Unchecked.encode` checks — `Audio.WellFormed` in full — is
+discharged by `Flac.Encode.audio_wellFormed`.
 
 A smaller stage remains on `Flac.Emit.W`'s own bit writer: `W.flushGo`
 returns `ByteArray × Nat × Nat` (two `Prod` cells per bit push, plus a boxed
@@ -352,7 +359,7 @@ is not something a type can express:
 | `--encode-slow` | `Flac.encodePcm16Cfg` | `decodePcm16_encodePcm16Cfg` |
 | `--decode-pcm16` | `Flac.decodePcm16A` | `decodePcm16A_eq` → the byte-level capstone |
 | `--decode-fast` | `Decode.decodeBytes` (fallback `decodeArrays` + `Stream.pcmBytesRange`) | `decodeBytes_spec` → samples **and** byte layout |
-| `--decode` | `Stream.decodeReference` + `Stream.pcmBytes` | samples yes, byte layout **no** (below) |
+| `--decode` | `Flac.Decode.decodeOption` + `Stream.pcmBytes` | `decodeOption_eq_reference` — pointwise the reference decoder; byte layout **no** (below) |
 
 Both negative tests are checked to fire: repointing `--encode` at the
 uncertified `Flac.Encode.encodePcm16` fails the gate, and weakening
@@ -365,7 +372,11 @@ The executable rests additionally on Lean's compiler and runtime — but
 `native_decide` (which would put the compiler inside a proof), no
 `@[implemented_by]`, no `@[extern]`, no `unsafe`, and no `partial def`, so
 the compiled code is generated from the very definitions the kernel
-checked. The gate greps for all of these. The primitives underneath —
+checked. The gate greps for all of these — and, since the audit
+hardening rounds ([`docs/README.md`](docs/README.md)), it also lints
+every module the shipped executables link for panicking calls (P9), and
+pins by name the `@[csimp]` equations that keep the frame loops in
+constant stack (P6). The primitives underneath —
 `Nat`/`Int` arithmetic on GMP, `ByteArray`, `FloatArray`, `Task` — are
 core Lean's `@[extern]` implementations, trusted as by any Lean program.
 
@@ -375,11 +386,14 @@ And the honest gap, now one mode narrower than it was.
 frame-window property above, so **`--decode-fast`** — the mode the
 benchmark's decode column measures — has its byte layout covered by
 `decodeBytes_spec`, not merely tested. `--decode` still writes through
-`Stream.pcmBytes`, whose *windowing* (one `Task` per 64Ki-sample window)
-is unprovable as written, so for that mode the decoded samples are covered
-by `decodeOption_eq_reference` while the byte layout is established
-against libFLAC by differential testing plus the golden vectors of
-`pcmBytesTests`. The other fully proved byte-level path is
+`Stream.pcmBytes` — serial since the windowed serializer was retired,
+but its byte arithmetic (the `UInt64` lane) is deliberately outside the
+theorems — so for that mode the decoded samples are covered by
+`decodeOption_eq_reference` (which is also why, since the P6 round, the
+branch *runs* `Flac.Decode.decodeOption` rather than executing the
+`List Bool` reference pipeline on untrusted input) while the byte layout
+is established against libFLAC by differential testing plus the golden
+vectors of `pcmBytesTests`. The other fully proved byte-level path is
 `--decode-pcm16` (`decodePcm16A_eq`).
 
 The two serializers are also now tied together: `pcm16FastA_eq_range`
