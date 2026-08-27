@@ -27,10 +27,10 @@ Every finding lives in a layer the proofs do not reach.
 | [#5](https://github.com/ilyasergey/vinyl/issues/5) | Unbounded wasted-bits count, saturating depth | Medium | Decoder DoS | fixed ([05](05-saturating-arithmetic.md)) |
 | [#6](https://github.com/ilyasergey/vinyl/issues/6) | Many tiny frames → non-tail recursion | Medium | Decoder DoS | open ([06](06-recursion-shape.md), draft) |
 | [#7](https://github.com/ilyasergey/vinyl/issues/7) | Unguarded public encoder → silent wrong value | Medium | Correctness | open ([07](07-api-surface.md), draft) |
-| [#8](https://github.com/ilyasergey/vinyl/issues/8) | `--encode-slow` huge channels + empty file | Medium | Encoder DoS | open |
-| [#9](https://github.com/ilyasergey/vinyl/issues/9) | `toNat!` panic on bad numeric argument | Low-Med | CLI robustness | open |
-| [#10](https://github.com/ilyasergey/vinyl/issues/10) | `-j` re-executes once per flag | Low | CLI robustness | open |
-| [#11](https://github.com/ilyasergey/vinyl/issues/11) | `sampleRate = 0` emitted with audio | Low | Conformance | open |
+| [#8](https://github.com/ilyasergey/vinyl/issues/8) | `--encode-slow` huge channels + empty file | Medium | Encoder DoS | open ([08](08-late-guards.md), draft) |
+| [#9](https://github.com/ilyasergey/vinyl/issues/9) | `toNat!` panic on bad numeric argument | Low-Med | CLI robustness | open ([09](09-lint-surface.md), draft) |
+| [#10](https://github.com/ilyasergey/vinyl/issues/10) | `-j` re-executes once per flag | Low | CLI robustness | open ([10](10-prose-claims.md), draft) |
+| [#11](https://github.com/ilyasergey/vinyl/issues/11) | `sampleRate = 0` emitted with audio | Low | Conformance | open ([11](11-spec-adequacy.md), draft) |
 
 ## Incident notes
 
@@ -68,6 +68,22 @@ Every finding lives in a layer the proofs do not reach.
   vacuously while the naturally-named unchecked entry point fabricates
   valid-looking streams for out-of-envelope audio; the fix is a
   namespace move, with the capstone name-pins following.
+- [08 — Late guards](08-late-guards.md) *(draft)*: the P8 encoder OOM —
+  the rejecting check existed but ran on a data structure whose size the
+  rejected parameter controls, built first; guard order as the encoder's
+  version of validate-before-spending.
+- [09 — Lint surface](09-lint-surface.md) *(draft)*: the P9 CLI panic —
+  the shipped binary contains code outside the theorem surface *and*
+  outside the merge gate's no-panic lint; the gate's scope must follow
+  what the executables link.
+- [10 — Prose claims](10-prose-claims.md) *(draft)*: the P10 `-j`
+  re-exec growth — an `IO`-layer behavior specified only by a docstring,
+  and the docstring was wrong; quantified behavioral claims need a
+  checker (test or theorem) or a rewrite as description.
+- [11 — Spec adequacy](11-spec-adequacy.md) *(draft)*: the P11
+  `sampleRate = 0` emission — theorems correct about a model laxer than
+  RFC 9639; guards tighten, `WellFormed` stays, and the deviation gets
+  documented; only an external referee can see model-level gaps.
 
 ## Research notes
 
