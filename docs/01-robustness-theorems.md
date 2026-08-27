@@ -78,11 +78,11 @@ Each one, when missing, admits a distinct class of attack.
 | Round-trip correctness | `decode (encode a) = a` on well-formed `a` | wrong output on *valid* streams | proven (capstones) |
 | Value boundedness | for *arbitrary* input, every intermediate and output value fits a fixed width | value blowup: bignum divergence, GMP abort (P1) | wrap by construction + `fitsSInt_wrapSInt`; end-to-end statement is future work |
 | Output-size bound | `size (decode bytes) ≤ k · size bytes + c` | decompression bombs / amplification OOM (P2, P3) | proven: `Flac.decode_size_le` at `k = 4096` ([`02-output-size-bounds.md`](02-output-size-bounds.md)); P3's up-front allocation fixed proof-free ([`03-untrusted-sizes.md`](03-untrusted-sizes.md)) |
-| Stack shape | recursion is tail (or depth ≤ constant) for arbitrary input | stack overflow on many tiny frames (P6) | lint-enforced style, no theorem ([#6](https://github.com/ilyasergey/vinyl/issues/6)); ways to make depth provable: [`stack-semantics.md`](stack-semantics.md) |
+| Stack shape | recursion is tail (or depth ≤ constant) for arbitrary input | stack overflow on many tiny frames (P6) | fixed: accumulator forms swapped in by kernel-checked `@[csimp]` equations, gate-pinned by name ([`06-recursion-shape.md`](06-recursion-shape.md)); still no theorem *states* depth — ways to make it provable: [`stack-semantics.md`](stack-semantics.md) |
 | Termination | fuel-bounded loops, no `partial` | infinite loops on crafted input | by construction |
-| Early validation | header claims are checked against input size *before* any allocation proportional to them | huge up-front allocation from a tiny file (P3, P8) | P3 fixed — a capped capacity hint, unenforceable by any theorem ([`03-untrusted-sizes.md`](03-untrusted-sizes.md)); P8 open ([#8](https://github.com/ilyasergey/vinyl/issues/8)) |
+| Early validation | header claims are checked against input size *before* any allocation proportional to them | huge up-front allocation from a tiny file (P3, P8) | both fixed — P3 by a capped capacity hint, unenforceable by any theorem ([`03-untrusted-sizes.md`](03-untrusted-sizes.md)); P8 by one shared O(1) guard run before construction ([`08-late-guards.md`](08-late-guards.md)) |
 | Speculation bound | work done *before* it is known useful (guessed units, spawned tasks) is bounded by input size, not by an attacker's byte pattern | task/candidate storm on the parallel path (P4) | capped by construction behind the self-validating step boundary, so proof-free ([`04-speculative-work.md`](04-speculative-work.md)); no theorem, and none possible until cost is reified ([`cost-semantics.md`](cost-semantics.md)) |
-| Coverage | every exported name is covered by a theorem about *that name*, hypothesis-free or runtime-guarded | silent wrong output from the naturally-named unchecked entry point (P7) | open ([#7](https://github.com/ilyasergey/vinyl/issues/7), draft [`07-api-surface.md`](07-api-surface.md)); methodology and mechanization: [`api-contracts.md`](api-contracts.md) |
+| Coverage | every exported name is covered by a theorem about *that name*, hypothesis-free or runtime-guarded | silent wrong output from the naturally-named unchecked entry point (P7) | fixed: the public `encode` is the checked form, the raw encoders live under `Unchecked`, type-pinned at the gate ([`07-api-surface.md`](07-api-surface.md)); methodology and mechanization: [`api-contracts.md`](api-contracts.md) |
 
 The key discipline: for each theorem, ask **which set of inputs it
 quantifies over**. "All well-formed audio" protects users of the encoder.
@@ -177,8 +177,8 @@ Before merging a function that consumes untrusted bits, answer for it:
   [`02-output-size-bounds.md`](02-output-size-bounds.md). P3's
   header-driven allocation is also fixed
   ([`03-untrusted-sizes.md`](03-untrusted-sizes.md)) — proof-free by
-  necessity, which is its own lesson; P8's early-validation gap
-  ([#8](https://github.com/ilyasergey/vinyl/issues/8)) remains.
+  necessity, which is its own lesson; P8's early-validation gap is
+  fixed the same tier ([`08-late-guards.md`](08-late-guards.md)).
 - Making resource consumption itself provable: value-level theorems bound
   what the decoder *returns*, never what it *spends* computing it (the
   P3 capacity hint was definitionally invisible to the logic, and its fix

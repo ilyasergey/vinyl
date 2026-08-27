@@ -72,10 +72,14 @@ Four rules, ordered by how much they cost the API author.
 Rule 3 is where research-grade leverage lives, because the map can be
 made a checked artifact instead of a document. In increasing strength:
 
-- **Gate greps** (available today): the convention tier. A block in
-  `scripts/check.sh` lists each public name with the theorem covering it
-  and fails when either side of a pair disappears — cheap, and already
-  the house style for pinned capstone names.
+- **Gate greps and type pins** (available today, and what the P7 round
+  landed): the convention tier. A block in `scripts/check.sh` lists each
+  public name with the theorem covering it and fails when either side of
+  a pair disappears — cheap, and already the house style for pinned
+  capstone names. The P7 fix added the type-level form:
+  `example : Audio → Option ByteArray := Flac.encode` in
+  `FlacTest/Capstones.lean` fails the build if the shortest-path encoder
+  ever reverts to a signature that cannot refuse.
 - **An annotation checked by metaprogram.** An attribute, say
   `@[covered_by decode_encodeChecked]`, on every exported definition in
   the library root; an elaborator-level checker walks the public

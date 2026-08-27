@@ -1,9 +1,5 @@
 # Late guards: validation after allocation, encoder edition
 
-> **DRAFT — the P8 fix has not landed.** `TODO(fix)` markers hold places
-> for the landed details. The fix owner fills them, de-drafts, adds the
-> README bullet, and flips finding #8's row.
-
 Written after fixing audit finding P8
 ([issue #8](https://github.com/ilyasergey/vinyl/issues/8), the
 `--encode-slow` channel-count OOM). It is
@@ -43,26 +39,54 @@ is true: whenever the function answers, the answer round-trips. That a
 on a value that simply exists; that deciding it at runtime requires the
 value to be materialized first — and that construction is eager — is
 below the logic's resolution, the same erasure
-[`cost-semantics.md`](cost-semantics.md) §2 catalogues. The in-loop
-discipline of [`01-robustness-theorems.md`](01-robustness-theorems.md)
+[`cost-semantics.md`](cost-semantics.md) §2 catalogues (and its §7
+"Deciding a guard has a cost" develops this exact incident: a
+`Decidable` instance is a program, and the data it inspects must exist
+before it runs). The in-loop discipline of
+[`01-robustness-theorems.md`](01-robustness-theorems.md)
 ("the check must run before the memory is spent") applies verbatim; P8
 is that discipline violated by two lines being in the wrong order.
 
 ## The fix
 
-Hoist `ch ≤ 8` into `encodePcm16Cfg`'s first guard, matching
-`encodePcm16Fast`. The theorem is conditional on `some`, so a tighter
-guard only moves inputs from "expensive `none`" to "cheap `none`" —
-no proof moves, or at most one `if` restructuring in the round-trip
-discharge. `TODO(fix)`: the landed diff, whether the guard was unified
-with the fast path's (one shared guard function would prevent the two
-entry points from disagreeing again), reproducer behavior, test names.
+The guard was not merely hoisted — it was **unified**. Both byte-level
+encoders now run the same O(1) predicate first:
+
+```lean
+def Pcm16ShapeOk (ch sampleRate : Nat) (bytes : ByteArray) : Prop :=
+  0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧
+  (bytes.size = 0 ∨ 0 < sampleRate)
+```
+
+`encodePcm16Cfg` tests it before the `Audio` value exists;
+`encodePcm16Fast` conjoins it with its remaining O(1) clauses (rate and
+count field widths, block-size window). One shared predicate is the
+answer to "the two entry points disagree about guard order": there is no
+longer a second copy to disagree with. (The last clause is audit finding
+P11's — [`11-spec-adequacy.md`](11-spec-adequacy.md) — which rode along
+in the same predicate.)
+
+The theorems moved exactly as predicted: `some`-conditional statements
+tolerate a tighter guard, so the fix only moved inputs from "expensive
+`none`" to "cheap `none`". `decodePcm16_encodePcm16Cfg` re-destructures
+the guard conjunction; `encodePcm16Cfg_fast` and
+`decodePcm16_encodePcm16_direct` (which state *equalities*, not
+`some`-conditionals) gained the one hypothesis the new clause needs,
+discharged in `decodePcm16_encodePcm16Fast` from its own tightened
+guard. No capstone statement changed.
+
+Reproducer: `--encode-slow empty.pcm out.flac 4096 4000000000 44100` now
+prints a clean `ENCODE ERROR` and exits 1 in milliseconds. Regression
+tests: `encoderGuardTests` in `FlacTest/Cli.lean` — the first check
+(`encodePcm16Cfg` at `ch = 4·10⁹` on empty input) used to OOM the test
+binary.
 
 ## Checklist addition
 
 - Do all entry points that accept the same parameters run the same
   guards, in the same order? A slow/reference sibling with weaker or
-  later guards is where this class lives.
+  later guards is where this class lives — and one *shared* guard
+  predicate removes the class, not just the instance.
 - For each guard conjunct: what has already been *allocated* by the time
   it runs? Cheap conjuncts (numeric bounds) go first; conjuncts that
   need constructed data go last, and nothing bigger than the input may

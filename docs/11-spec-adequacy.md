@@ -1,9 +1,5 @@
 # Spec adequacy: when the verified predicate is not the standard
 
-> **DRAFT — the P11 fix has not landed.** `TODO(fix)` markers hold places
-> for the landed details. The fix owner fills them, de-drafts, adds the
-> README bullet, and flips finding #11's row.
-
 Written after fixing audit finding P11
 ([issue #11](https://github.com/ilyasergey/vinyl/issues/11),
 `sampleRate = 0` emitted with audio). The lowest-severity finding and the
@@ -39,23 +35,33 @@ the RFC text, other implementations, conformance corpora — can see them.
 
 ## The fix
 
-Per the issue: require `numSamples = 0 ∨ 0 < sampleRate` in the CLI and
-in `encodePcm16Fast`'s guard (rate 0 is defensible only for empty
-content), *without* touching `Audio.WellFormed` — guards can tighten
-freely under `some`-conditional theorems, so every capstone keeps its
-statement. `TODO(fix)`: the landed guard and diff, whether the checked
-encoders gained the same clause, a regression test (`--encode … 0` on
-nonempty input must fail cleanly; empty input may keep rate 0), and
-whether the round chose to also document the `WellFormed`-vs-RFC
-deviation table (see below).
+As the issue proposed: the clause `bytes.size = 0 ∨ 0 < sampleRate`
+(rate 0 is defensible only for empty content) landed in the guard, *not*
+in `Audio.WellFormed` — and it landed once, in the shared `Pcm16ShapeOk`
+predicate the P8 round introduced
+([`08-late-guards.md`](08-late-guards.md)), so both CLI entry points
+(`encodePcm16Fast` and `encodePcm16Cfg`) tightened together. Guards can
+tighten freely under `some`-conditional theorems, so every capstone keeps
+its statement; the one hypothesis this adds to the two equality-shaped
+lemmas is recorded in `08`.
 
-The alternative — tightening `WellFormed` itself — was rejected in the
-issue's framing and is worth recording why: it would ripple hypotheses
-through every capstone for a clause that only constrains *emission*
-policy, not decodability. The predicate's job is "representable as a
-FLAC stream"; the RFC's MUST is a conformance rule about files
-containing audio. Keeping them distinct is correct layering — provided
-the deviation is written down, which before this round it was not.
+Scope, stated honestly: the *sample-level* checked encoders
+(`Flac.encode`, `encodeCheckedCfg`) test `WellFormed` and nothing more,
+so a library caller who builds an `Audio` with audio at rate 0 still gets
+a stream. That is the layering decision, made deliberately:
+`WellFormed`'s job is "representable as a FLAC stream" — decodability,
+which rate 0 does not threaten (the round-trip holds) — while the RFC's
+MUST NOT is a conformance rule about *emission*. Tightening `WellFormed`
+would ripple a hypothesis through every capstone to enforce an emission
+policy; the byte-level entry points (the CLI, the only place a rate
+parameter arrives as untrusted input) enforce it as a guard instead. The
+deviation is now written down where coverage claims live —
+`COVERAGE.md`'s "Known deviations from RFC MUSTs" — which before this
+round it was not.
+
+Reproducer: `vinyl --encode audio.pcm rate0.flac 4096 1 0` now fails
+cleanly (`ENCODE ERROR`, rc 1); on an empty input, rate 0 still encodes.
+Regression tests: the P11 checks in `encoderGuardTests`.
 
 ## Checklist addition
 
@@ -69,7 +75,4 @@ the deviation is written down, which before this round it was not.
 - Internal consistency proofs (round-trips) cannot detect model-level
   deviations by construction; budget for an external referee —
   conformance files, differential runs against another implementation —
-  as part of the verification story, not as optional QA. How to organize
-  the referees so this class cannot hide (traceability matrix,
-  must-reject corpora, referee triangulation, an explicit accept-set
-  predicate) is developed in [`spec-validation.md`](spec-validation.md).
+  as part of the verification story, not as optional QA.

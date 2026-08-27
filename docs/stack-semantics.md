@@ -99,12 +99,29 @@ decoder runs in N bytes of stack" is a theorem about the machine
 artifact with no compiler trust left. Lean has no counterpart, and
 building one is out of scope for a codec.
 
-## Recommendation for Vinyl
+## Recommendation for Vinyl, and what the P6 round landed
 
-Combine routes 1 and 3: land the P6 loops in accumulator/trampoline form
-pinned to the old definitions by bridging equations (the
-[`02`](02-output-size-bounds.md) pattern), and add the syntactic tail
-checker to `scripts/check.sh` so the shape cannot regress silently.
+The recommendation was to combine routes 1 and 3: land the P6 loops in
+accumulator form pinned by bridging equations (the
+[`02`](02-output-size-bounds.md) pattern), and add a syntactic tail
+checker so the shape cannot regress silently.
+
+What landed is route 1's degenerate case with a mechanism this note had
+not considered: the bridging equations carry **`@[csimp]`**, so the
+compiler substitutes the tail form at every call site while every
+theorem — and every theorem *statement* — keeps the structural
+definition. That is strictly better than editing call sites: zero Spec
+changes, and the swap itself is kernel-checked (the equations use only
+`propext, Quot.sound`). The trusted residue is unchanged in kind —
+"self-tail recursion compiles to a jump" — plus "csimp replacements are
+applied", both spot-verified once at the IR level
+([`06-recursion-shape.md`](06-recursion-shape.md) records the check:
+the old loop's non-tail self-call becomes a `goto` loop).
+
+Route 3 landed in its grep approximation only: `scripts/check.sh` pins
+the five `@[csimp]` swap names, so *dropping a swap* fails the gate, but
+nothing yet rejects a *new* non-tail input-driven loop at elaboration
+time — the `@[tail_shape]` certifier is still the open mechanization.
 Route 2 remains the research direction, tracked as "stack as a resource"
 in [`cost-semantics.md`](cost-semantics.md) §7, with this note as its
 worked-out design space.

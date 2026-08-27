@@ -1,9 +1,5 @@
 # The lint surface: shipped code the gate never sees
 
-> **DRAFT — the P9 fix has not landed.** `TODO(fix)` markers hold places
-> for the landed details. The fix owner fills them, de-drafts, adds the
-> README bullet, and flips finding #9's row.
-
 Written after fixing audit finding P9
 ([issue #9](https://github.com/ilyasergey/vinyl/issues/9), the CLI
 `toNat!` panic). The smallest finding in the series, and the one with the
@@ -32,20 +28,29 @@ enforced for the codec, stops at a directory boundary that the shipped
 binary does not respect: `vinyl`'s `main` is `cliMain`. The audit's
 row for this finding is, in effect, a map of where the gate's
 jurisdiction ends. (That the production CLI lives in the test package at
-all is the underlying smell — `TODO(fix)`: note if the round relocates
-it.)
+all is the underlying smell; this round left it where it is — moving a
+600-line module is a refactor, not a fix — and moved the *boundary*
+instead, which is the part that was load-bearing.)
 
 ## The fix
 
-Replace the six `toNat!` calls with `toNat?`, emitting the usage error
-and exit 2 on `none`, exactly as `withThreads` already does — the
-in-file precedent makes this a consistency fix, not a design decision.
-Then move the boundary: extend the `scripts/check.sh` panic lint to
-every module the `vinyl` executable links (`FlacTest/Cli.lean`
-included), so the next `!` in CLI code fails the gate the way it would
-in `Flac/`. `TODO(fix)`: landed diff, the lint extension's exact scope,
-and a regression test invoking the CLI with garbage arguments and
-asserting rc 2 with no panic.
+The six `toNat!` sites now parse with `toNat?` and funnel `none` into a
+shared `usageError` (message, usage text, exit 2) — the in-file precedent
+`withThreads` set made this a consistency fix, not a design decision. Two
+dead helpers that carried panicking indexing (`pcm16OfBytes` and a local
+`deinterleave`, leftovers of an earlier CLI) were deleted rather than
+grandfathered.
+
+Then the boundary moved: `scripts/check.sh` now lints **every module the
+lake executables link** (`FlacTest/Cli.lean`, `FlacTest/Capstones.lean`,
+`FlacTest/Main.lean`, `Vinyl.lean`, `FlacTest.lean` — the list is kept in
+step with the `[[lean_exe]]` roots in `lakefile.toml`) for the panicking
+family: `!`-indexing, `get!`, `head!`/`tail!`, `toNat!`/`toInt!`, and
+`panic!` itself. The next panicking call in CLI code fails the gate the
+way it would in `Flac/`; that lint is also the regression guard — the
+suite runs *inside* `cliMain`, so it cannot re-invoke the binary with
+garbage arguments, and the by-hand check (`--encode … abc 1` → usage
+message, rc 2, no backtrace) is recorded here instead.
 
 ## Checklist addition
 

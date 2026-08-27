@@ -2204,3 +2204,79 @@ quantifies over whole streams and wants a frame-level accept-set
 characterization against the RFC, which nothing yet provides.
 
 **Next:** remaining audit findings (P6–P11).
+
+## 2026-08-27 — Session 22: P6–P11 fixes — the audit round closes
+
+**Attempted and landed: all six remaining audit findings, one commit
+each, plus the docs sweep.** Order chosen by blast radius: P8+P11
+(guards), P9 (CLI parse + lint scope), P10 (thread flags), P6 (stack
+shape), P7 (API surface), then docs.
+
+- **P8+P11 (`Pcm16ShapeOk`).** One shared O(1) guard both byte-level
+  encoders run before anything sized by its arguments exists:
+  `0 < ch ≤ 8`, divisibility, and `bytes.size = 0 ∨ 0 < sampleRate`
+  (RFC 9639 §8.2). `Audio.WellFormed` untouched, so no capstone moved;
+  `encodePcm16Cfg_fast` / `decodePcm16_encodePcm16_direct` gained the
+  one `hsr0` hypothesis, discharged from the tightened guard in
+  `decodePcm16_encodePcm16Fast`. The `ch = 4·10⁹`-on-empty-input check
+  in `encoderGuardTests` used to OOM. The WellFormed-vs-RFC deviation
+  is now a table in `COVERAGE.md` ("Known deviations from RFC MUSTs").
+- **P9.** Six `toNat!` → `toNat?` funneled into `usageError` (usage +
+  rc 2); two dead panicking helpers deleted; `check.sh` now lints every
+  module the lake executables link (`toNat!`/`panic!`/`get!`/… family).
+- **P10.** `stripThreadFlags` (pure, 7 unit checks) consumes every
+  leading `-j`/`--threads`/`--threads=` in one pass, last count wins;
+  child carries `VINYL_THREADS_SET` and `withThreads` refuses to
+  re-exec past it. 120 stacked flags: ~12 ms flat (was ~1.5 ms/flag).
+- **P6.** Accumulator (tail) forms with kernel-checked `@[csimp]` swaps
+  — `readUnaryTR`, `readFramesTR`, `readFramesBTR`, `recombineTR`,
+  `readFramesStepsBTR` — so every Spec theorem keeps the structural
+  definitions (zero proof changes) while the compiled loops run as
+  `goto` loops (verified in the generated IR: the old
+  `readFramesStepsB` had a non-tail self-call, the new one none). The
+  csimp equations use only `propext, Quot.sound`. The reference path's
+  `List Bool` appetite and `withConsumed` quadratic stay — spec-shaped
+  by design — and CLI `--decode` now runs `Flac.Decode.decodeOption`,
+  pointwise equal by `decodeOption_eq_reference`; the check.sh call-site
+  pin and the Capstones table moved with it, and the gate now pins the
+  five csimp swap names. Measured: 200k tiny frames, `--decode` >60 s →
+  0.19 s; 7M frames through `--decode-pcm16` in 8 s, flat wall time
+  against the old loop where it survived. macOS honesty note: Lean's
+  main stack is huge there (~1 GB; probe crashed at ~8M depth), so the
+  overflow needs Linux-sized stacks or 100 MB files — the IR check is
+  the platform-independent evidence.
+- **P7.** `Flac.Stream.encode` → `Flac.Stream.Unchecked.encode`,
+  top-level raw encoder → `Flac.Unchecked.encode`, and `Flac.encode` is
+  now the checked `Option` form; `encodeChecked` stays as an alias.
+  `decode_encode` restated hypothesis-free (the old conditional lives on
+  as `decode_encode_unchecked`); `decode_encode_cfg`,
+  `emitFast_eq_encode`, `encodePcm16_eq`, `decodeReference_encode` keep
+  their names over the relocated function. `decodeReference` did NOT
+  move — a decoder has no precondition to violate. New type pin in
+  Capstones: `example : Audio → Option ByteArray := Flac.encode`.
+  `apiSurfaceTests` pins the audit's three probes refused and the
+  unchecked mod-wrap as the reason.
+
+**Docs:** notes 06–11 de-drafted with landed details; README table all
+green; stale "open/remains" claims in 01/03/05 and spec-validation
+updated; research notes reconciled with what actually landed
+(stack-semantics records the csimp mechanism it had not considered and
+that the tail *certifier* is still open; api-contracts records the
+landed type pin); ARCHITECTURE/COVERAGE/PLAN/README refreshed (README
+now timestamps the audit). Root README's capstone block shows the new
+hypothesis-free `decode_encode`.
+
+**Verified:** `scripts/check.sh` ALL GREEN, 155 checks (24 new this
+session). Axiom footprint of every capstone unchanged
+(`propext, Classical.choice, Quot.sound`).
+
+**Blocked / deliberately not done:** the syntactic tail certifier
+(`@[tail_shape]`) — grep-pinning the csimp names is the stopgap;
+threading lengths through `withConsumed` to kill the reference path's
+quadratic — rejected as spec-path cost, recorded in 06; the
+`@[covered_by]` checker and the conformance lemma "`w ≥ b` streams
+decode to `none`" remain the open research items.
+
+**Next:** spec-validation adoption path (must-reject corpus in
+`conformance/`, ffmpeg as second referee); optionally relocate the CLI
+out of the test package (P9's recorded smell).

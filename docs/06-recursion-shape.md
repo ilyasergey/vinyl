@@ -1,12 +1,5 @@
 # Recursion shape: when the C stack is the resource
 
-> **DRAFT — the P6 fix has not landed.** Markers of the form `TODO(fix)`
-> hold places for details of the landed change (which loops were
-> converted, bridging lemma names, test names, measurements). Structure
-> and analysis are ready for review; the owner of the P6 round should
-> fill, adjust, and de-draft this note in the docs commit that records
-> the fix, and add the README bullet.
-
 Written after fixing audit finding P6
 ([issue #6](https://github.com/ilyasergey/vinyl/issues/6), the
 many-tiny-frames hang and stack overflow). The resource this time is
@@ -50,7 +43,7 @@ stack up:
    the difference the operational stack sees and the denotation does not.
 2. **Tail-position is not even expressible.** `readFrames` in
    accumulator form and in cons-after-return form are provably equal
-   functions — that equality is exactly what the fix will prove — so no
+   functions — that equality is exactly what the fix proves — so no
    theorem about either can distinguish them. Whether a syntactic tail
    call *compiles* to a jump is then the Lean compiler's decision,
    outside the logic entirely.
@@ -68,67 +61,93 @@ one of the offending loops. Nothing guarded *depth*.
 Unlike `03` and `04`, this fix does touch proven functions: the frame
 loops appear throughout the equivalence stack. And unlike `05`, it must
 not change any observable value — same accept-set, same output, only the
-computation's shape. That combination dictates the pattern, the same one
-that carried the P2 budget
-([`02`](02-output-size-bounds.md)): write the accumulator form as a new
-function and pin it to the old one with a bridging equation, consuming
-the existing lemma stack unchanged.
+computation's shape. That combination dictated the pattern the draft of
+this note predicted — accumulator forms pinned by bridging equations —
+but the landed mechanism is better than swapping call sites:
+**`@[csimp]`**. Each converted loop gets an accumulator (tail) sibling, a
+bridging equation proved by induction, and a `@[csimp]` attribute on the
+equation, which makes the Lean compiler emit the tail form wherever the
+original is called — while every theorem, and every *statement*, keeps
+reading the structural definition. Zero proof changes anywhere in
+`Flac/Spec/`; the round-trip capstones flow through untouched because
+nothing they mention changed. The equations use only
+`propext, Quot.sound`.
 
-- **Loop conversion.** `readFrames` / `readFramesAt` / `readFramesSteps`
-  and `recombine` move to accumulator (tail-recursive) form, as
-  `readBytesSteps` already demonstrates; the bridging lemma has the shape
-  `readFramesTR acc … = acc ++ readFrames …`. `TODO(fix)`: actual
-  function and lemma names, and whether the top-level decoders swap
-  wholesale or per path.
-- **The quadratic.** The reference path carries the remaining length as a
-  parameter instead of recomputing `List.length` per frame.
-  `TODO(fix)`: where the length is threaded, and whether `withConsumed`
-  changed shape or gained a counted variant with its own equation.
-- **The `List Bool` appetite.** Materializing the input per-bit is the
-  reference decoder's *purpose* — it is the specification-shaped path —
-  so it stays; `TODO(fix)`: record whatever stance the round takes (keep
-  `--decode` as the spec path with documented cost, or route the CLI's
-  `--decode` through a verified-equal cheaper form). For scale: the P5
-  round measured the reference path at roughly 480 bytes of heap per
-  input byte.
-- **Sites inherited from the P5 round.** `Bits.readUnary` is itself
-  non-tail-recursive — discovered when P5's `2^26`-bit unary run
-  overflowed the stack *through the reader* before any guard could see
-  the count (see [`05-saturating-arithmetic.md`](05-saturating-arithmetic.md),
-  "the half the guard does not cover"). P5 capped the one unbounded call
-  site (`readUnaryUpTo`, `lim := b`), but Rice-residual unary runs on the
-  list path still go through the uncapped reader, and a crafted partition
-  can make a run as long as the remaining input: partition structure
-  bounds the *value*'s cost in the budget, not the reader's recursion
-  depth. `TODO(fix)`: convert `Bits.readUnary` to accumulator form (or
-  record why its depth is acceptably bounded), and audit the other
-  list-path bit readers for the same shape.
+- **Loop conversions landed** (each: `<name>Acc` accumulator + `<name>TR`
+  wrapper + csimp equation `<name>_eq_<name>TR`):
+  - `Stream.readFrames`, `Stream.readFramesB` — the reference frame
+    loops. Bridging shape:
+    `readFramesBAcc b0 acc budget fuel s = (readFramesB b0 budget fuel s).map (acc.reverse ++ ·)`.
+  - `Decode.readFramesStepsB` — the shipped frame loop behind
+    `decodeArrays`, i.e. `--decode-pcm16`, `--decode-fast`'s fallback,
+    and (since this round) `--decode`. Verified in the generated IR: the
+    old body had a non-tail self-call, the new `readFramesStepsBAcc`
+    compiles to a `goto` loop with zero self-calls.
+  - `Stream.recombine` — as a left fold over the reversed frame list
+    (`recombine = foldr` by induction, then `List.foldl_reverse`); same
+    output-linear work, no depth.
+  - `Bits.readUnary` — the residue [`05`](05-saturating-arithmetic.md)
+    left open: a Rice-residual run can be as long as the remaining input
+    (the partition bounds the *value*, not the reader's depth).
+    `readUnaryUpTo` stays recursive: its depth is bounded by `lim`, which
+    its one caller instantiates with the bit depth (≤ 32).
+  - *Not* converted: `Decode.readFrames` / `readFramesAt` /
+    `readFramesSteps`, the intermediate forms of the parallel-path
+    equivalence proof — no shipped entry point executes them
+    (`decodeArrays` runs the budgeted loop), and converting proof-layer
+    forms buys no runtime property.
+- **The quadratic.** Not threaded away — the remaining-length parameter
+  would have to flow through every reader `withConsumed` wraps, and the
+  per-bit `List Bool` (~480 bytes of heap per input byte, measured in the
+  P5 round) is the reference decoder's *purpose*: it is the
+  specification-shaped path. The stance taken instead: **the CLI's
+  `--decode` now decodes with `Flac.Decode.decodeOption`**, which
+  `decodeOption_eq_reference` proves *pointwise equal* to
+  `Stream.decodeReference` — same accept-set, same samples, at the
+  production decoder's cost — and the reference decoder is no longer
+  something the CLI runs on untrusted input. `scripts/check.sh`'s
+  call-site pin and the `FlacTest/Capstones.lean` table moved in step.
 
 Note the division of labor: the equalities are real kernel-checked
 theorems and the round-trip capstones flow through them untouched, yet
 **none of them states the property being bought**. Constant stack depth
 is delivered by the syntactic shape of the new definitions plus the
 compiler's tail-call behavior — the convention tier again, now with a
-proof-carrying escort.
+proof-carrying escort. The trusted residue is "Lean compiles self-tail
+recursion to a jump, and applies csimp replacements", which the IR check
+above spot-verified once.
 
-`TODO(fix)`: reproducer behavior after the fix (expected: `--decode`
-completes in seconds linearly, `--decode-pcm16` flat stack at any frame
-count), regression test names and counts, perf spot-check that the
-accumulator forms did not regress the fast path.
+**Reproducer behavior.** On a 3.1 MB file of 200,000 tiny CONSTANT
+frames: `--decode` went from *still churning after 60 s* (killed) to
+0.19 s; `--decode-pcm16` and `--decode-fast` round-trip it in ~0.15 s. A
+7,000,000-frame file (117 MB) decodes via `--decode-pcm16` in 8.0 s, the
+same wall time the old loop took where it survived — so the accumulator
+forms cost nothing measurable. One platform honesty note: macOS runs the
+Lean main function on a large (~1 GB) stack, so the *crash* needs ~8M
+frames there (measured with a minimal probe); on a true 8 MB stack —
+the audit's environment — depth-equals-frame-count died at the tens of
+thousands of frames the reproducer packs. The IR-level check is the
+platform-independent verification.
+
+Regression tests: `recursionShapeTests` in `FlacTest/Cli.lean` — 100k
+tiny frames round-trip through the production decoder, 500 frames through
+the reference decoder, and a megabit unary run through `Bits.readUnary`.
 
 ## What is deliberately not proven
 
 That the compiled loops run in constant stack. The logic cannot state it
 (erasure 2 above), so the guarantee rests on: definitions in syntactic
-tail form, the Lean compiler's tail-call compilation, and the merge-gate
-lint. `TODO(fix)`: if the lint gains a depth-shape check (e.g. grep for
-cons-after-recursive-call patterns in decode paths, or a required
-`-- tail` marker), record it here. A cost semantics with a stack-depth
-charge ([`cost-semantics.md`](cost-semantics.md), §7 "Stack as a
-resource") would make depth a theorem, with the compiler's tail-call
-behavior as the residual adequacy assumption; the full design space —
-that route, trampoline reification of the stack into data, a syntactic
-tail certifier, and verified stack-cost compilation — is
+tail form, the Lean compiler's tail-call compilation, and the merge gate —
+which now grep-pins the five `@[csimp]` swap names, so a refactor cannot
+silently drop one and revert a loop to stack-frame-per-frame. A real
+syntactic tail *certifier* (elaborator-level, rejecting non-tail
+recursion in decode paths at build time) remains the open mechanization,
+and a cost semantics with a stack-depth charge
+([`cost-semantics.md`](cost-semantics.md) §7 "Stack as a resource") would
+make depth a theorem, with the compiler's tail-call behavior as the
+residual adequacy assumption; the full design space — that route,
+trampoline reification of the stack into data, the syntactic certifier,
+and verified stack-cost compilation — is
 [`stack-semantics.md`](stack-semantics.md).
 
 ## Checklist addition for new decoder paths
@@ -140,7 +159,11 @@ To the checklists of `01`–`05`, this incident adds:
   depth.
 - Does any per-iteration step call a function whose cost is proportional
   to the remaining input (`List.length`, slicing, re-scanning)? Carry the
-  quantity instead.
+  quantity instead — or, when the cost is the specification path's shape,
+  route the shipped entry point through a proven-equal cheaper form.
 - When converting a proven loop, pin the new form with a bridging
-  equation rather than re-proving the stack (`readFramesB` in `02` and
-  `TODO(fix)` here are the worked examples).
+  equation rather than re-proving the stack — and prefer `@[csimp]` on
+  the equation to editing call sites: theorems keep the structural form,
+  the compiler gets the tail form, and no proof anywhere moves
+  (`readFramesB_eq_readFramesBTR` is the worked example; `readFramesB` in
+  [`02`](02-output-size-bounds.md) did the same job by hand).

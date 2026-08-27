@@ -97,9 +97,9 @@ decoder's accept-set — which means threading the check through the native
 exactly the exercise P2 required
 ([`02-output-size-bounds.md`](02-output-size-bounds.md)); the bridging
 technique there would apply verbatim. Left open until conformance work
-prioritizes it; the P8 finding
-([issue #8](https://github.com/ilyasergey/vinyl/issues/8)) also sits in
-the early-validation row of the taxonomy and remains open.
+prioritizes it. The P8 finding, which also sat in the early-validation
+row of the taxonomy, is fixed
+([`08-late-guards.md`](08-late-guards.md)).
 
 ## Checklist addition for new decoder paths
 

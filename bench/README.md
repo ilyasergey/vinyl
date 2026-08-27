@@ -823,6 +823,6 @@ from the pre-2026-08-23 harness — see
 Both Vinyl paths retain zero proof debt. Decoder fast paths are proved equal
 to their bit-level specifications, and since M6b the production *encoder* is
 proved too: `Flac.Encode.encodePcm16_eq` shows it computes
-`Flac.Stream.encode` at the configuration its own search denotes, so the
+`Flac.Stream.Unchecked.encode` at the configuration its own search denotes, so the
 byte-level round trip follows from the reference capstone with no runtime
 decode and no fallback.

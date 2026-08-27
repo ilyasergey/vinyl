@@ -176,10 +176,12 @@ gives between the two decoders but nothing yet gives against the RFC.
 Not closed: the reference path's underlying appetite. It materializes the
 input as `List Bool` by design; that is a cost property of the
 specification-shaped decoder, in the convention tier, and the CLI's
-production paths do not share it. Reject-or-accept, `--decode` costs
-~480 bytes of heap per input byte, and `Bits.readUnary` is non-tail
-recursive, so depth still tracks the longest run it is *allowed* to read.
-Both belong to [`06`](06-recursion-shape.md)'s subject, not this one.
+production paths do not share it. Reject-or-accept, the reference path costs ~480 bytes of heap per input
+byte — still true, and now documented as the specification path's cost:
+the P6 round rerouted the CLI's `--decode` off it. `Bits.readUnary`'s
+non-tail depth, which tracked the longest run it is *allowed* to read,
+is closed by the same round's `readUnaryTR` swap. Both are
+[`06`](06-recursion-shape.md)'s subject, not this one's.
 
 Also not closed: the general audit of other saturating absorptions, which
 the checklist below turns into a review habit rather than a one-off sweep.

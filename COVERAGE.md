@@ -43,16 +43,33 @@ listed here.
 - the encoder always emits the streamable subset: it does not produce
   uncommon block sizes/rates requiring explicit frame-header codes.
 
-The byte-level PCM16 entry point (`Flac.encodePcm16Fast`) checks the
-preconditions of the rows above at run time and returns `none` rather than
-guessing: 1–8 channels, a byte count that is a whole number of frames,
-`16 ≤ blockSize ≤ 4608` (RFC 9639 §9.1 requires ≥ 16; the encoder stops
-at 4608 so its output always clears the decoder's decompression-bomb
-budget, keeping the round-trip guarantee unconditional),
-sample rate below 2²⁰ and sample count below 2³⁶ (the STREAMINFO field
-widths). Everything else the encoder needs — equal-length channels, samples
-in range for the bit depth — is a *theorem* about the derived audio
-(`Flac.Encode.audio_wellFormed`), not a scan.
+The byte-level PCM16 entry points (`Flac.encodePcm16Fast` and
+`Flac.encodePcm16Cfg`) check the preconditions of the rows above at run
+time and return `none` rather than guessing, sharing one O(1) guard
+(`Flac.Pcm16ShapeOk`, audit finding P8) that runs before anything sized
+by its arguments is built: 1–8 channels, a byte count that is a whole
+number of frames, and a nonzero sample rate whenever the input is
+nonempty (RFC 9639 §8.2, audit finding P11). The fast path additionally
+requires `16 ≤ blockSize ≤ 4608` (RFC 9639 §9.1 requires ≥ 16; the
+encoder stops at 4608 so its output always clears the decoder's
+decompression-bomb budget, keeping the round-trip guarantee
+unconditional), sample rate below 2²⁰ and sample count below 2³⁶ (the
+STREAMINFO field widths). Everything else the encoder needs —
+equal-length channels, samples in range for the bit depth — is a
+*theorem* about the derived audio (`Flac.Encode.audio_wellFormed`), not
+a scan.
+
+## Known deviations from RFC MUSTs
+
+The deviation table [`docs/spec-validation.md`](docs/spec-validation.md)
+calls for: places where the verified model (`Audio.WellFormed` and the
+readers) is knowingly laxer than RFC 9639's normative text, what covers
+the gap, and why the model was left alone.
+
+| RFC clause | model behavior | covered by | why the model stays lax |
+|---|---|---|---|
+| §8.2: sample rate MUST NOT be 0 when audio is present | `Audio.WellFormed` admits `sampleRate = 0`, so the sample-level encoders (`Flac.encode`, `encodeCheckedCfg`) will emit it | the byte-level/CLI guard `Pcm16ShapeOk` rejects rate 0 on nonempty input (audit finding P11, [`docs/11-spec-adequacy.md`](docs/11-spec-adequacy.md)) | `WellFormed` states decodability, and rate 0 round-trips; tightening it would ripple a hypothesis through every capstone to enforce an emission policy |
+| §9.2.2/§5: wasted-bits count MUST leave a positive depth | *(was)* `Nat` saturation accepted `w ≥ b` on every decode path | fixed **in the model and production readers** in the P5 round ([`docs/05-saturating-arithmetic.md`](docs/05-saturating-arithmetic.md)); listed here as the deviation-table's origin story | no longer a deviation — the accept-set fix landed on both sides |
 
 ## Conformance-corpus results
 

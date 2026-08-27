@@ -1,12 +1,5 @@
 # The API surface: when the guarantee and the name part ways
 
-> **DRAFT — the P7 fix has not landed.** Markers of the form `TODO(fix)`
-> hold places for details of the landed change (final names, moved
-> lemmas, tests). Structure and analysis are ready for review; the owner
-> of the P7 round should fill, adjust, and de-draft this note in the docs
-> commit that records the fix, add the README bullet, and flip finding
-> #7's row.
-
 Written after fixing audit finding P7
 ([issue #7](https://github.com/ilyasergey/vinyl/issues/7), the unguarded
 public encoder). It is the only finding in the series that is not
@@ -23,8 +16,8 @@ abstract.
 
 Every round-trip theorem is conditional on `Audio.WellFormed` (samples
 fit the bit depth, 1–8 channels, sample rate < 2²⁰, …). The library
-exports runtime-checked wrappers (`encodeChecked : Audio → Option
-ByteArray` and friends) that test the precondition — and *also* exports
+exported runtime-checked wrappers (`encodeChecked : Audio → Option
+ByteArray` and friends) that test the precondition — and *also* exported
 the raw `Stream.encode : EncoderCfg → Audio → ByteArray`, docstring "The
 encoder", under the most natural name, with no guard. Being total, it
 never refuses: audio violating a clause is encoded into a syntactically
@@ -33,7 +26,7 @@ A sample `2^(b-1)` is written mod `2^b` and decodes as `-2^(b-1)`; a
 sample rate of 2²⁰ truncates in its 20-bit field and decodes as 0; nine
 channels collide with the stereo-mode codes and decoding fails outright.
 The `vinyl` CLI is immune (it validates every parameter before calling
-in); only library callers are exposed.
+in); only library callers were exposed.
 
 ## Why the proofs don't catch it
 
@@ -62,24 +55,42 @@ combine:
 
 ## The fix
 
-The computation is untouched: `Stream.encode` is the correct reference
-encoder *on its domain*, and the capstones need it to exist. What moves
-is the surface:
+The computation is untouched: the reference encoder is correct *on its
+domain*, and the capstones need it to exist. What moved is the surface:
 
-- The unchecked pair (`Stream.encode`, `decodeReference`) relocates to an
-  explicitly-marked home (`Unchecked` namespace or equivalent), with
-  docstrings naming their precondition and the theorem that consumes
-  them. `TODO(fix)`: final placement and whether `@[deprecated]` aliases
-  remain for the old names.
-- The public `encode` becomes the checked wrapper: `Audio → Option
-  ByteArray`, where `none` is the precondition's voice. The
-  hypothesis-free capstone shape already exists
-  (`decode_encodeChecked`: any `some` result round-trips, no hypotheses)
-  — the fix makes that the guarantee a caller cannot avoid holding.
-- The capstone statements, the pinned-name greps in `scripts/check.sh`,
-  and the CLI call-site pins reference these functions **by name**, so
-  they move in step. `TODO(fix)`: the actual rename/lemma diff, and a
-  test pinning that the public name is the guarded one.
+- **The unchecked encoder relocated.** `Flac.Stream.encode` is now
+  `Flac.Stream.Unchecked.encode`, and the raw default-configuration
+  encoder that sat at the top level as `Flac.encode` is now
+  `Flac.Unchecked.encode`. Both docstrings name the precondition, the
+  theorems that consume them, and the off-domain mod-wrap behavior. No
+  `@[deprecated]` aliases for the old unchecked names: the point is that
+  the short spelling stops resolving to the unguarded function, and an
+  alias would undo exactly that.
+- **`decodeReference` did not move.** The issue proposed relocating the
+  pair; only the encoder went. A decoder has no precondition a caller can
+  violate — `decodeReference` is total, budgeted, and safe on arbitrary
+  bytes — and its name already labels it the reference path. (What *did*
+  change about it, in the P6 round: the CLI no longer executes it on
+  untrusted input, for cost reasons — see
+  [`06-recursion-shape.md`](06-recursion-shape.md).)
+- **The public `encode` is the checked wrapper**: `Flac.encode : Audio →
+  Option ByteArray`, where `none` is the precondition's voice.
+  `encodeChecked` survives as a documented compatibility alias
+  (`def encodeChecked := encode`). The capstone `decode_encode` is
+  restated in the hypothesis-free shape — `encode a = some bytes →
+  decode bytes = .ok a` — and the conditional statement survives as
+  `decode_encode_unchecked`, about the relocated raw form.
+  `decode_encode_cfg`, `decode_encodeChecked`, `emitFast_eq_encode`,
+  `encodePcm16_eq` and `decodeReference_encode` keep their names,
+  restated over `Unchecked.encode`.
+- **The gate checks the binding.** `FlacTest/Capstones.lean` gained,
+  besides the restated pins, a *type* pin:
+  `example : Audio → Option ByteArray := Flac.encode` — the build fails
+  if the shortest-path public encoder ever reverts to a form whose type
+  does not refuse. Regression tests (`apiSurfaceTests`): the audit's
+  three probes get `none` from `Flac.encode`, the unchecked form's
+  mod-wrap of `2^15` to `-2^15` is pinned as the reason for the move, and
+  a well-formed control round-trips.
 
 Cheap proof work, but genuinely proof work — which is the point: this is
 one of two findings (with P1) whose fix touches proven functions, yet the
@@ -97,11 +108,11 @@ hypothesis-free-capstone packaging, and preconditions kept decidable as
 an API decision); the natural, shortest-path name carries the strongest
 guarantee, unchecked forms live in a namespace that says so; an
 API-to-theorem map — which theorem covers *this name*, not a sibling —
-checked at the merge gate, with a metaprogrammed `@[covered_by]`
-annotation as the mechanized form; and escalation to a subtype
+checked at the merge gate (this round's mechanization: the type pin and
+the restated capstone pins; the metaprogrammed `@[covered_by]` checker
+remains the research direction); and escalation to a subtype
 (`{a : Audio // a.WellFormed}`) when callers hold values across many
-calls. `TODO(fix)`: record whichever gate check the round adds, here and
-in the research note.
+calls.
 
 ## Checklist addition for new entry points
 

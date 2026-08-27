@@ -25,12 +25,12 @@ Every finding lives in a layer the proofs do not reach.
 | [#3](https://github.com/ilyasergey/vinyl/issues/3) | Unvalidated `totalSamples` → 1.1 TB allocation | Med-High | Decoder DoS | C | [cost](cost-semantics.md) *(upgrade)* | fixed ([03](03-untrusted-sizes.md)) |
 | [#4](https://github.com/ilyasergey/vinyl/issues/4) | Sync-candidate / task storm | Medium | Decoder DoS | C | [cost](cost-semantics.md) *(upgrade)* | fixed ([04](04-speculative-work.md)) |
 | [#5](https://github.com/ilyasergey/vinyl/issues/5) | Unbounded wasted-bits count, saturating depth | Medium | Decoder DoS | T | [cost](cost-semantics.md) *(residue)*, [spec-val](spec-validation.md) *(class)* | fixed ([05](05-saturating-arithmetic.md)) |
-| [#6](https://github.com/ilyasergey/vinyl/issues/6) | Many tiny frames → non-tail recursion | Medium | Decoder DoS | C | [stack](stack-semantics.md) *(upgrade)* | open ([06](06-recursion-shape.md), draft) |
-| [#7](https://github.com/ilyasergey/vinyl/issues/7) | Unguarded public encoder → silent wrong value | Medium | Correctness | T | [api](api-contracts.md) *(class)* | open ([07](07-api-surface.md), draft) |
-| [#8](https://github.com/ilyasergey/vinyl/issues/8) | `--encode-slow` huge channels + empty file | Medium | Encoder DoS | C | [cost](cost-semantics.md) *(upgrade)* | open ([08](08-late-guards.md), draft) |
-| [#9](https://github.com/ilyasergey/vinyl/issues/9) | `toNat!` panic on bad numeric argument | Low-Med | CLI robustness | C | [api](api-contracts.md) *(class)* | open ([09](09-lint-surface.md), draft) |
-| [#10](https://github.com/ilyasergey/vinyl/issues/10) | `-j` re-executes once per flag | Low | CLI robustness | C | [api](api-contracts.md) *(class)* | open ([10](10-prose-claims.md), draft) |
-| [#11](https://github.com/ilyasergey/vinyl/issues/11) | `sampleRate = 0` emitted with audio | Low | Conformance | T | [spec-val](spec-validation.md) *(class)* | open ([11](11-spec-adequacy.md), draft) |
+| [#6](https://github.com/ilyasergey/vinyl/issues/6) | Many tiny frames → non-tail recursion | Medium | Decoder DoS | C | [stack](stack-semantics.md) *(upgrade)* | fixed ([06](06-recursion-shape.md)) |
+| [#7](https://github.com/ilyasergey/vinyl/issues/7) | Unguarded public encoder → silent wrong value | Medium | Correctness | T | [api](api-contracts.md) *(class)* | fixed ([07](07-api-surface.md)) |
+| [#8](https://github.com/ilyasergey/vinyl/issues/8) | `--encode-slow` huge channels + empty file | Medium | Encoder DoS | C | [cost](cost-semantics.md) *(upgrade)* | fixed ([08](08-late-guards.md)) |
+| [#9](https://github.com/ilyasergey/vinyl/issues/9) | `toNat!` panic on bad numeric argument | Low-Med | CLI robustness | C | [api](api-contracts.md) *(class)* | fixed ([09](09-lint-surface.md)) |
+| [#10](https://github.com/ilyasergey/vinyl/issues/10) | `-j` re-executes once per flag | Low | CLI robustness | C | [api](api-contracts.md) *(class)* | fixed ([10](10-prose-claims.md)) |
+| [#11](https://github.com/ilyasergey/vinyl/issues/11) | `sampleRate = 0` emitted with audio | Low | Conformance | T | [spec-val](spec-validation.md) *(class)* | fixed ([11](11-spec-adequacy.md)) |
 
 **Legend** — two orthogonal characterizations; see
 [Formal-methods coverage](#formal-methods-coverage) below.
@@ -103,18 +103,23 @@ never past it. Everything else about all eleven findings is, in
 principle, theorem-shaped.
 
 **What needed no new theory at all.** **#1**, **#2**, and **#5** are
-fixed and theorem-secured today with machinery the project already had:
+fixed and theorem-secured with machinery the project already had:
 a bounding primitive plus an identity-on-valid lemma (#1), a budget
 bridged to the old loops by one equation each (#2), an accept-set guard
 carried through the existing simulation stack (#5). **#7** and **#11**
-are the same kind — their drafts show existing theorems suffice (the
-hypothesis-free checked capstone, and `some`-conditional guard
-tightening) — pending their rounds. **#9** and **#10** need no theory
-either, but in the opposite sense: after the fix there is nothing left
-for a theorem to say about the instance; a total parser and a tested
-re-exec loop are correct by construction. Their research role is *class*
-only — the api-contracts perimeter rules prevent recurrence, they do not
-(and need not) make anything provable.
+proved to be the same kind — their fixes landed on existing theorems
+alone (the hypothesis-free checked capstone became the public `encode`'s
+guarantee, and the P11 clause tightened a guard under `some`-conditional
+statements). **#9** and **#10** need no theory either, but in the
+opposite sense: after the fix there is nothing left for a theorem to say
+about the instance; a total parser and a tested re-exec loop are correct
+by construction. Their research role is *class* only — the api-contracts
+perimeter rules prevent recurrence, they do not (and need not) make
+anything provable. **#6** landed one notch above its draft's plan: the
+bridging equalities carry `@[csimp]`, so the kernel checks the swap and
+no Spec proof moved — but constant depth itself still rests on syntax
+plus the compiler, which is exactly the *upgrade* stack-semantics
+proposes.
 
 ## Incident notes
 
@@ -143,31 +148,38 @@ only — the api-contracts perimeter rules prevent recurrence, they do not
   because the offending field is unary-coded, *reading* it needed a cap
   too — a guard placed after an unbounded read fixes the accept-set and
   none of the cost.
-- [06 — Recursion shape](06-recursion-shape.md) *(draft)*: the P6
-  many-tiny-frames overflow — recursion depth equals frame count on the
-  non-tail loops, plus an accidental quadratic; termination proofs live
-  in a stack-free model, and tail-position is not even expressible.
-- [07 — API surface](07-api-surface.md) *(draft)*: the P7 unguarded
-  encoder — the only non-DoS finding: conditional theorems satisfied
-  vacuously while the naturally-named unchecked entry point fabricates
-  valid-looking streams for out-of-envelope audio; the fix is a
-  namespace move, with the capstone name-pins following.
-- [08 — Late guards](08-late-guards.md) *(draft)*: the P8 encoder OOM —
-  the rejecting check existed but ran on a data structure whose size the
+- [06 — Recursion shape](06-recursion-shape.md): the P6 many-tiny-frames
+  overflow — recursion depth equals frame count on the non-tail loops,
+  plus an accidental quadratic; termination proofs live in a stack-free
+  model, and tail-position is not even expressible. The fix: accumulator
+  forms swapped in by kernel-checked `@[csimp]` equations (no Spec proof
+  moves), and the CLI's `--decode` rerouted through the production
+  decoder, which is proven pointwise equal to the reference one.
+- [07 — API surface](07-api-surface.md): the P7 unguarded encoder — the
+  only non-DoS finding: conditional theorems satisfied vacuously while
+  the naturally-named unchecked entry point fabricates valid-looking
+  streams for out-of-envelope audio. The fix: `Flac.encode` is now the
+  checked form and the raw encoders live under `Unchecked`, with the
+  capstones restated hypothesis-free and a type pin at the gate.
+- [08 — Late guards](08-late-guards.md): the P8 encoder OOM — the
+  rejecting check existed but ran on a data structure whose size the
   rejected parameter controls, built first; guard order as the encoder's
-  version of validate-before-spending.
-- [09 — Lint surface](09-lint-surface.md) *(draft)*: the P9 CLI panic —
-  the shipped binary contains code outside the theorem surface *and*
-  outside the merge gate's no-panic lint; the gate's scope must follow
-  what the executables link.
-- [10 — Prose claims](10-prose-claims.md) *(draft)*: the P10 `-j`
-  re-exec growth — an `IO`-layer behavior specified only by a docstring,
-  and the docstring was wrong; quantified behavioral claims need a
-  checker (test or theorem) or a rewrite as description.
-- [11 — Spec adequacy](11-spec-adequacy.md) *(draft)*: the P11
-  `sampleRate = 0` emission — theorems correct about a model laxer than
-  RFC 9639; guards tighten, `WellFormed` stays, and the deviation gets
-  documented; only an external referee can see model-level gaps.
+  version of validate-before-spending. The fix: one shared O(1)
+  `Pcm16ShapeOk` guard both encoders run before anything is built.
+- [09 — Lint surface](09-lint-surface.md): the P9 CLI panic — the
+  shipped binary contains code outside the theorem surface *and* outside
+  the merge gate's no-panic lint; the fix parses with `toNat?` and
+  extends the gate's scope to every module the executables link.
+- [10 — Prose claims](10-prose-claims.md): the P10 `-j` re-exec growth —
+  an `IO`-layer behavior specified only by a docstring, and the
+  docstring was wrong; the fix strips all flags in one pass behind a
+  unit-tested pure function plus a re-exec sentinel. Quantified
+  behavioral claims need a checker (test or theorem) or a rewrite as
+  description.
+- [11 — Spec adequacy](11-spec-adequacy.md): the P11 `sampleRate = 0`
+  emission — theorems correct about a model laxer than RFC 9639; the
+  guards tightened, `WellFormed` stayed, and the deviation is documented
+  in `COVERAGE.md`; only an external referee can see model-level gaps.
 
 ## Research notes
 
@@ -201,7 +213,8 @@ only — the api-contracts perimeter rules prevent recurrence, they do not
     logic.
   - **#5** — the reproducer overflowed the C stack *through the unary
     reader* before the guard could run; `Bits.readUnary`'s non-tail
-    shape is inherited by the #6 round.
+    shape, inherited by the #6 round, is closed by its `readUnaryTR`
+    swap.
 - [API contracts](api-contracts.md): the coverage bug class — proven
   properties not attached to the names users call. The four rules (guard
   by default, natural names carry the strongest guarantee, an

@@ -38,6 +38,14 @@ theorem Flac.decode_encode (pcm : Audio) (opts : EncoderOptions)
     Flac.decode (Flac.encode pcm opts) = .ok pcm
 ```
 
+*(Landed form, after the P7 hardening round: the public `Flac.encode`
+checks `Audio.WellFormed` at runtime, so the shipped capstone is
+hypothesis-free — `Flac.encode a = some bytes → Flac.decode bytes = .ok a`
+(`Flac.decode_encode`); the conditional statement survives as
+`decode_encode_unchecked` about `Flac.Unchecked.encode`, and the
+configurable form is `decode_encode_cfg`. See
+[`docs/07-api-surface.md`](docs/07-api-surface.md).)*
+
 with
 
 ```lean

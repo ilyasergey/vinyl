@@ -6,29 +6,25 @@ Vinyl implements a FLAC ([RFC 9639](references/rfc9639.txt)) encoder and
 decoder with no FFI, together with machine-checked proofs. The main
 correctness theorem — kernel-certified losslessness of the shipped
 encoder/decoder pair — is
-[`Flac.decode_encode`](Flac/Spec/Decode.lean#L2271):
+[`Flac.decode_encode`](Flac/Spec/Decode.lean#L2405), and it carries
+**no hypotheses**:
 
 ```lean
-/-- Decoding an encoded stream recovers the audio exactly,
-    for every well-formed input. -/
-theorem Flac.decode_encode (a : Audio) (h : a.WellFormed) :
-    decode (encode a) = .ok a
+/-- If the encoder returns bytes at all, decoding them
+    recovers the audio exactly. -/
+theorem Flac.decode_encode
+    (h : encode a = some bytes) : decode bytes = .ok a
 ```
 
-Here [`Audio.WellFormed`](Flac/Native/Stream.lean#L304) says exactly
-"representable as FLAC" — 1–8 equal-length channels, bit depth 1–32,
-samples in range for the bit depth, and the STREAMINFO field bounds — and
-it is **decidable**, so the precondition can be tested at runtime. The
-checked encoder [`Flac.encodeChecked`](Flac/Native/Codec.lean#L25) does
-exactly that, which turns the runtime check itself into the theorem's
-premise ([`Flac.decode_encodeChecked`](Flac/Spec/Decode.lean#L2278)):
-
-```lean
-/-- If the checked encoder returns bytes at all, decoding them
-    recovers the audio. No hypotheses. -/
-theorem Flac.decode_encodeChecked
-    (h : encodeChecked a = some bytes) : decode bytes = .ok a
-```
+The public [`Flac.encode`](Flac/Native/Codec.lean#L36) tests its
+(decidable) precondition [`Audio.WellFormed`](Flac/Native/Stream.lean#L502)
+at runtime — exactly "representable as FLAC": 1–8 equal-length channels,
+bit depth 1–32, samples in range for the bit depth, and the STREAMINFO
+field bounds — and returns `none` rather than a stream for anything else,
+which is what turns the runtime check itself into the theorem's premise.
+The raw total encoder still exists for proofs and for callers who hold a
+`WellFormed` proof, under a name that says what it is
+(`Flac.Unchecked.encode`, conditional capstone `decode_encode_unchecked`).
 
 At the byte level the same guarantee holds for raw PCM files
 ([`Flac.decodePcm16_encodePcm16`](Flac/Spec/Decode.lean#L2692)):
@@ -90,7 +86,8 @@ reasons through `Task`.
 **The shipped encoder is proven, not certified.**
 [`Flac.Encode.encodePcm16_eq`](Flac/Spec/Encode.lean) proves the fast
 encoder — its `Float` search, its `UInt64` bit writer, its per-frame
-workers — *computes* `Flac.Stream.encode` at the `EncoderCfg` whose chooser
+workers — *computes* the reference encoder (`Flac.Stream.Unchecked.encode`
+since the P7 hardening round) at the `EncoderCfg` whose chooser
 is its own search, so the byte-level round trip follows from the reference
 capstone with no runtime decode and no fallback. The runtime certificate
 that used to buy that guarantee is gone, and with it 30% of encode time.
@@ -127,6 +124,17 @@ round-trip fuzzing). `scripts/check.sh` is the ratchet: full build,
 **zero `sorry`/`axiom`**, grep-pinned capstones, totality lint, unit
 suite. To run the cross-check yourself on one file, see
 [Cross-checking against libFLAC](#cross-checking-against-libflac) below.
+
+Vinyl has also been through an **independent security and robustness
+audit** (Bartosz Barwikowski, August 2026, at commit `25cf904`; findings
+filed 2026-08-26 as
+[#1–#11](https://github.com/ilyasergey/vinyl/issues?q=label%3Aaudit)).
+None of the eleven findings falsified a theorem — every one lived in a
+layer the proofs deliberately do not reach (evaluation cost, stack
+shape, API surface, prose, the model-vs-RFC gap) — and all eleven were
+fixed by 2026-08-27, each with an incident note in
+[`docs/`](docs/README.md) recording what the proofs could not see and
+what now covers it.
 
 The real-audio benchmark doubles as the largest of these rigs: on all 143 units
 — 1.73 GiB of SQAM and LibriSpeech recordings — `flac -t` accepts Vinyl's
@@ -303,8 +311,9 @@ LEAN_NUM_THREADS=4 lake exe vinyl --encode input.pcm out.flac 4096 2
 
 Encode raw PCM (block size 4096, 2 channels) with the verified encoder —
 if this succeeds, the round-trip is guaranteed by theorem — then decode
-(`--decode` is the reference decoder, `--decode-fast` the shipped one)
-and compare:
+(`--decode` computes the reference decoder, pointwise, via
+`decodeOption_eq_reference`; `--decode-fast` is the frame-parallel
+byte path) and compare:
 
 ```sh
 lake exe vinyl --encode input.pcm out.flac 4096 2
@@ -375,6 +384,9 @@ run over a batch of signals, is
   milestones.
 - [`COVERAGE.md`](COVERAGE.md) — feature-by-feature RFC 9639 coverage
   and conformance-corpus results.
+- [`docs/README.md`](docs/README.md) — the hardening notes: one
+  incident note per audit finding, plus the research notes they
+  motivate (cost/stack semantics, API contracts, spec validation).
 - [`conformance/README.md`](conformance/README.md) — the differential
   testing and fuzzing rigs against libFLAC.
 - [`bench/README.md`](bench/README.md) — compression and speed
