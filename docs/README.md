@@ -42,14 +42,16 @@ Every finding lives in a layer the proofs do not reach.
 - **C** — construction tier: enforced by code shape, lint, or test;
   the property is unstatable in the current semantics.
 
-*Research* — which research note bears on the finding, and in what role:
+*Research* — which research note is relevant to the finding, and what
+the proposed research would actually do for it:
 
-- *upgrade* — the note's proposal would turn the C-tier property into a
-  theorem.
-- *residue* — the property is already theorem-secured; the note would
-  formalize what remains informal (e.g. the value-to-bytes constant).
-- *class* — the instance needs no new theory; the note's methodology is
-  what prevents the class from recurring.
+- *upgrade* — make the property provable; today it rests only on code
+  shape, lint, or tests.
+- *residue* — the main property is already proven; the research would
+  cover the informal part that is left (for example, how bounded values
+  translate into bounded bytes).
+- *class* — this particular bug needed no new theory to fix; the
+  research is about keeping the same kind of bug from happening again.
 
 ## Formal-methods coverage
 
