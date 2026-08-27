@@ -600,15 +600,19 @@ theorem readSubframe_sim (bs b : Nat) (br : BitReader) :
           by_cases h1 : w.1 = 0
           · rw [if_pos h1, if_pos h1]
             exact readContent_sim bs b q.1 w.2
-          · rw [if_neg h1, if_neg h1, readUnary_sim w.2]
-            cases w.2.readUnary with
+          · rw [if_neg h1, if_neg h1, readUnaryUpTo_sim b w.2]
+            cases w.2.readUnaryUpTo b with
             | none => rfl
             | some k =>
               simp only [Option.map_some]
-              rw [readContent_sim bs (b - (k.1 + 1)) q.1 k.2]
-              cases readContent bs (b - (k.1 + 1)) q.1 k.2 with
-              | none => rfl
-              | some u => simp only [Option.map_some, Array.toList_map]
+              by_cases hk : k.1 + 1 < b
+              · rw [if_pos hk, if_pos hk,
+                  readContent_sim bs (b - (k.1 + 1)) q.1 k.2]
+                cases readContent bs (b - (k.1 + 1)) q.1 k.2 with
+                | none => rfl
+                | some u => simp only [Option.map_some, Array.toList_map]
+              · rw [if_neg hk, if_neg hk]
+                rfl
     · rw [if_neg h0, if_neg h0]
       rfl
 
@@ -903,11 +907,14 @@ theorem posOK_readSubframe (bs b : Nat) : PosOK (readSubframe bs b) := by
           split at h
           · exact posOK_step s1 (posOK_step s2 (posOK_step s3
               (posOK_readContent bs b ty br3 a br' hw3 h)))
-          · match h4 : br3.readUnary with
+          · match h4 : br3.readUnaryUpTo b with
             | none => rw [h4] at h; simp at h
             | some (k, br4) =>
               simp only [h4] at h
-              have s4' := readUnary_spec h4
+              by_cases hk : k + 1 < b
+              case neg => rw [if_neg hk] at h; simp at h
+              rw [if_pos hk] at h
+              have s4' := readUnaryUpTo_spec h4
               have s4 : br4.data = br3.data ∧ br3.pos ≤ br4.pos ∧ br4.pos ≤ br3.size :=
                 ⟨s4'.1, by omega, s4'.2.2⟩
               match h5 : readContent bs (b - (k + 1)) ty br4 with

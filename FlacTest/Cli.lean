@@ -437,6 +437,44 @@ def bombTests : TestM Unit := do
   let chunk := Flac.Decode.stepChunkFor n
   check "P4: task count capped regardless of candidate count"
     ((n + chunk - 1) / chunk ≤ Flac.Decode.maxStepTasks)
+  -- P5 regression, part one — the accept-set. RFC 9639 §9.2.2 requires the
+  -- wasted count `w` to leave a positive subframe depth, and §5 lists a
+  -- zero-or-negative resulting depth among the streams a decoder must
+  -- refuse. `Nat` subtraction saturates, so `b - w` used to be 0 and the
+  -- subframe decoded at depth 0 instead of being rejected. The writers are
+  -- total and emit the invalid subframe happily; every reader must refuse.
+  let p5 (w : Nat) : ByteArray :=
+    Bits.bitsToBytes <|
+      Bits.writeBits 32 0x664C6143 ++
+      Bits.writeBits 1 1 ++ Bits.writeBits 7 0 ++ Bits.writeBits 24 34 ++
+      Stream.writeStreamInfo 4096 44100 1 16 4096 0 ++
+      Frame.write 16 false 0 (.independent [⟨w, .constant⟩])
+        [List.replicate 4096 0]
+  check "P5: wasted = depth rejected (reference decoder)"
+    (Stream.decodeReference (p5 16)).isNone
+  check "P5: wasted = depth rejected (production decoder)"
+    (match Flac.decode (p5 16) with | .error _ => true | .ok _ => false)
+  check "P5: wasted = depth rejected (fused byte decoder)"
+    (Flac.Decode.decodeBytes (p5 16)).isNone
+  -- `w = b - 1` is the largest count the RFC allows, and the largest the
+  -- encoder's own `SubCfg.Valid` certificate permits: it must still decode
+  check "P5: wasted = depth - 1 still decodes"
+    (match Flac.decode (p5 15) with
+     | .ok a => a.channels == [List.replicate 4096 0]
+     | .error _ => false)
+  -- P5 regression, part two — the cost of *reading* the count. The unary
+  -- run has no enclosing bound (unlike a Rice residual's), so it is read
+  -- with a cap (`readUnaryUpTo b`). A megabit run must be refused in O(b);
+  -- before the cap it recursed once per zero bit in `Bits.readUnary` and
+  -- overflowed the stack on the reference path.
+  let longRun : BitStream :=
+    Bits.writeBits 1 0 ++ Bits.writeBits 6 0 ++ Bits.writeBits 1 1 ++
+      List.replicate 1000000 false ++ [true]
+  check "P5: megabit wasted run refused by the model reader"
+    (Subframe.read 4096 16 longRun).isNone
+  check "P5: megabit wasted run refused by the production reader"
+    (Flac.Decode.readSubframe 4096 16
+      ⟨Bits.bitsToBytes (Bits.alignToByte longRun), 0⟩).isNone
 
 /-- With an argument, write sample encoded streams into that directory
     (for differential testing against `flac`/`ffmpeg` from the shell). -/

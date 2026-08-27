@@ -129,9 +129,10 @@ theorem read_write (b : Nat) (sc : SubCfg) (xs : List Int)
   · simp only [write, read, if_neg hw, List.append_assoc,
       readBits_writeBits _ _ _ (by omega : 0 < 2 ^ 1),
       readBits_writeBits _ _ _ (by omega : 1 < 2 ^ 1),
-      readBits_writeBits _ _ _ htc, readUnary_writeUnary]
+      readBits_writeBits _ _ _ htc,
+      readUnaryUpTo_writeUnary (show sc.wasted - 1 < b by omega)]
     rw [if_pos (by trivial), if_neg (by simp),
-      show sc.wasted - 1 + 1 = sc.wasted from by omega]
+      show sc.wasted - 1 + 1 = sc.wasted from by omega, if_pos hwlt]
     simp only [hcontent, map_shiftUp_shiftDown sc.wasted xs hdvd]
 
 end Flac.Subframe

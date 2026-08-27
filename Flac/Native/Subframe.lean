@@ -152,12 +152,22 @@ def read (bs b : Nat) (s : BitStream) : Option (List Int × BitStream) :=
           if wf = 0 then
             readContent bs b ty s
           else
-            match readUnary s with
+            -- the cap costs nothing the guard below would not reject
+            -- anyway, and keeps *reading* the count as cheap as the count
+            -- is allowed to be
+            match readUnaryUpTo b s with
             | none => none
             | some (k, s) =>
-              match readContent bs (b - (k + 1)) ty s with
-              | none => none
-              | some (ys, s) => some (ys.map (shiftUp (k + 1)), s)
+              -- RFC 9639 §9.2.2: the wasted count `w = k + 1` MUST leave a
+              -- positive subframe bit depth. Without this guard the `Nat`
+              -- subtraction below saturates to depth 0, silently giving
+              -- meaning to a stream the RFC rejects (and `shiftUp (k + 1)`
+              -- then scales by an attacker-chosen `2 ^ (k + 1)`).
+              if k + 1 < b then
+                match readContent bs (b - (k + 1)) ty s with
+                | none => none
+                | some (ys, s) => some (ys.map (shiftUp (k + 1)), s)
+              else none
     else none                            -- reserved bit must be 0
 
 end Flac.Subframe

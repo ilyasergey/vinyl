@@ -94,6 +94,44 @@ theorem readUnary_writeUnary (q : Nat) (rest : BitStream) :
     simp only [writeUnary, List.replicate_succ, List.cons_append, readUnary] at *
     rw [ih]
 
+/-- The capped unary read is the plain one, filtered by the cap. The cap
+    is a *cost* device introduced for the wasted-bits field; this is the
+    statement that it changes no answer the cap admits, and it is what
+    lets every downstream lemma about `readUnary` be reused. -/
+theorem readUnaryUpTo_eq (lim : Nat) (s : BitStream) :
+    readUnaryUpTo lim s
+      = (readUnary s).bind (fun p => if p.1 < lim then some p else none) := by
+  induction lim generalizing s with
+  | zero =>
+    show none = _
+    cases readUnary s with
+    | none => rfl
+    | some p => simp
+  | succ lim ih =>
+    match s with
+    | [] => show none = _; simp [readUnary]
+    | true :: t => show some (0, t) = _; simp [readUnary]
+    | false :: t =>
+      show (match readUnaryUpTo lim t with
+            | none => none
+            | some (q, s') => some (q + 1, s')) = _
+      rw [ih t]
+      simp only [readUnary]
+      cases readUnary t with
+      | none => rfl
+      | some p =>
+        by_cases h : p.1 < lim
+        · simp only [h, if_true, Option.bind_some,
+            show p.1 + 1 < lim + 1 from by omega, if_true]
+        · simp only [h, if_false, Option.bind_some, Option.bind_none,
+            show ¬(p.1 + 1 < lim + 1) from by omega, if_false]
+
+/-- Round-trip through the cap, for a run the cap admits. -/
+theorem readUnaryUpTo_writeUnary {q lim : Nat} (h : q < lim) (rest : BitStream) :
+    readUnaryUpTo lim (writeUnary q ++ rest) = some (q, rest) := by
+  rw [readUnaryUpTo_eq, readUnary_writeUnary]
+  simp [h]
+
 @[simp] theorem length_writeUnary (q : Nat) : (writeUnary q).length = q + 1 := by
   simp [writeUnary]
 

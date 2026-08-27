@@ -63,6 +63,24 @@ def readUnary : BitStream → Option (Nat × BitStream)
     | none => none
     | some (q, s') => some (q + 1, s')
 
+/-- Unary read with an a-priori cap on the run length: `none` unless the
+    terminating one bit lies within the next `lim` bits.
+
+    `readUnary` is the RFC's code, and it is right for Rice residuals,
+    where a run is bounded by the partition it sits in. A wasted-bits
+    count has no such enclosing bound (RFC 9639 §9.2.2 constrains only the
+    resulting depth), so reading it needs the cap supplied here — reading
+    the field must not cost more than the field is allowed to mean.
+    Characterized by `Flac.Spec.Bits.readUnaryUpTo_eq`. -/
+def readUnaryUpTo : (lim : Nat) → BitStream → Option (Nat × BitStream)
+  | 0, _ => none
+  | _ + 1, [] => none
+  | _ + 1, true :: s => some (0, s)
+  | lim + 1, false :: s =>
+    match readUnaryUpTo lim s with
+    | none => none
+    | some (q, s') => some (q + 1, s')
+
 /-- Zero-bits needed to pad `len` bits to a byte boundary. -/
 def padLen (len : Nat) : Nat := (8 - len % 8) % 8
 

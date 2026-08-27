@@ -306,12 +306,18 @@ def readSubframe (bs b : Nat) (br : BitReader) : Option (Array Int × BitReader)
           if wf = 0 then
             readContent bs b ty br
           else
-            match br.readUnary with
+            match br.readUnaryUpTo b with
             | none => none
             | some (k, br) =>
-              match readContent bs (b - (k + 1)) ty br with
-              | none => none
-              | some (ys, br) => some (ys.map (shiftUp (k + 1)), br)
+              -- RFC 9639 §9.2.2, mirroring `Flac.Subframe.read`: reject a
+              -- wasted count that does not leave a positive bit depth,
+              -- before any work whose cost depends on `k` — the read
+              -- itself included, hence the cap.
+              if k + 1 < b then
+                match readContent bs (b - (k + 1)) ty br with
+                | none => none
+                | some (ys, br) => some (ys.map (shiftUp (k + 1)), br)
+              else none
     else none
 
 /-! ## Frames -/
