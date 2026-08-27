@@ -2089,3 +2089,52 @@ as follow-up.
 
 **Next:** remaining audit findings (P4–P11); the end-to-end
 value-boundedness statement from Session 17.
+
+## 2026-08-27 — Session 20: P4 fix — density-bail the sync-candidate storm
+
+**Landed:** the sync-candidate/task-storm fix (audit P4, issue #4). The
+parallel decoder guesses frame starts by scanning for sync-looking bytes
+(`0xFF` then `0b111110xx`); a tail of `FF F8` pairs made every second
+offset a candidate, so a 64 MB file gathered ~32M candidates and spawned
+~16M speculative tasks before parsing anything, dying with
+`std::bad_alloc`. Two independent caps, both in `Flac/Native/Decode.lean`:
+
+- **Density bail.** No honestly framed stream carries a sync candidate
+  denser than one per `minFrameBytes = 16` (a real frame is far larger;
+  `frame_write_length_lb` from the P2 round gives ≥ `80 + 8·ch` bits).
+  `syncScan` now caps each window's collection at that density (early
+  `break`), and `syncCandidates` discards the whole candidate set
+  (`#[]`) when `minFrameBytes · count ≥ d.size`. Empty candidates make
+  the frame loop decode serially from `start`, so the first non-frame is
+  rejected in O(1). Real audio sits orders of magnitude below the
+  threshold (measured: a 1.47 MB sine at 499 candidates vs. a 92110
+  threshold, ~185× margin), so speculation is never lost on honest input.
+- **Task-count cap.** `stepsPar`/`byteStepsPar` chunk candidates so at
+  most `maxStepTasks = 1024` task objects are ever spawned, regardless of
+  candidate count (`stepChunkFor` grows the chunk to hold the line). This
+  bounds fan-out memory by input size, not by pattern frequency.
+
+**Zero proof changes.** The sync scan and the parallel machinery are
+unverified by design — each step carries its own `Step.ok`/`ByteStep.ok`
+equation, and `readFramesSteps_eq` collapses the parallel path to the
+serial one *unconditionally in the candidate array*. So capping, thinning,
+or discarding candidates cannot touch correctness, and `lake build`
+replayed everything untouched. This is the same property the P2 per-chunk
+precompute allowance relied on, one layer earlier.
+
+**Verified:** the audit's 64 MB storm now returns a clean `DECODE ERROR`
+in 0.48 s at 246 MB peak RSS (was `std::bad_alloc` at ~4.1 GB after
+183 s); the 8 MB storm is instant at 32 MB. Honest round trip
+byte-identical. 125 checks green (5 new: density bail returns `#[]`, both
+decoders reject the storm, honest audio keeps its candidates, task count
+capped for arbitrary candidate counts).
+
+**Residual, recorded in `docs/04-speculative-work.md`:** the bail still
+collects up to `d.size / minFrameBytes` candidates (≈ input/16) before
+discarding them, so peak memory on the attack is linear in input, not
+O(1); a truly constant-memory rejection would abort the scan itself on
+the first saturated window. The cap lives in the convention tier — no
+theorem bounds speculative work, and none is possible in the current
+semantics (`docs/cost-semantics.md`, `docs/stack-semantics.md`).
+
+**Next:** remaining audit findings (P5–P11).

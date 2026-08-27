@@ -622,16 +622,39 @@ def stepAt (b0 : Nat) (d : ByteArray) (pos : Nat) : Option (Step b0 d) :=
   | none => none
   | some (chs, next) => some ⟨pos, chs, next, h⟩
 
+/-- Candidate-density floor: at most one sync candidate per this many
+    scanned bytes, per window (audit finding P4). A real frame costs at
+    least ~13 input bytes (`Flac.Spec.Stream.frame_write_length_lb` gives
+    `80 + 8·ch` bits), so genuine candidates sit near or below 1/13 only
+    for the smallest legal block sizes and near 1/1000 at the default —
+    while the attack pattern `FF F8 FF F8 …` has density 1/2. No honest
+    stream reaches one candidate per this many bytes, so a scan denser
+    than that is not a framed stream at all: `syncCandidates` throws its
+    guesses away and lets the serial loop reject the first bogus frame in
+    O(1), and each window stops scanning once it has collected this
+    density (bounding even the collection). Guesses only *hint* frame
+    starts, so dropping all of them costs correctness nothing. -/
+def minFrameBytes : Nat := 16
+
 /-- Byte offsets in `[lo, hi)` carrying a frame sync code (RFC 9639
     §9.1.1: fourteen one bits, a zero, then the blocking-strategy bit).
     Reads `d[i + 1]`, which may lie past `hi` — that is what makes windows
-    of this scan lossless at their boundaries. -/
+    of this scan lossless at their boundaries. Capped at the honest
+    candidate density (one per `minFrameBytes`) so a pathological window
+    cannot allocate an array proportional to an attacker's byte pattern:
+    real audio sits well below the cap and never saturates, while a window
+    that does saturate has already proved the stream is not honestly
+    framed, which `syncCandidates` acts on. -/
 def syncScan (d : ByteArray) (lo hi : Nat) : Array Nat := Id.run do
-  let mut out : Array Nat := Array.emptyWithCapacity ((hi - lo) / 128 + 8)
+  let cap := (hi - lo) / minFrameBytes + 8
+  let mut out : Array Nat := Array.emptyWithCapacity cap
   for i in [lo : hi] do
     if (if h : i < d.size then d[i] else 0) == 0xFF then
       if (if h : i + 1 < d.size then d[i + 1] else 0) &&& 0xFC == 0xF8 then
-        out := out.push i
+        if out.size < cap then
+          out := out.push i
+        else
+          break
   return out
 
 /-- Bytes per parallel scan window. -/
@@ -659,17 +682,27 @@ where
 
     The scan was the decoder's largest serial phase: one pass over the
     whole compressed stream, on the driver thread, before any frame worker
-    could start. -/
+    could start.
+
+    Candidates denser than one per `minFrameBytes` cannot come from an
+    honestly framed stream (audit finding P4): such a scan is discarded
+    (`#[]`), and the frame loop then decodes serially from `start`,
+    rejecting the first non-frame in O(1) instead of speculating over
+    millions of guesses. This costs correctness nothing — candidates are
+    only hints — and real audio sits orders of magnitude below the
+    threshold, so it never trips. -/
 def syncCandidates (d : ByteArray) (start : Nat) : Array Nat :=
   if d.size = 0 then #[]
   else
     let hi := d.size - 1
-    if hi - start ≤ syncWindow then syncScan d start hi
-    else
-      let tasks := (syncWindows start hi).map fun w =>
-        Task.spawn fun _ => syncScan d w.1 w.2
-      tasks.foldl (fun acc t => acc ++ t.get)
-        (Array.emptyWithCapacity ((hi - start) / 128 + 8))
+    let cands :=
+      if hi - start ≤ syncWindow then syncScan d start hi
+      else
+        let tasks := (syncWindows start hi).map fun w =>
+          Task.spawn fun _ => syncScan d w.1 w.2
+        tasks.foldl (fun acc t => acc ++ t.get)
+          (Array.emptyWithCapacity ((hi - start) / minFrameBytes + 8))
+    if minFrameBytes * cands.size ≥ d.size then #[] else cands
 
 /-- What one decoded frame costs against the output budget — the arrays'
     measure of `Flac.Stream.frameCost`. -/
@@ -691,6 +724,24 @@ def frameCostTotalA (frs : List (List (Array Int))) : Nat :=
 def chunkBudget (d : ByteArray) (cands : Array Nat) (lo hi : Nat) : Nat :=
   Flac.Stream.decodeAmpl * (cands.getD hi d.size - cands.getD lo 0)
 
+/-- Candidates per parallel task: enough that task setup is negligible,
+    small enough to keep every core fed. Re-measured for the byte-emitting
+    workers (1/2/4/8/16 on an 8-core M2): 2 is best at both 1 MB and
+    32 MB, though the spread is under 3%. -/
+def stepChunkSize : Nat := 2
+
+/-- Ceiling on speculative task objects per fan-out (audit finding P4):
+    every task costs queue and closure memory *before* any work runs, so
+    the count must not scale with how often an attacker-controlled byte
+    pattern occurs. 1024 tasks keep every core fed at any input size. -/
+def maxStepTasks : Nat := 1024
+
+/-- Candidates per task: the tuned `stepChunkSize`, grown just enough
+    that no candidate array — however dense the scan's guesses — spawns
+    more than `maxStepTasks` tasks. -/
+def stepChunkFor (ncands : Nat) : Nat :=
+  max stepChunkSize ((ncands + maxStepTasks - 1) / maxStepTasks)
+
 /-- Decode one chunk of candidate positions (the unit of parallel work). -/
 def stepChunk (b0 : Nat) (d : ByteArray) (cands : Array Nat) (lo hi : Nat) :
     Array (Step b0 d) := Id.run do
@@ -708,12 +759,12 @@ def stepChunk (b0 : Nat) (d : ByteArray) (cands : Array Nat) (lo hi : Nat) :
     | none => pure ()
   return out
 
-/-- Decode all candidates, one task per chunk. Candidates are ascending,
-    so the concatenated steps are ascending in `pos` too — which is what
-    `findStep` binary-searches. -/
-def stepsPar (b0 : Nat) (d : ByteArray) (cands : Array Nat) (chunk : Nat) :
+/-- Decode all candidates, one task per chunk (at most `maxStepTasks`
+    of them). Candidates are ascending, so the concatenated steps are
+    ascending in `pos` too — which is what `findStep` binary-searches. -/
+def stepsPar (b0 : Nat) (d : ByteArray) (cands : Array Nat) :
     Array (Step b0 d) := Id.run do
-  if chunk = 0 then return #[]
+  let chunk := stepChunkFor cands.size
   let tasks := (List.range ((cands.size + chunk - 1) / chunk)).map fun c =>
     Task.spawn fun _ =>
       stepChunk b0 d cands (c * chunk) (min ((c + 1) * chunk) cands.size)
@@ -787,12 +838,6 @@ def readFramesStepsB (b0 : Nat) (d : ByteArray) (steps : Array (Step b0 d)) :
           | some rest => some (chs :: rest)
         else none
 
-/-- Candidates per parallel task: enough that task setup is negligible,
-    small enough to keep every core fed. Re-measured for the byte-emitting
-    workers (1/2/4/8/16 on an 8-core M2): 2 is best at both 1 MB and
-    32 MB, though the spread is under 3%. -/
-def stepChunkSize : Nat := 2
-
 /-- Streams below this many bytes decode serially — the scan and task
     setup would dominate. -/
 def parThreshold : Nat := 1 <<< 16
@@ -805,7 +850,7 @@ def readFramesFast (b0 : Nat) (d : ByteArray) (fuel pos : Nat) :
   if d.size < parThreshold then readFramesAt b0 d fuel pos
   else
     readFramesSteps b0 d
-      (stepsPar b0 d (syncCandidates d (pos / 8)) stepChunkSize) fuel pos
+      (stepsPar b0 d (syncCandidates d (pos / 8))) fuel pos
 
 /-- `readFramesFast` with the decoded-output budget: the serial branch is
     the steps loop over no steps at all (same loop, so one bridging lemma
@@ -815,7 +860,7 @@ def readFramesFastB (b0 : Nat) (d : ByteArray) (budget fuel pos : Nat) :
   if d.size < parThreshold then readFramesStepsB b0 d #[] budget fuel pos
   else
     readFramesStepsB b0 d
-      (stepsPar b0 d (syncCandidates d (pos / 8)) stepChunkSize) budget fuel pos
+      (stepsPar b0 d (syncCandidates d (pos / 8))) budget fuel pos
 
 /-! ## Frame-parallel *serialization*
 
@@ -886,10 +931,11 @@ def byteStepChunk (b0 bps ch : Nat) (d : ByteArray) (cands : Array Nat) (lo hi :
     | none => pure ()
   return out
 
-/-- One task per chunk; candidates ascend, so the steps do too. -/
-def byteStepsPar (b0 bps ch : Nat) (d : ByteArray) (cands : Array Nat) (chunk : Nat) :
+/-- One task per chunk (at most `maxStepTasks`); candidates ascend, so
+    the steps do too. -/
+def byteStepsPar (b0 bps ch : Nat) (d : ByteArray) (cands : Array Nat) :
     Array (ByteStep b0 bps ch d) := Id.run do
-  if chunk = 0 then return #[]
+  let chunk := stepChunkFor cands.size
   let tasks := (List.range ((cands.size + chunk - 1) / chunk)).map fun c =>
     Task.spawn fun _ =>
       byteStepChunk b0 bps ch d cands (c * chunk) (min ((c + 1) * chunk) cands.size)
@@ -987,7 +1033,7 @@ def decodeBytes (bytes : ByteArray) : Option (ByteArray × Nat) :=
         (readBytesStepsB si.bps si.bps si.channels br.data
           (if br.data.size < parThreshold then #[]
            else byteStepsPar si.bps si.bps si.channels br.data
-             (syncCandidates br.data (br.pos / 8)) stepChunkSize)
+             (syncCandidates br.data (br.pos / 8)))
           (Flac.Stream.decodeBudget br.data)
           (br.remaining + 1) br.pos
           (ByteArray.emptyWithCapacity

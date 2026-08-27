@@ -410,6 +410,33 @@ def bombTests : TestM Unit := do
   let frameless := lying.extract 0 42
   check "P3: frameless maximal-claim file decodes to empty"
     ((Flac.Decode.decodeBytes frameless).map (·.1.size) == some 0)
+  -- P4 regression: a run of FF F8 pairs makes every second offset a sync
+  -- candidate (density 1/2). The scan must not gather candidates or spawn
+  -- tasks in proportion to that pattern; `syncCandidates` recognizes the
+  -- impossible density and hands back nothing, so the frame loop rejects
+  -- serially in O(1). Header (fLaC + STREAMINFO, last-block set) taken
+  -- from the encoder, then 100 000 FF F8 pairs (~200 KB) appended.
+  let header := ok.extract 0 42
+  let stormTail : ByteArray := ByteArray.mk <|
+    (List.range 200000).map (fun i => if i % 2 == 0 then (0xFF : UInt8) else 0xF8)
+      |>.toArray
+  let storm := header ++ stormTail
+  check "P4: sync-storm yields no candidates (density bail)"
+    ((Flac.Decode.syncCandidates storm 42).size == 0)
+  check "P4: sync-storm rejected by the byte decoder"
+    (Flac.Decode.decodeBytes storm).isNone
+  check "P4: sync-storm rejected by the production decoder"
+    (match Flac.decode storm with | .error _ => true | .ok _ => false)
+  -- honest audio sits far below the density threshold, so speculation is
+  -- kept (a nonempty candidate set) — the parallel path is not lost
+  check "P4: honest stream keeps its sync candidates"
+    (Flac.Decode.minFrameBytes * (Flac.Decode.syncCandidates ok 42).size < ok.size)
+  -- the task count is bounded by input size, never by candidate density:
+  -- however many candidates, the fan-out spawns at most `maxStepTasks`
+  let n := 10 * Flac.Decode.maxStepTasks * Flac.Decode.stepChunkSize
+  let chunk := Flac.Decode.stepChunkFor n
+  check "P4: task count capped regardless of candidate count"
+    ((n + chunk - 1) / chunk ≤ Flac.Decode.maxStepTasks)
 
 /-- With an argument, write sample encoded streams into that directory
     (for differential testing against `flac`/`ffmpeg` from the shell). -/
