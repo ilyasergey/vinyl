@@ -73,6 +73,18 @@ done <<'EOF'
 EOF
 echo "ok"
 
+echo "== stack-shape swaps present (P6: csimp-pinned tail forms)"
+# The input-driven frame loops ship in accumulator form via kernel-checked
+# @[csimp] equations (docs/06-recursion-shape.md). Pin them by name so a
+# refactor cannot silently drop a swap and revert a loop to
+# stack-frame-per-frame.
+for thm in "readUnary_eq_readUnaryTR" "readFrames_eq_readFramesTR" "readFramesB_eq_readFramesBTR" "recombine_eq_recombineTR" "readFramesStepsB_eq_readFramesStepsBTR"; do
+  if ! grep -rq "@\[csimp\] theorem $thm" Flac/Native/; then
+    echo "FAIL: missing csimp stack-shape swap $thm"; fail=1
+  fi
+done
+echo "ok"
+
 echo "== proof-level trust holes: no native_decide/implemented_by/unsafe/extern in Flac/"
 if grep -rn --include='*.lean' -E '\bnative_decide\b|@\[implemented_by|\bunsafe def\b|@\[extern' Flac/; then
   echo "FAIL: proof or compilation trust hole in Flac/"; fail=1
