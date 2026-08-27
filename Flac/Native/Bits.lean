@@ -63,6 +63,49 @@ def readUnary : BitStream → Option (Nat × BitStream)
     | none => none
     | some (q, s') => some (q + 1, s')
 
+/-- `readUnary` with the run counted in an accumulator, so the recursive
+    call is in tail position: a Rice-residual run can be as long as the
+    remaining input (its enclosing partition bounds the *value*, not the
+    reader's recursion depth), so the reader must not keep a stack frame
+    per zero bit (audit finding P6). -/
+def readUnaryAcc : Nat → BitStream → Option (Nat × BitStream)
+  | _, [] => none
+  | q, true :: s => some (q, s)
+  | q, false :: s => readUnaryAcc (q + 1) s
+
+theorem readUnaryAcc_eq (q : Nat) (s : BitStream) :
+    readUnaryAcc q s
+      = (readUnary s).map fun p : Nat × BitStream => (q + p.1, p.2) := by
+  induction s generalizing q with
+  | nil => rfl
+  | cons b s ih =>
+    cases b with
+    | true => simp [readUnaryAcc, readUnary]
+    | false =>
+      show readUnaryAcc (q + 1) s = _
+      rw [ih]
+      show _ = (match readUnary s with
+        | none => none
+        | some (r, s') => some (r + 1, s')).map
+          fun p : Nat × BitStream => (q + p.1, p.2)
+      cases readUnary s with
+      | none => rfl
+      | some p =>
+        show some (q + 1 + p.1, p.2) = some (q + (p.1 + 1), p.2)
+        rw [Nat.add_assoc, Nat.add_comm 1 p.1]
+
+def readUnaryTR (s : BitStream) : Option (Nat × BitStream) :=
+  readUnaryAcc 0 s
+
+/-- Swap the compiled implementation of `readUnary` for the accumulator
+    form. Kernel-checked, so every theorem keeps reading the structural
+    definition above while the executable runs the constant-stack loop. -/
+@[csimp] theorem readUnary_eq_readUnaryTR : @readUnary = @readUnaryTR := by
+  funext s
+  unfold readUnaryTR
+  rw [readUnaryAcc_eq]
+  cases readUnary s <;> simp
+
 /-- Unary read with an a-priori cap on the run length: `none` unless the
     terminating one bit lies within the next `lim` bits.
 

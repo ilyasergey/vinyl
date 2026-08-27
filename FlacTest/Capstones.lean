@@ -19,7 +19,7 @@ they answer "is the thing I ran the thing that was proved?":
 | `--decode-pcm16` | `Flac.decodePcm16A` | `pin_decodePcm16A` |
 | `--decode-fast` | `Flac.Decode.decodeBytes` | `pin_decodeBytes` |
 | `--decode-fast` (fallback) | `Flac.Decode.decodeArrays` | `pin_decodeArrays` |
-| `--decode` | `Stream.decodeReference` | `pin_reference` |
+| `--decode` | `Flac.Decode.decodeOption` | `pin_reference` |
 
 The CLI *call sites* are pinned separately, by grep, in
 `scripts/check.sh` — which function a `do` block invokes is not something
@@ -33,6 +33,13 @@ to be `Stream.pcmBytesRange` of the samples `decodeArrays` returns
 `--decode` still serializes with `Stream.pcmBytesA`; the theorem-backed
 byte-level decode of the reference pipeline is `--decode-pcm16`. See
 `ARCHITECTURE.md`.
+
+Since the P6 round, `--decode` decodes with `Flac.Decode.decodeOption`
+rather than executing `Stream.decodeReference` directly: `pin_reference`
+(`decodeOption_eq_reference`) proves them *pointwise equal*, and the
+reference decoder — which materializes the input as `List Bool` and
+rescans it per frame — stays what it always was, the specification-shaped
+path, no longer something the CLI runs on untrusted input.
 -/
 
 namespace FlacTest.Capstones

@@ -543,7 +543,8 @@ def usage : String :=
   "  vinyl --encode-slow <in.pcm> <out.flac> <blockSize> <channels> [<sampleRate>]\n" ++
   "      encode with the fully verified encoder (the fast path's fallback)\n" ++
   "  vinyl --decode <in.flac> <out.pcm>\n" ++
-  "      decode with the verified reference decoder (raw 16-bit LE out)\n" ++
+  "      decode to samples, then serialize (raw 16-bit LE out); computes\n" ++
+  "      the reference decoder (Flac.Decode.decodeOption_eq_reference)\n" ++
   "  vinyl --decode-fast <in.flac> <out.pcm>\n" ++
   "      decode with the shipped buffered decoder (raw 16-bit LE out)\n" ++
   "  vinyl --decode-pcm16 <in.flac> <out.pcm>\n" ++
@@ -653,6 +654,41 @@ def encodeSlowMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
     IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, channels/blockSize/sampleRate out of range, or sample rate 0 with nonempty audio)"
     return 1
 
+/-! ## Frame loops in constant stack (audit finding P6)
+
+Frame count is attacker-chosen — a valid CONSTANT frame is ~13 bytes — so
+no frame loop may keep a native stack frame per pending frame. The loops
+now run in accumulator form via kernel-checked `@[csimp]` swaps
+(`readFramesStepsB_eq_readFramesStepsBTR`, `readFramesB_eq_readFramesBTR`,
+`recombine_eq_recombineTR`, `readUnary_eq_readUnaryTR`); these checks pin
+that the swapped loops compute the same values at a frame count past what
+a stack-frame-per-frame loop survives on a true 8 MB stack. -/
+
+def recursionShapeTests : TestM Unit := do
+  -- 100 000 tiny frames through the shipped pipeline (blockSize 16 is the
+  -- smallest the guard admits): encode, then round-trip through the
+  -- byte-level decoder the CLI runs
+  let n := 100000 * 16
+  let pcm := ByteArray.mk (Array.replicate (2 * n) 0)
+  match Flac.encodePcm16Fast 16 1 44100 pcm with
+  | none => check "P6: tiny-frame encode succeeds" false
+  | some flac =>
+    check "P6: reproducer is 100k tiny frames" (100000 * 13 ≤ flac.size)
+    check "P6: 100k tiny frames round-trip (production decoder)"
+      (match Flac.decodePcm16A flac with
+       | .ok out => out == pcm
+       | .error _ => false)
+  -- the reference decoder's loops at a frame count that exercises them
+  -- without its (documented, spec-path) quadratic scan dominating the suite
+  let m := 500 * 16
+  let chs : List (List Int) := [(List.range m).map fun i => ((i % 100 : Nat) : Int) - 50]
+  let refFlac := Stream.encode ⟨16, false, Heuristics.defaultAsgChooser 16⟩ ⟨chs, 16, 44100⟩
+  check "P6: 500 frames round-trip (reference decoder)"
+    ((Stream.decodeReference refFlac).map (·.channels) == some chs)
+  -- the tail-form unary reader takes a run as long as the input in stride
+  check "P6: megabit unary run reads in constant stack"
+    (Bits.readUnary (List.replicate 1000000 false ++ [true]) == some (1000000, []))
+
 /-! ## Thread-flag stripping (audit finding P10)
 
 `stripThreadFlags` is pure precisely so this property is testable: user
@@ -743,7 +779,12 @@ def cliMain (rawArgs : List String) : IO UInt32 := do
         return 0
   if let ["--decode", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
-    match Stream.decodeReference bytes with
+    -- the reference decoder's *semantics* at the production decoder's cost:
+    -- `Flac.Decode.decodeOption_eq_reference` proves them pointwise equal,
+    -- and `Stream.decodeReference` itself stays the specification-shaped
+    -- path (it materializes the input as `List Bool` and rescans it per
+    -- frame — quadratic on purpose-built many-frame files, audit finding P6)
+    match Flac.Decode.decodeOption bytes with
     | none => IO.println "DECODE ERROR"; return 1
     | some a =>
       IO.FS.writeBinFile outFile (Stream.pcmBytes a.bps a.channels)
@@ -759,7 +800,7 @@ def cliMain (rawArgs : List String) : IO UInt32 := do
     IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
     IO.eprintln usage
     return 2
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; encoderGuardTests; threadFlagTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; encoderGuardTests; recursionShapeTests; threadFlagTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0

@@ -69,7 +69,7 @@ done <<'EOF'
 --decode-pcm16 - Flac.decodePcm16A
 --decode-fast - Flac.Decode.decodeBytes
 --decode-fast - Flac.Decode.decodeArrays
---decode - Stream.decodeReference
+--decode - Flac.Decode.decodeOption
 EOF
 echo "ok"
 

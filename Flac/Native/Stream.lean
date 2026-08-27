@@ -46,6 +46,30 @@ def recombine (ch : Nat) : List (List (List Int)) → List (List Int)
   | [] => List.replicate ch []
   | fr :: frs => List.zipWith (· ++ ·) fr (recombine ch frs)
 
+theorem recombine_eq_foldr (ch : Nat) (frs : List (List (List Int))) :
+    recombine ch frs
+      = frs.foldr (fun fr acc => List.zipWith (· ++ ·) fr acc)
+          (List.replicate ch []) := by
+  induction frs with
+  | nil => rfl
+  | cons fr frs ih => simp [recombine, ih]
+
+/-- `recombine` as a left fold over the reversed frame list, so frame
+    count (attacker-chosen: a frame can be ~13 bytes) costs no stack
+    (audit finding P6). Same output-linear work — each step copies one
+    block-bounded frame onto the front of its channel. -/
+def recombineTR (ch : Nat) (frs : List (List (List Int))) : List (List Int) :=
+  frs.reverse.foldl (fun acc fr => List.zipWith (· ++ ·) fr acc)
+    (List.replicate ch [])
+
+/-- Swap the compiled `recombine` for the fold form; theorems keep the
+    structural definition. -/
+@[csimp] theorem recombine_eq_recombineTR : @recombine = @recombineTR := by
+  funext ch frs
+  rw [recombine_eq_foldr]
+  unfold recombineTR
+  rw [List.foldl_reverse]
+
 /-- Interleave channels sample-by-sample (the MD5 input order,
     RFC 9639 §8.2). -/
 def interleave (chs : List (List Int)) : List Int :=
@@ -288,6 +312,61 @@ def readFrames (b0 : Nat) : Nat → BitStream → Option (List (List (List Int))
         | none => none
         | some rest => some (chs :: rest)
 
+/-- `readFrames` in accumulator form: the recursive call is in tail
+    position, so recursion depth stays flat however many frames the input
+    packs (audit finding P6 — the cons-after-return form keeps one native
+    stack frame alive per pending frame, and frame count is
+    attacker-chosen). -/
+def readFramesAcc (b0 : Nat) (acc : List (List (List Int))) :
+    Nat → BitStream → Option (List (List (List Int)))
+  | 0, s => if s = [] then some acc.reverse else none
+  | fuel + 1, s =>
+    if s = [] then some acc.reverse
+    else
+      match Frame.read b0 s with
+      | none => none
+      | some (chs, s') => readFramesAcc b0 (chs :: acc) fuel s'
+
+/-- The bridging equation: the accumulator loop computes `readFrames`
+    with the already-collected frames spliced back on the front. -/
+theorem readFramesAcc_eq (b0 : Nat) (acc : List (List (List Int)))
+    (fuel : Nat) (s : BitStream) :
+    readFramesAcc b0 acc fuel s
+      = (readFrames b0 fuel s).map (acc.reverse ++ ·) := by
+  induction fuel generalizing acc s with
+  | zero =>
+    unfold readFramesAcc readFrames
+    by_cases hs : s = [] <;> simp [hs]
+  | succ n ih =>
+    unfold readFramesAcc readFrames
+    by_cases hs : s = []
+    · simp [hs]
+    · rw [if_neg hs, if_neg hs]
+      cases Frame.read b0 s with
+      | none => rfl
+      | some p =>
+        obtain ⟨chs, s'⟩ := p
+        show readFramesAcc b0 (chs :: acc) n s'
+          = (match readFrames b0 n s' with
+             | none => none
+             | some rest => some (chs :: rest)).map (acc.reverse ++ ·)
+        rw [ih]
+        cases readFrames b0 n s' with
+        | none => rfl
+        | some rest => simp
+
+def readFramesTR (b0 fuel : Nat) (s : BitStream) :
+    Option (List (List (List Int))) :=
+  readFramesAcc b0 [] fuel s
+
+/-- Swap the compiled `readFrames` for the tail form; theorems keep the
+    structural definition. -/
+@[csimp] theorem readFrames_eq_readFramesTR : @readFrames = @readFramesTR := by
+  funext b0 fuel s
+  unfold readFramesTR
+  rw [readFramesAcc_eq]
+  cases readFrames b0 fuel s <;> simp
+
 /-! ## Decoded-output budget
 
 A CONSTANT subframe stores one value and materializes `blockSize` copies,
@@ -343,6 +422,67 @@ def readFramesB (b0 : Nat) : Nat → Nat → BitStream →
           | none => none
           | some rest => some (chs :: rest)
         else none
+
+/-- `readFramesB` in accumulator form (audit finding P6): tail-recursive,
+    so the reference decoder's frame loop runs in constant stack. -/
+def readFramesBAcc (b0 : Nat) (acc : List (List (List Int))) :
+    Nat → Nat → BitStream → Option (List (List (List Int)))
+  | _, 0, s => if s = [] then some acc.reverse else none
+  | budget, fuel + 1, s =>
+    if s = [] then some acc.reverse
+    else
+      match Frame.read b0 s with
+      | none => none
+      | some (chs, s') =>
+        if frameCost chs ≤ budget then
+          readFramesBAcc b0 (chs :: acc) (budget - frameCost chs) fuel s'
+        else none
+
+theorem readFramesBAcc_eq (b0 : Nat) (acc : List (List (List Int)))
+    (budget fuel : Nat) (s : BitStream) :
+    readFramesBAcc b0 acc budget fuel s
+      = (readFramesB b0 budget fuel s).map (acc.reverse ++ ·) := by
+  induction fuel generalizing acc budget s with
+  | zero =>
+    unfold readFramesBAcc readFramesB
+    by_cases hs : s = [] <;> simp [hs]
+  | succ n ih =>
+    unfold readFramesBAcc readFramesB
+    by_cases hs : s = []
+    · simp [hs]
+    · rw [if_neg hs, if_neg hs]
+      cases Frame.read b0 s with
+      | none => rfl
+      | some p =>
+        obtain ⟨chs, s'⟩ := p
+        show (if frameCost chs ≤ budget then
+            readFramesBAcc b0 (chs :: acc) (budget - frameCost chs) n s'
+          else none)
+          = (if frameCost chs ≤ budget then
+              match readFramesB b0 (budget - frameCost chs) n s' with
+              | none => none
+              | some rest => some (chs :: rest)
+            else none).map (acc.reverse ++ ·)
+        by_cases hb : frameCost chs ≤ budget
+        · rw [if_pos hb, if_pos hb, ih]
+          cases readFramesB b0 (budget - frameCost chs) n s' with
+          | none => rfl
+          | some rest => simp
+        · rw [if_neg hb, if_neg hb]
+          rfl
+
+def readFramesBTR (b0 budget fuel : Nat) (s : BitStream) :
+    Option (List (List (List Int))) :=
+  readFramesBAcc b0 [] budget fuel s
+
+/-- Swap the compiled `readFramesB` for the tail form; theorems (and the
+    whole round-trip stack above them) keep the structural definition. -/
+@[csimp] theorem readFramesB_eq_readFramesBTR :
+    @readFramesB = @readFramesBTR := by
+  funext b0 budget fuel s
+  unfold readFramesBTR
+  rw [readFramesBAcc_eq]
+  cases readFramesB b0 budget fuel s <;> simp
 
 /-! ## Top level -/
 

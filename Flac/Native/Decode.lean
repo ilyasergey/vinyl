@@ -844,6 +844,75 @@ def readFramesStepsB (b0 : Nat) (d : ByteArray) (steps : Array (Step b0 d)) :
           | some rest => some (chs :: rest)
         else none
 
+/-- `readFramesStepsB` in accumulator form: the recursive call is in tail
+    position, so the shipped frame loop runs in constant stack however
+    many frames the input packs (audit finding P6 — the cons-after-return
+    form kept one native stack frame alive per pending frame, and a frame
+    can be ~13 bytes, so frame count is attacker-chosen). -/
+def readFramesStepsBAcc (b0 : Nat) (d : ByteArray) (steps : Array (Step b0 d))
+    (acc : List (List (Array Int))) :
+    Nat → Nat → Nat → Option (List (List (Array Int)))
+  | _, 0, pos => if 8 * d.size - pos = 0 then some acc.reverse else none
+  | budget, fuel + 1, pos =>
+    if 8 * d.size - pos = 0 then some acc.reverse
+    else
+      match stepFor b0 d steps pos with
+      | none => none
+      | some (chs, next) =>
+        if frameCostA chs ≤ budget then
+          readFramesStepsBAcc b0 d steps (chs :: acc)
+            (budget - frameCostA chs) fuel next
+        else none
+
+theorem readFramesStepsBAcc_eq (b0 : Nat) (d : ByteArray)
+    (steps : Array (Step b0 d)) (acc : List (List (Array Int)))
+    (budget fuel pos : Nat) :
+    readFramesStepsBAcc b0 d steps acc budget fuel pos
+      = (readFramesStepsB b0 d steps budget fuel pos).map (acc.reverse ++ ·) := by
+  induction fuel generalizing acc budget pos with
+  | zero =>
+    unfold readFramesStepsBAcc readFramesStepsB
+    by_cases hp : 8 * d.size - pos = 0 <;> simp [hp]
+  | succ n ih =>
+    unfold readFramesStepsBAcc readFramesStepsB
+    by_cases hp : 8 * d.size - pos = 0
+    · simp [hp]
+    · rw [if_neg hp, if_neg hp]
+      cases stepFor b0 d steps pos with
+      | none => rfl
+      | some p =>
+        obtain ⟨chs, next⟩ := p
+        show (if frameCostA chs ≤ budget then
+            readFramesStepsBAcc b0 d steps (chs :: acc)
+              (budget - frameCostA chs) n next
+          else none)
+          = (if frameCostA chs ≤ budget then
+              match readFramesStepsB b0 d steps (budget - frameCostA chs) n next with
+              | none => none
+              | some rest => some (chs :: rest)
+            else none).map (acc.reverse ++ ·)
+        by_cases hb : frameCostA chs ≤ budget
+        · rw [if_pos hb, if_pos hb, ih]
+          cases readFramesStepsB b0 d steps (budget - frameCostA chs) n next with
+          | none => rfl
+          | some rest => simp
+        · rw [if_neg hb, if_neg hb]
+          rfl
+
+def readFramesStepsBTR (b0 : Nat) (d : ByteArray) (steps : Array (Step b0 d))
+    (budget fuel pos : Nat) : Option (List (List (Array Int))) :=
+  readFramesStepsBAcc b0 d steps [] budget fuel pos
+
+/-- Swap the compiled `readFramesStepsB` for the tail form; the theorem
+    stack (`readFramesStepsB_eq` up through the capstones) keeps reading
+    the structural definition. -/
+@[csimp] theorem readFramesStepsB_eq_readFramesStepsBTR :
+    @readFramesStepsB = @readFramesStepsBTR := by
+  funext b0 d steps budget fuel pos
+  unfold readFramesStepsBTR
+  rw [readFramesStepsBAcc_eq]
+  cases readFramesStepsB b0 d steps budget fuel pos <;> simp
+
 /-- Streams below this many bytes decode serially — the scan and task
     setup would dominate. -/
 def parThreshold : Nat := 1 <<< 16
