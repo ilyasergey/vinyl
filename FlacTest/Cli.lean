@@ -534,18 +534,6 @@ def emitSamples (dir : String) : IO Unit := do
   mk "stereo-corr" 4096 (Heuristics.defaultAsgChooser 16) [l, r]
   mk "stereo-ms" 4096 (fun _ => .midSide ⟨0, .verbatim⟩ ⟨0, .verbatim⟩) [l, r]
 
-/-- Parse raw signed 16-bit little-endian mono PCM. -/
-def pcm16OfBytes (b : ByteArray) : List Int :=
-  (List.range (b.size / 2)).map fun i =>
-    let u : Nat := b[2*i]!.toNat + 256 * b[2*i+1]!.toNat
-    if u < 32768 then (u : Int) else (u : Int) - 65536
-
-/-- Deinterleave raw 16-bit LE PCM into `ch` channels. -/
-def deinterleave (ch : Nat) (xs : List Int) : List (List Int) :=
-  let arr := xs.toArray
-  (List.range ch).map fun c =>
-    (List.range (arr.size / ch)).map fun i => arr.getD (i * ch + c) 0
-
 def usage : String :=
   "vinyl - a formally verified FLAC codec (see README.md)\n\n" ++
   "  vinyl --encode <in.pcm> <out.flac> <blockSize> <channels> [<sampleRate>]\n" ++
@@ -593,6 +581,15 @@ def withThreads (n : String) (args : List String) : IO UInt32 := do
         env := #[("LEAN_NUM_THREADS", some (toString workers))] }
     child.wait
 
+/-- Report a bad invocation: the message, then usage, exit 2. A typo in a
+    numeric argument is a usage error, never a panic (audit finding P9,
+    issue #9) — every argument is parsed with `toNat?` and funneled here
+    on `none`. -/
+def usageError (msg : String) : IO UInt32 := do
+  IO.eprintln s!"{msg}\n"
+  IO.eprintln usage
+  return 2
+
 /-- The fast encoder as a CLI action.  `sampleRate` reaches STREAMINFO only:
     `Flac.Stream.decodePcm16_encodePcm16Fast` holds at every rate the encoder
     accepts, so a 16 kHz corpus is encoded with honest metadata. -/
@@ -639,9 +636,15 @@ def cliMain (args : List String) : IO UInt32 := do
     IO.println usage
     return 0
   if let ["--encode", inFile, outFile, bs, ch] := args then
-    return ← encodeFastMain inFile outFile bs.toNat! ch.toNat! 44100
+    match bs.toNat?, ch.toNat? with
+    | some bs, some ch => return ← encodeFastMain inFile outFile bs ch 44100
+    | _, _ =>
+      return ← usageError s!"--encode: blockSize and channels must be numbers, got '{bs}' '{ch}'"
   if let ["--encode", inFile, outFile, bs, ch, rate] := args then
-    return ← encodeFastMain inFile outFile bs.toNat! ch.toNat! rate.toNat!
+    match bs.toNat?, ch.toNat?, rate.toNat? with
+    | some bs, some ch, some rate => return ← encodeFastMain inFile outFile bs ch rate
+    | _, _, _ =>
+      return ← usageError s!"--encode: blockSize, channels and sampleRate must be numbers, got '{bs}' '{ch}' '{rate}'"
   if let ["--decode-pcm16", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
     -- `Flac.decodePcm16A_eq`: same bytes as `Flac.decodePcm16`, no list round-trip
@@ -652,9 +655,15 @@ def cliMain (args : List String) : IO UInt32 := do
       IO.println "decoded (byte-level pipeline)"
       return 0
   if let ["--encode-slow", inFile, outFile, bs, ch] := args then
-    return ← encodeSlowMain inFile outFile bs.toNat! ch.toNat! 44100
+    match bs.toNat?, ch.toNat? with
+    | some bs, some ch => return ← encodeSlowMain inFile outFile bs ch 44100
+    | _, _ =>
+      return ← usageError s!"--encode-slow: blockSize and channels must be numbers, got '{bs}' '{ch}'"
   if let ["--encode-slow", inFile, outFile, bs, ch, rate] := args then
-    return ← encodeSlowMain inFile outFile bs.toNat! ch.toNat! rate.toNat!
+    match bs.toNat?, ch.toNat?, rate.toNat? with
+    | some bs, some ch, some rate => return ← encodeSlowMain inFile outFile bs ch rate
+    | _, _, _ =>
+      return ← usageError s!"--encode-slow: blockSize, channels and sampleRate must be numbers, got '{bs}' '{ch}' '{rate}'"
   if let ["--decode-fast", inFile, outFile] := args then
     let bytes ← IO.FS.readBinFile inFile
     -- the fused path: each frame is serialized by the worker that decoded

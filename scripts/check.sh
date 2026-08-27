@@ -94,6 +94,19 @@ else
   echo "ok: no panicking access"
 fi
 
+echo "== shipped-binary panic lint: every module a lake exe links"
+# The vinyl executable's main is FlacTest/Cli.lean's cliMain (audit finding
+# P9: a toNat! panic shipped because this directory sat outside the lint).
+# Code reachable from a shipped main gets the no-panic tier no matter which
+# directory it lives in; keep this list in step with the [[lean_exe]] roots
+# in lakefile.toml and their imports.
+BIN_FILES="FlacTest/Cli.lean FlacTest/Capstones.lean FlacTest/Main.lean Vinyl.lean FlacTest.lean"
+if grep -n '\]!\|get!\|headD?!\|head!\|tail!\|toNat!\|toInt!\|panic!' $BIN_FILES | grep -v '\-\-'; then
+  echo "FAIL: panicking call in a shipped executable's modules"; fail=1
+else
+  echo "ok: no panicking calls in executable modules"
+fi
+
 echo "== unit tests"
 lake exe flactest
 
