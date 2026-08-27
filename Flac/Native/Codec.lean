@@ -6,24 +6,42 @@ import Flac.Native.Encode
 /-!
 # The shipped encoder entry points
 
-`Flac.encode` pairs with `Flac.decode` (in `Flac.Native.Decode`); the
-checked variants test the (decidable) precondition at runtime, so a `some`
-result carries the round-trip theorem with no hypotheses.
+`Flac.encode` pairs with `Flac.decode` (in `Flac.Native.Decode`). Since
+the P7 round (issue #7), the natural names are the *checked* forms: they
+test the (decidable) precondition at runtime, so a `some` result carries
+the round-trip theorem with no hypotheses, and `none` is the
+precondition's voice. The raw total encoders — which mod-wrap
+out-of-envelope audio into valid-looking streams denoting different
+samples — live under `Unchecked` namespaces and say so in their
+docstrings.
 -/
 
 namespace Flac
 
-/-- **The encoder**: default heuristics (wasted-bit detection,
-    fixed/LPC order search, Rice parameter search, stereo-mode decision),
-    4096-sample blocks. -/
-def encode (a : Flac.Stream.Audio) : ByteArray :=
-  Flac.Stream.encode ⟨4096, false, Heuristics.defaultAsgChooser a.bps⟩ a
+/-- The raw encoder at the default configuration (wasted-bit detection,
+    fixed/LPC order search, Rice parameter search, stereo-mode decision;
+    4096-sample blocks). Unchecked: precondition `Audio.WellFormed`, and
+    off-domain audio is silently mod-wrapped — see
+    `Flac.Stream.Unchecked.encode`. The checked form under the natural
+    name is `Flac.encode`. -/
+def Unchecked.encode (a : Flac.Stream.Audio) : ByteArray :=
+  Flac.Stream.Unchecked.encode ⟨4096, false, Heuristics.defaultAsgChooser a.bps⟩ a
 
-/-- The encoder with its precondition checked at runtime: a `some` result
+/-- **The encoder**: default heuristics (wasted-bit detection, fixed/LPC
+    order search, Rice parameter search, stereo-mode decision),
+    4096-sample blocks, precondition checked at runtime. A `some` result
     carries the round-trip guarantee with **no hypotheses at all**
-    (`Flac.decode_encodeChecked`). -/
+    (`Flac.decode_encode`); `none` means the audio is not representable
+    as a FLAC stream (`Audio.WellFormed` fails). -/
+def encode (a : Flac.Stream.Audio) : Option ByteArray :=
+  if a.WellFormed then some (Unchecked.encode a) else none
+
+/-- Alias for `Flac.encode`, kept from when the checked encoder was the
+    differently-named sibling of an unchecked `encode`
+    (`Flac.decode_encodeChecked` restates the guarantee under this
+    name). -/
 def encodeChecked (a : Flac.Stream.Audio) : Option ByteArray :=
-  if a.WellFormed then some (encode a) else none
+  encode a
 
 /-- Checked encode under an arbitrary configuration (block size and
     heuristic supplied by the caller). Block sizes stop at 4608: above
@@ -33,7 +51,7 @@ def encodeChecked (a : Flac.Stream.Audio) : Option ByteArray :=
 def encodeCheckedCfg (cfg : Flac.Stream.EncoderCfg) (a : Flac.Stream.Audio) :
     Option ByteArray :=
   if a.WellFormed ∧ 16 ≤ cfg.blockSize ∧ cfg.blockSize ≤ 4608 then
-    some (Flac.Stream.encode cfg a)
+    some (Flac.Stream.Unchecked.encode cfg a)
   else none
 
 /-! ## Byte-level 16-bit PCM pipeline
@@ -213,14 +231,14 @@ def decodePcm16A (flac : ByteArray) : Except String ByteArray :=
 
 `Flac.Encode` is unverified by design (like the heuristics) — but it is now
 *proven*, not certified per call. `Flac.Encode.encodePcm16_eq` shows it
-computes `Flac.Stream.encode` at the chooser its own search denotes, so the
+computes `Flac.Stream.Unchecked.encode` at the chooser its own search denotes, so the
 byte-level round trip `Flac.Stream.decodePcm16_encodePcm16Fast` follows from
 the reference capstone with no runtime decode and no fallback.
 
 What used to be here — decode the produced bytes with the verified decoder,
 compare with the input, fall back to the verified encoder on mismatch — cost
 31% of encode. The five conditions it silently covered are now O(1) guards
-below; everything else `Stream.encode` checks at run time is discharged by a
+below; everything else `Stream.Unchecked.encode` checks at run time is discharged by a
 theorem (`Flac.Encode.audio_wellFormed`). -/
 
 /-- **The fast byte-level encoder.** `some` results carry the round-trip

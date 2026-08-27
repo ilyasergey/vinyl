@@ -304,7 +304,7 @@ theorem _root_.Flac.Stream.decodeReference_encode_default
     (blockSize : Nat) (varBlk : Bool) (a : Stream.Audio)
     (hwf : a.WellFormed)
     (hbs1 : 16 ≤ blockSize) (hbs2 : blockSize ≤ 4608) :
-    Stream.decodeReference (Stream.encode
+    Stream.decodeReference (Stream.Unchecked.encode
       ⟨blockSize, varBlk, defaultAsgChooser a.bps⟩ a) = some a :=
   Stream.decodeReference_encode _ a hwf hbs1 hbs2
 

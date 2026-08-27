@@ -15,7 +15,7 @@ import Flac.Native.Stream
 `Flac.Spec.Emit` to *emit* exactly what the corresponding `List Bool`
 model writer produces: `(f w).bits = w.bits ++ modelBits`. That is the
 writer-side mirror of the reader simulation (`Flac.Spec.Reader`), and it
-is what lets `Flac.Stream.encode` run on arrays and a `ByteArray` without
+is what lets `Flac.Stream.Unchecked.encode` run on arrays and a `ByteArray` without
 touching any theorem statement.
 
 The accumulator is a `Nat` (scalar for our sizes): `acc < 2^n` is an

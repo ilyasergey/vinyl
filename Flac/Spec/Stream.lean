@@ -692,7 +692,7 @@ theorem encode_cost_le_budget (cfg : EncoderCfg) (a : Audio)
 theorem decodeReference_encode (cfg : EncoderCfg) (a : Audio)
     (hwf : a.WellFormed)
     (hbs1 : 16 ≤ cfg.blockSize) (hbs2 : cfg.blockSize ≤ 4608) :
-    decodeReference (encode cfg a) = some a := by
+    decodeReference (Unchecked.encode cfg a) = some a := by
   obtain ⟨hch1, hch8, hb1, hb2, heq, hfit, hsr, htot⟩ := hwf
   have heq' : ∀ c ∈ a.channels, c.length = (a.channels.headD []).length := heq
   have hframes : ∀ fr ∈ chunkChannels cfg.blockSize a.channels,
@@ -709,7 +709,7 @@ theorem decodeReference_encode (cfg : EncoderCfg) (a : Audio)
     exact ⟨h3, by omega,
       orVerbatim_valid (by omega) h2 (by omega) (by omega) hfitfr, hfitfr⟩
   have hcap := encode_cost_le_budget cfg a hch1 hch8 hb1 heq' hfit hbs1 hbs2
-  unfold encode decodeReference
+  unfold Unchecked.encode decodeReference
   rw [bytesToBits_bitsToBytes _ (writeStream_length_dvd cfg a)]
   unfold writeStream
   unfold writeStream at hcap

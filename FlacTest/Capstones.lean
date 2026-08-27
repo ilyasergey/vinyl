@@ -46,12 +46,27 @@ namespace FlacTest.Capstones
 
 open Flac Flac.Stream
 
-/-- **The capstone**: the shipped pair round-trips every well-formed audio. -/
+/-- **The capstone**: whenever the public encoder returns bytes, the
+    shipped pair round-trips them — no hypotheses (P7: the natural name
+    is the checked form, so this is the guarantee a caller cannot avoid
+    holding). -/
 theorem pin_decode_encode :
-    ∀ (a : Audio), a.WellFormed → Flac.decode (Flac.encode a) = .ok a :=
+    ∀ {a : Audio} {bytes : ByteArray},
+      Flac.encode a = some bytes → Flac.decode bytes = .ok a :=
   @Flac.decode_encode
 
-/-- The runtime-checked encoder needs no hypothesis. -/
+/-- API pin (P7): the shortest-path public encoder is the checked one —
+    its *type* refuses off-envelope audio. -/
+example : Audio → Option ByteArray := Flac.encode
+
+/-- The raw encoder, relocated under `Unchecked`, keeps the conditional
+    capstone on its stated domain. -/
+theorem pin_decode_encode_unchecked :
+    ∀ (a : Audio), a.WellFormed →
+      Flac.decode (Flac.Unchecked.encode a) = .ok a :=
+  @Flac.decode_encode_unchecked
+
+/-- The compatibility alias carries the same hypothesis-free guarantee. -/
 theorem pin_encodeChecked :
     ∀ {a : Audio} {bytes : ByteArray},
       Flac.encodeChecked a = some bytes → Flac.decode bytes = .ok a :=

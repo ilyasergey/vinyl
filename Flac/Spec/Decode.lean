@@ -2383,29 +2383,39 @@ theorem decode_size_le {bytes : ByteArray} {a : Stream.Audio}
 theorem decode_encode_cfg (cfg : Stream.EncoderCfg) (a : Stream.Audio)
     (hwf : a.WellFormed)
     (hbs1 : 16 ≤ cfg.blockSize) (hbs2 : cfg.blockSize ≤ 4608) :
-    decode (Stream.encode cfg a) = .ok a :=
+    decode (Stream.Unchecked.encode cfg a) = .ok a :=
   (decode_ok_iff_reference _ _).mpr
     (Stream.decodeReference_encode cfg a hwf hbs1 hbs2)
 
-/-- **The capstone**: decoding an encoded stream recovers the samples,
-    for every well-formed audio. `Flac.encode` and `Flac.decode` are the
-    shipped production entry points; `Audio.WellFormed` says exactly
-    "representable as FLAC" (1–8 equal-length channels, bit depth 1–32,
-    samples in range, STREAMINFO field bounds) and is decidable. -/
-theorem decode_encode (a : Stream.Audio) (h : a.WellFormed) :
-    decode (encode a) = .ok a :=
+/-- Conditional capstone for the raw default-configuration encoder: on
+    its stated domain — and only there, which is why it lives under
+    `Unchecked` — it round-trips. -/
+theorem decode_encode_unchecked (a : Stream.Audio) (h : a.WellFormed) :
+    decode (Unchecked.encode a) = .ok a :=
   decode_encode_cfg _ a h (by show 16 ≤ 4096; omega) (by show 4096 ≤ 4608; omega)
 
-/-- Hypothesis-free capstone for the runtime-checked encoder: whenever
-    `encodeChecked` returns bytes at all, decoding them recovers the
-    samples. The runner's test *is* the theorem's precondition. -/
-theorem decode_encodeChecked {a : Stream.Audio} {bytes : ByteArray}
-    (h : encodeChecked a = some bytes) : decode bytes = .ok a := by
-  unfold encodeChecked at h
+/-- **The capstone**, hypothesis-free: whenever the public encoder
+    returns bytes at all, decoding them recovers the samples.
+    `Flac.encode` and `Flac.decode` are the shipped production entry
+    points; since the P7 round `encode` checks `Audio.WellFormed` —
+    exactly "representable as FLAC" (1–8 equal-length channels, bit depth
+    1–32, samples in range, STREAMINFO field bounds), decidable — at
+    runtime, so the guarantee needs no hypothesis a caller could fail to
+    have read. -/
+theorem decode_encode {a : Stream.Audio} {bytes : ByteArray}
+    (h : encode a = some bytes) : decode bytes = .ok a := by
+  unfold encode at h
   split at h
   · cases h
-    exact decode_encode a ‹_›
+    exact decode_encode_unchecked a ‹_›
   · cases h
+
+/-- The same guarantee under the compatibility alias `encodeChecked`
+    (the checked encoder's name from when the unchecked one held the
+    natural name). -/
+theorem decode_encodeChecked {a : Stream.Audio} {bytes : ByteArray}
+    (h : encodeChecked a = some bytes) : decode bytes = .ok a :=
+  decode_encode h
 
 /-- Hypothesis-free capstone, arbitrary configuration. -/
 theorem decode_encodeCheckedCfg {cfg : Stream.EncoderCfg}

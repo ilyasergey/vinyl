@@ -147,7 +147,7 @@ def e2eTests : TestM Unit := do
   let mono (bs : Nat) (chooser : List (List Int) → Frame.ChannelAsg)
       (pcm : List Int) : Option (List (List Int)) :=
     (Stream.decodeReference
-      (Stream.encode ⟨bs, false, chooser⟩ ⟨[pcm], 16, 44100⟩)).map (·.channels)
+      (Stream.Unchecked.encode ⟨bs, false, chooser⟩ ⟨[pcm], 16, 44100⟩)).map (·.channels)
   -- 40 samples → frames of 16/16/8 (short last frame)
   let pcm : List Int := (List.range 40).map fun (i : Nat) =>
     (100 * (i : Int)) - 2000 + (if i % 3 == 0 then 7 else -5)
@@ -168,7 +168,7 @@ def e2eTests : TestM Unit := do
   -- 8-bit depth
   let pcm8 : List Int := (List.range 30).map fun (i : Nat) => ((i : Int) % 100) - 50
   checkEq "e2e 8-bit"
-    ((Stream.decodeReference (Stream.encode ⟨16, false, Stream.verbatimChooser⟩
+    ((Stream.decodeReference (Stream.Unchecked.encode ⟨16, false, Stream.verbatimChooser⟩
       ⟨[pcm8], 8, 8000⟩)).map (·.channels)) (some [pcm8])
   -- the certified default heuristics (wasted bits, LPC, fixed, stereo)
   checkEq "e2e defaultAsgChooser mono"
@@ -184,7 +184,7 @@ def e2eTests : TestM Unit := do
   let left : List Int := (List.range 40).map fun (i : Nat) => 500 * (i : Int) - 9000
   let right : List Int := left.map (· + 37)
   let stereo (chooser : List (List Int) → Frame.ChannelAsg) :=
-    (Stream.decodeReference (Stream.encode ⟨16, false, chooser⟩
+    (Stream.decodeReference (Stream.Unchecked.encode ⟨16, false, chooser⟩
       ⟨[left, right], 16, 44100⟩)).map (·.channels)
   checkEq "e2e stereo default" (stereo (Heuristics.defaultAsgChooser 16))
     (some [left, right])
@@ -198,11 +198,11 @@ def e2eTests : TestM Unit := do
   let chans : List (List Int) := (List.range 5).map fun (c : Nat) =>
     (List.range 33).map fun (i : Nat) => ((c : Int) + 1) * ((i : Int) - 16)
   checkEq "e2e 5 channels"
-    ((Stream.decodeReference (Stream.encode ⟨16, false, Heuristics.defaultAsgChooser 16⟩
+    ((Stream.decodeReference (Stream.Unchecked.encode ⟨16, false, Heuristics.defaultAsgChooser 16⟩
       ⟨chans, 16, 44100⟩)).map (·.channels)) (some chans)
   -- variable-blocksize numbering strategy
   checkEq "e2e variable numbering"
-    ((Stream.decodeReference (Stream.encode ⟨16, true, Heuristics.defaultAsgChooser 16⟩
+    ((Stream.decodeReference (Stream.Unchecked.encode ⟨16, true, Heuristics.defaultAsgChooser 16⟩
       ⟨[pcm], 16, 44100⟩)).map (·.channels)) (some [pcm])
 
 /-! ## The fast encoder mirrors the verified one, byte for byte
@@ -214,7 +214,7 @@ Every value involved is an integer well inside `2^53`, so the two must
 
 That much is still not a theorem, and cannot be: it is a claim about what
 `Float` computes. `Flac.Encode.encodePcm16_eq` proves the fast encoder
-computes `Stream.encode` at the chooser its *own* search denotes, which
+computes `Stream.Unchecked.encode` at the chooser its *own* search denotes, which
 needs no such claim; whether that search agrees with the `Int` one is a
 compression question, and it is pinned here as a test. -/
 
@@ -267,7 +267,7 @@ def fusedDecodeTests : TestM Unit := do
      ("short last frame", 1, [(List.range 5000).map fun i => ((i % 700 : Nat) : Int) - 350]),
      ("empty", 1, [[]])]
   for (name, ch, chans) in cases do
-    let flac := Stream.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ⟨chans, 16, 44100⟩
+    let flac := Stream.Unchecked.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ⟨chans, 16, 44100⟩
     match Flac.Decode.decodeBytes flac, Flac.Decode.decodeArrays flac with
     | some (pcm, _), some (arrs, bps, _) =>
       checkEq s!"fused decode = sample path: {name}" pcm
@@ -279,7 +279,7 @@ def fusedDecodeTests : TestM Unit := do
   -- stream large enough to cross it
   let big : List Int := (List.range 200000).map fun i =>
     (((i * i * 2654435761 + i * 40503) % 65536 : Nat) : Int) - 32768
-  let bigFlac := Stream.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ⟨[big], 16, 44100⟩
+  let bigFlac := Stream.Unchecked.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩ ⟨[big], 16, 44100⟩
   check "fused decode crosses the parallel threshold"
     (Flac.Decode.parThreshold ≤ bigFlac.size)
   checkEq "fused decode = original PCM: 200k samples"
@@ -362,11 +362,11 @@ def wrapTests : TestM Unit := do
 def bombTests : TestM Unit := do
   -- P2 regression: a conformant all-CONSTANT stream (eight channels of
   -- silence at block size 65535) amplifies ~50 input bytes into ~1 MB of
-  -- output per frame. `Stream.encode` is total, so it writes such a
+  -- output per frame. `Stream.Unchecked.encode` is total, so it writes such a
   -- stream happily; every decoder entry point must reject it against
   -- `Stream.decodeBudget` instead of materializing it.
   let silence8 : List (List Int) := List.replicate 8 (List.replicate 65535 0)
-  let bomb := Stream.encode ⟨65535, false, Heuristics.defaultAsgChooser 16⟩
+  let bomb := Stream.Unchecked.encode ⟨65535, false, Heuristics.defaultAsgChooser 16⟩
     ⟨silence8, 16, 44100⟩
   check "P2 bomb: reference decoder rejects"
     (Stream.decodeReference bomb).isNone
@@ -378,7 +378,7 @@ def bombTests : TestM Unit := do
   -- (~1600×) and must keep decoding: the budget admits everything the
   -- guarded encoder can emit (`Flac.Spec.Stream.encode_cost_le_budget`)
   let silence : List (List Int) := List.replicate 8 (List.replicate 20000 0)
-  let ok := Stream.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩
+  let ok := Stream.Unchecked.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩
     ⟨silence, 16, 44100⟩
   check "silence at default block size still decodes"
     (match Flac.decode ok with
@@ -514,7 +514,7 @@ def emitSamples (dir : String) : IO Unit := do
   let mk (name : String) (bs : Nat) (chooser : List (List Int) → Frame.ChannelAsg)
       (chans : List (List Int)) : IO Unit := do
     let a : Stream.Audio := ⟨chans, 16, 44100⟩
-    IO.FS.writeBinFile s!"{dir}/{name}.flac" (Stream.encode ⟨bs, false, chooser⟩ a)
+    IO.FS.writeBinFile s!"{dir}/{name}.flac" (Stream.Unchecked.encode ⟨bs, false, chooser⟩ a)
     -- raw PCM for byte-compare: interleaved signed little-endian
     IO.FS.writeBinFile s!"{dir}/{name}.pcm" (Stream.pcmBytes 16 chans)
   let sine : List Int := (List.range 4000).map fun (i : Nat) =>
@@ -654,6 +654,33 @@ def encodeSlowMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
     IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, channels/blockSize/sampleRate out of range, or sample rate 0 with nonempty audio)"
     return 1
 
+/-! ## The public encoder refuses what the theorems exclude (audit finding P7)
+
+The audit's three probes each violate one `Audio.WellFormed` clause; the
+total reference encoder mod-wraps them into valid-looking streams denoting
+*different* audio. Since the P7 round the natural name `Flac.encode` is
+the checked form, so each probe gets `none`; the raw form lives under
+`Unchecked` and its wrong-value behavior is pinned here as the reason. -/
+
+def apiSurfaceTests : TestM Unit := do
+  let overSample : Stream.Audio := ⟨[[32768]], 16, 44100⟩
+  let overRate : Stream.Audio := ⟨[[0]], 16, 2 ^ 20⟩
+  let nineCh : Stream.Audio := ⟨List.replicate 9 [0], 16, 44100⟩
+  check "P7: out-of-range sample refused" (Flac.encode overSample).isNone
+  check "P7: sample rate 2^20 refused" (Flac.encode overRate).isNone
+  check "P7: nine channels refused" (Flac.encode nineCh).isNone
+  check "P7: the unchecked form really does mod-wrap 2^15 to -2^15"
+    ((Stream.decodeReference (Flac.Unchecked.encode overSample)).map (·.channels)
+      == some [[-32768]])
+  let good : Stream.Audio := ⟨[[100, -100, 32767, -32768]], 16, 44100⟩
+  check "P7: well-formed audio encodes and round-trips"
+    (match Flac.encode good with
+     | some bytes =>
+       (match Flac.decode bytes with
+        | .ok a => a.channels == good.channels
+        | .error _ => false)
+     | none => false)
+
 /-! ## Frame loops in constant stack (audit finding P6)
 
 Frame count is attacker-chosen — a valid CONSTANT frame is ~13 bytes — so
@@ -682,7 +709,7 @@ def recursionShapeTests : TestM Unit := do
   -- without its (documented, spec-path) quadratic scan dominating the suite
   let m := 500 * 16
   let chs : List (List Int) := [(List.range m).map fun i => ((i % 100 : Nat) : Int) - 50]
-  let refFlac := Stream.encode ⟨16, false, Heuristics.defaultAsgChooser 16⟩ ⟨chs, 16, 44100⟩
+  let refFlac := Stream.Unchecked.encode ⟨16, false, Heuristics.defaultAsgChooser 16⟩ ⟨chs, 16, 44100⟩
   check "P6: 500 frames round-trip (reference decoder)"
     ((Stream.decodeReference refFlac).map (·.channels) == some chs)
   -- the tail-form unary reader takes a run as long as the input in stride
@@ -800,7 +827,7 @@ def cliMain (rawArgs : List String) : IO UInt32 := do
     IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
     IO.eprintln usage
     return 2
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; encoderGuardTests; recursionShapeTests; threadFlagTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; encoderGuardTests; apiSurfaceTests; recursionShapeTests; threadFlagTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0

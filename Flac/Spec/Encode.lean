@@ -16,7 +16,7 @@ a `Nat` accumulator, masked at every step.
 `Sim` relates the two, `Simulates` lifts it to writer transformers, and it
 composes by `simulates_comp`. Together with `Flac.Emit.emitFast_eq_encode`
 this is the road to identifying the shipped encoder's bytes with
-`Flac.Stream.encode`'s — with no runtime certificate.
+`Flac.Stream.Unchecked.encode`'s — with no runtime certificate.
 -/
 
 namespace Flac.Encode
@@ -2164,13 +2164,13 @@ theorem sim_prefix {blockSize ch sr : Nat} (hch : 0 < ch) (bytes : ByteArray)
 
 /-- **The shipped encoder computes the reference encoder.** Its `Float`
     search, its `UInt64` writer, its per-frame workers — all of it produces
-    exactly the bytes `Flac.Stream.encode` produces for the audio the PCM
+    exactly the bytes `Flac.Stream.Unchecked.encode` produces for the audio the PCM
     pipeline derives, with the search itself as the chooser. -/
 theorem encodePcm16_eq {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
     (hbs : 0 < blockSize) (bytes : ByteArray)
     (hsz : bytes.size % (2 * ch) = 0) :
     encodePcm16 blockSize ch sr bytes
-      = Stream.encode ⟨blockSize, false, fastChooser 16⟩
+      = Stream.Unchecked.encode ⟨blockSize, false, fastChooser 16⟩
           ⟨Flac.deinterleave ch (Flac.pcm16OfByteList bytes.data.toList),
             16, sr⟩ := by
   have hns := numSamples_eq hch bytes sr

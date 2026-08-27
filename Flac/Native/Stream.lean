@@ -533,8 +533,18 @@ def writeStream (cfg : EncoderCfg) (a : Audio) : BitStream :=
   writeFrames a.bps cfg.variableBlocking cfg.blockSize (cfg.safeChooser a.bps) 0
     (chunkChannels cfg.blockSize a.channels)
 
-/-- **The encoder.** -/
-def encode (cfg : EncoderCfg) (a : Audio) : ByteArray :=
+/-- The **unchecked** reference encoder: its precondition,
+    `Audio.WellFormed`, is the hypothesis of every round-trip theorem
+    (`Flac.Stream.decodeReference_encode`, `Flac.decode_encode_cfg`) and
+    is *not* tested here. The function is total, so off-domain audio does
+    not fail: bit fields wrap modulo their width and the result is a
+    syntactically valid stream — correct CRCs, decodable — denoting
+    *different* audio (audit finding P7, issue #7). Call `Flac.encode` or
+    `Flac.encodeCheckedCfg` (checked, `Option`-valued, hypothesis-free
+    guarantees) unless you hold a `WellFormed` proof; this form exists
+    because the capstones quantify over it and the checked wrappers run
+    it. -/
+def Unchecked.encode (cfg : EncoderCfg) (a : Audio) : ByteArray :=
   bitsToBytes (writeStream cfg a)
 
 /-- Parse just the marker and STREAMINFO (for tools that need the
