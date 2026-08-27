@@ -26,7 +26,7 @@ Every finding lives in a layer the proofs do not reach.
 | [#4](https://github.com/ilyasergey/vinyl/issues/4) | Sync-candidate / task storm | Medium | Decoder DoS | fixed ([04](04-speculative-work.md)) |
 | [#5](https://github.com/ilyasergey/vinyl/issues/5) | Unbounded wasted-bits count, saturating depth | Medium | Decoder DoS | fixed ([05](05-saturating-arithmetic.md)) |
 | [#6](https://github.com/ilyasergey/vinyl/issues/6) | Many tiny frames → non-tail recursion | Medium | Decoder DoS | open ([06](06-recursion-shape.md), draft) |
-| [#7](https://github.com/ilyasergey/vinyl/issues/7) | Unguarded public encoder → silent wrong value | Medium | Correctness | open |
+| [#7](https://github.com/ilyasergey/vinyl/issues/7) | Unguarded public encoder → silent wrong value | Medium | Correctness | open ([07](07-api-surface.md), draft) |
 | [#8](https://github.com/ilyasergey/vinyl/issues/8) | `--encode-slow` huge channels + empty file | Medium | Encoder DoS | open |
 | [#9](https://github.com/ilyasergey/vinyl/issues/9) | `toNat!` panic on bad numeric argument | Low-Med | CLI robustness | open |
 | [#10](https://github.com/ilyasergey/vinyl/issues/10) | `-j` re-executes once per flag | Low | CLI robustness | open |
@@ -63,6 +63,11 @@ Every finding lives in a layer the proofs do not reach.
   many-tiny-frames overflow — recursion depth equals frame count on the
   non-tail loops, plus an accidental quadratic; termination proofs live
   in a stack-free model, and tail-position is not even expressible.
+- [07 — API surface](07-api-surface.md) *(draft)*: the P7 unguarded
+  encoder — the only non-DoS finding: conditional theorems satisfied
+  vacuously while the naturally-named unchecked entry point fabricates
+  valid-looking streams for out-of-envelope audio; the fix is a
+  namespace move, with the capstone name-pins following.
 
 ## Research notes
 
@@ -75,6 +80,11 @@ Every finding lives in a layer the proofs do not reach.
   a scoped depth charge in the cost monad, a syntactic tail certifier,
   verified stack-cost compilation — and the principle that an erased
   resource becomes specifiable once reified as a value.
+- [API contracts](api-contracts.md): the coverage bug class, motivated by
+  P7 — proven properties not attached to the names users call. The four
+  rules (guard by default, natural names carry the strongest guarantee,
+  an API-to-theorem map at the gate, subtype escalation) and how far the
+  map can be mechanized with a `@[covered_by]` checker.
 
 ## See also
 
