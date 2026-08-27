@@ -18,30 +18,38 @@ no input violating them within their stated scope, and confirmed the
 axiom footprint is the standard `propext, Classical.choice, Quot.sound`.
 Every finding lives in a layer the proofs do not reach.
 
-| # | Finding | Severity | Class | Tier | Status |
-|---|---------|----------|-------|------|--------|
-| [#1](https://github.com/ilyasergey/vinyl/issues/1) | LPC predictor divergence → GMP abort | High | Decoder DoS | T | fixed ([01](01-robustness-theorems.md)) |
-| [#2](https://github.com/ilyasergey/vinyl/issues/2) | Constant-subframe decompression bomb | High | Decoder DoS | T | fixed ([02](02-output-size-bounds.md)) |
-| [#3](https://github.com/ilyasergey/vinyl/issues/3) | Unvalidated `totalSamples` → 1.1 TB allocation | Med-High | Decoder DoS | C+R | fixed ([03](03-untrusted-sizes.md)) |
-| [#4](https://github.com/ilyasergey/vinyl/issues/4) | Sync-candidate / task storm | Medium | Decoder DoS | C+R | fixed ([04](04-speculative-work.md)) |
-| [#5](https://github.com/ilyasergey/vinyl/issues/5) | Unbounded wasted-bits count, saturating depth | Medium | Decoder DoS | T | fixed ([05](05-saturating-arithmetic.md)) |
-| [#6](https://github.com/ilyasergey/vinyl/issues/6) | Many tiny frames → non-tail recursion | Medium | Decoder DoS | C+R | open ([06](06-recursion-shape.md), draft) |
-| [#7](https://github.com/ilyasergey/vinyl/issues/7) | Unguarded public encoder → silent wrong value | Medium | Correctness | T+R | open ([07](07-api-surface.md), draft) |
-| [#8](https://github.com/ilyasergey/vinyl/issues/8) | `--encode-slow` huge channels + empty file | Medium | Encoder DoS | C+R | open ([08](08-late-guards.md), draft) |
-| [#9](https://github.com/ilyasergey/vinyl/issues/9) | `toNat!` panic on bad numeric argument | Low-Med | CLI robustness | C | open ([09](09-lint-surface.md), draft) |
-| [#10](https://github.com/ilyasergey/vinyl/issues/10) | `-j` re-executes once per flag | Low | CLI robustness | C | open ([10](10-prose-claims.md), draft) |
-| [#11](https://github.com/ilyasergey/vinyl/issues/11) | `sampleRate = 0` emitted with audio | Low | Conformance | T+R | open ([11](11-spec-adequacy.md), draft) |
+| # | Finding | Severity | Class | Tier | Research | Status |
+|---|---------|----------|-------|------|----------|--------|
+| [#1](https://github.com/ilyasergey/vinyl/issues/1) | LPC predictor divergence → GMP abort | High | Decoder DoS | T | [cost](cost-semantics.md) *(residue)* | fixed ([01](01-robustness-theorems.md)) |
+| [#2](https://github.com/ilyasergey/vinyl/issues/2) | Constant-subframe decompression bomb | High | Decoder DoS | T | [cost](cost-semantics.md) *(residue)* | fixed ([02](02-output-size-bounds.md)) |
+| [#3](https://github.com/ilyasergey/vinyl/issues/3) | Unvalidated `totalSamples` → 1.1 TB allocation | Med-High | Decoder DoS | C | [cost](cost-semantics.md) *(upgrade)* | fixed ([03](03-untrusted-sizes.md)) |
+| [#4](https://github.com/ilyasergey/vinyl/issues/4) | Sync-candidate / task storm | Medium | Decoder DoS | C | [cost](cost-semantics.md) *(upgrade)* | fixed ([04](04-speculative-work.md)) |
+| [#5](https://github.com/ilyasergey/vinyl/issues/5) | Unbounded wasted-bits count, saturating depth | Medium | Decoder DoS | T | [cost](cost-semantics.md) *(residue)*, [spec-val](spec-validation.md) *(class)* | fixed ([05](05-saturating-arithmetic.md)) |
+| [#6](https://github.com/ilyasergey/vinyl/issues/6) | Many tiny frames → non-tail recursion | Medium | Decoder DoS | C | [stack](stack-semantics.md) *(upgrade)* | open ([06](06-recursion-shape.md), draft) |
+| [#7](https://github.com/ilyasergey/vinyl/issues/7) | Unguarded public encoder → silent wrong value | Medium | Correctness | T | [api](api-contracts.md) *(class)* | open ([07](07-api-surface.md), draft) |
+| [#8](https://github.com/ilyasergey/vinyl/issues/8) | `--encode-slow` huge channels + empty file | Medium | Encoder DoS | C | [cost](cost-semantics.md) *(upgrade)* | open ([08](08-late-guards.md), draft) |
+| [#9](https://github.com/ilyasergey/vinyl/issues/9) | `toNat!` panic on bad numeric argument | Low-Med | CLI robustness | C | [api](api-contracts.md) *(class)* | open ([09](09-lint-surface.md), draft) |
+| [#10](https://github.com/ilyasergey/vinyl/issues/10) | `-j` re-executes once per flag | Low | CLI robustness | C | [api](api-contracts.md) *(class)* | open ([10](10-prose-claims.md), draft) |
+| [#11](https://github.com/ilyasergey/vinyl/issues/11) | `sampleRate = 0` emitted with audio | Low | Conformance | T | [spec-val](spec-validation.md) *(class)* | open ([11](11-spec-adequacy.md), draft) |
 
-**Tier legend** — how each fix is (or will be) secured; see
+**Legend** — two orthogonal characterizations; see
 [Formal-methods coverage](#formal-methods-coverage) below.
 
-- **T** — theorem tier: the fix is secured by kernel-checked theorems
-  using existing machinery; no new theory was needed.
+*Tier* — how the fix is secured today:
+
+- **T** — theorem tier: secured by kernel-checked theorems using
+  existing machinery; no new theory was needed.
 - **C** — construction tier: enforced by code shape, lint, or test;
-  no theorem can state the property in the current semantics.
-- **+R** — a research note proposes the theory that would upgrade it to
-  **T** (or, for T+R, that would secure the finding's whole *class*
-  rather than this instance).
+  the property is unstatable in the current semantics.
+
+*Research* — which research note bears on the finding, and in what role:
+
+- *upgrade* — the note's proposal would turn the C-tier property into a
+  theorem.
+- *residue* — the property is already theorem-secured; the note would
+  formalize what remains informal (e.g. the value-to-bytes constant).
+- *class* — the instance needs no new theory; the note's methodology is
+  what prevents the class from recurring.
 
 ## Formal-methods coverage
 
@@ -53,17 +61,17 @@ with its own note:
   **#4** (spawning and candidate gathering become charges the storm
   cannot pay), and **#8** (deciding a guard is charged in evaluation
   order, so guard-order bugs fail the budget proof). **#1**, **#2**, and
-  **#5** were cost bugs too — the reason they rate **T** rather than
-  **C+R** is that their fixes *reified the resource into a value* the
-  current logic can bound: samples wrapped to their width (#1), output
-  measured in sample count (#2), a read capped at `lim := b` (#5). The
-  property each attack needed is excluded by theorem today; what remains
-  for the cost model is only the value-to-bytes constant — that a
-  33-bit-bounded sample occupies O(1) memory, that `decode_size_le`'s
-  sample count bounds resident bytes (02's recorded residual: a bomb
-  still costs the budget in memory before its rejection) — and those
-  value-bound theorems are precisely the lemmas the cost proofs would
-  consume.
+  **#5** were cost bugs too — the reason they rate tier **T** with only
+  a *residue* role for research is that their fixes *reified the
+  resource into a value* the current logic can bound: samples wrapped to
+  their width (#1), output measured in sample count (#2), a read capped
+  at `lim := b` (#5). The property each attack needed is excluded by
+  theorem today; what remains for the cost model is only the
+  value-to-bytes constant — that a 33-bit-bounded sample occupies O(1)
+  memory, that `decode_size_le`'s sample count bounds resident bytes
+  (02's recorded residual: a bomb still costs the budget in memory
+  before its rejection) — and those value-bound theorems are precisely
+  the lemmas the cost proofs would consume.
 - *Provable stack depth* ([stack semantics](stack-semantics.md)) would
   upgrade **#6**: today the accumulator rewrite is pinned by equalities,
   but constant depth itself rests on syntax plus the compiler.
@@ -101,8 +109,10 @@ are the same kind — their drafts show existing theorems suffice (the
 hypothesis-free checked capstone, and `some`-conditional guard
 tightening) — pending their rounds. **#9** and **#10** need no theory
 either, but in the opposite sense: after the fix there is nothing left
-for a theorem to say; a total parser and a tested re-exec loop are
-correct by construction, which is what tier **C** without **+R** marks.
+for a theorem to say about the instance; a total parser and a tested
+re-exec loop are correct by construction. Their research role is *class*
+only — the api-contracts perimeter rules prevent recurrence, they do not
+(and need not) make anything provable.
 
 ## Incident notes
 
