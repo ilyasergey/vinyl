@@ -2138,3 +2138,69 @@ theorem bounds speculative work, and none is possible in the current
 semantics (`docs/cost-semantics.md`, `docs/stack-semantics.md`).
 
 **Next:** remaining audit findings (P5–P11).
+
+## 2026-08-27 — Session 21: P5 fix — reject and cap the wasted-bits count
+
+**Landed:** the wasted-bits fix (audit P5, issue #5). RFC 9639 §9.2.2
+requires a subframe's wasted count `w` to leave a positive bit depth, and
+§5 lists a zero-or-negative resulting depth among the streams a decoder
+must refuse. Vinyl computed the reduced depth as `b - w` in `Nat`, whose
+subtraction saturates: `w ≥ b` decoded at depth 0 rather than being
+rejected, so the accept-set was strictly larger than the RFC's. Two
+changes, landed identically in `Subframe.read` (list model) and
+`Decode.readSubframe` (production bit reader):
+
+- **The guard.** Reject unless `k + 1 < b`, placed before `readContent`
+  and before `shiftUp (k + 1)` scales by an attacker-chosen `2^(k+1)`.
+- **The cap.** New `Bits.readUnaryUpTo` / `BitReader.readUnaryUpTo`, used
+  at the wasted-bits site with `lim := b`. The guard alone was *not*
+  enough: the count is unary-coded and unbounded, so reading it costs
+  O(run) before any guard can look at it. With the guard alone the 8 MB
+  reproducer simply moved its abort upstream, from `shiftUp`'s bignum map
+  to a stack overflow in `Bits.readUnary` — still rc 134. `readUnary`
+  stays as-is for Rice residuals, whose runs are bounded by their
+  enclosing partition.
+
+**Proofs moved, as an accept-set change must.** New in `Flac/Spec/Bits.lean`:
+`readUnaryUpTo_eq` (the capped reader is the plain one composed with a
+filter — this is what keeps the rest cheap) and `readUnaryUpTo_writeUnary`.
+New in `Flac/Spec/Reader.lean`: `readUnaryGo_sim_lt` (the existing
+`readUnaryGo_sim` assumed *sufficient* fuel; the capped reader supplies
+insufficient fuel on purpose, so the fuel is restated as a cap rather than
+a hypothesis, subsuming the old lemma), `readUnaryUpTo_sim`,
+`readUnaryUpTo_spec`. Changed: `readSubframe_sim` and `posOK_readSubframe`
+each gained one `by_cases`; `Subframe.read_write` gained one `if_pos hwlt`
+and repointed one rewrite. The round-trip pays nothing — `SubCfg.Valid`
+already carries `wasted < b`, so both conditions discharge by `omega`.
+Axiom footprint unchanged (`propext, Classical.choice, Quot.sound`) on
+`decode_encode`, `decodeReference_encode_default`, `decode_ok_iff_reference`,
+`read_write`.
+
+**Verified** (reproducer: 8 388 661 bytes, one mono CONSTANT frame,
+blockSize 4096, `2^26`-bit unary run; before-measurements from a worktree
+pinned at 55d3a84):
+
+| | `--decode` | `--decode-fast` | `--decode-pcm16` |
+|---|---|---|---|
+| before | rc 134, abort, 5.1 GB, 5.5 s | **rc 0**, 30 MB, 1.3 s | **rc 0**, 30 MB, 1.4 s |
+| after | rc 1, `DECODE ERROR`, 4.0 GB, 5.6 s | rc 1, 13 MB, 0.01 s | rc 1, 13 MB, 0.01 s |
+
+The `rc 0` cells are the finding proper: an invalid stream accepted. A
+55-byte `w = b = 16` file shows the same flip without any DoS dressing.
+131 checks green (6 new: all three decoders reject `w = b`, `w = b - 1`
+still decodes, both readers refuse a megabit unary run — non-vacuous,
+pre-fix `Subframe.read` returned `some` on it).
+
+**Residual, recorded in `docs/05-saturating-arithmetic.md` and attributed
+to P6:** `--decode`'s 4.0 GB is not amplification by this input — a
+legitimate 8.5 MB file costs it 4.1 GB and 103 s, since
+`Stream.decodeReference` materializes the input as `List Bool` by design.
+Per input byte the bomb is now no dearer than music. `Bits.readUnary` is
+still non-tail recursive; only the wasted-bits call site is capped.
+
+**Also open:** a conformance lemma "any stream declaring `w ≥ b` decodes
+to `none`" is now *stateable* but not stated — the interesting form
+quantifies over whole streams and wants a frame-level accept-set
+characterization against the RFC, which nothing yet provides.
+
+**Next:** remaining audit findings (P6–P11).

@@ -24,7 +24,7 @@ Every finding lives in a layer the proofs do not reach.
 | [#2](https://github.com/ilyasergey/vinyl/issues/2) | Constant-subframe decompression bomb | High | Decoder DoS | fixed ([02](02-output-size-bounds.md)) |
 | [#3](https://github.com/ilyasergey/vinyl/issues/3) | Unvalidated `totalSamples` → 1.1 TB allocation | Med-High | Decoder DoS | fixed ([03](03-untrusted-sizes.md)) |
 | [#4](https://github.com/ilyasergey/vinyl/issues/4) | Sync-candidate / task storm | Medium | Decoder DoS | fixed ([04](04-speculative-work.md)) |
-| [#5](https://github.com/ilyasergey/vinyl/issues/5) | Unbounded wasted-bits count, saturating depth | Medium | Decoder DoS | open ([05](05-saturating-arithmetic.md), draft) |
+| [#5](https://github.com/ilyasergey/vinyl/issues/5) | Unbounded wasted-bits count, saturating depth | Medium | Decoder DoS | fixed ([05](05-saturating-arithmetic.md)) |
 | [#6](https://github.com/ilyasergey/vinyl/issues/6) | Many tiny frames → non-tail recursion | Medium | Decoder DoS | open ([06](06-recursion-shape.md), draft) |
 | [#7](https://github.com/ilyasergey/vinyl/issues/7) | Unguarded public encoder → silent wrong value | Medium | Correctness | open |
 | [#8](https://github.com/ilyasergey/vinyl/issues/8) | `--encode-slow` huge channels + empty file | Medium | Encoder DoS | open |
@@ -52,11 +52,13 @@ Every finding lives in a layer the proofs do not reach.
   unconditional in the candidate array, and why speculation behind a
   self-validating boundary (the density bail and task cap) can be capped
   proof-free.
-- [05 — Saturating arithmetic](05-saturating-arithmetic.md) *(draft)*:
-  the P5 wasted-bits bomb — a functional bug wearing a DoS symptom:
-  saturating `Nat` subtraction silently accepts streams the RFC rejects;
-  the fix is theorem-bearing and must land in model and production
-  identically.
+- [05 — Saturating arithmetic](05-saturating-arithmetic.md): the P5
+  wasted-bits bomb — a functional bug wearing a DoS symptom: saturating
+  `Nat` subtraction silently accepted streams the RFC rejects. The fix is
+  theorem-bearing and lands in model and production identically; and
+  because the offending field is unary-coded, *reading* it needed a cap
+  too — a guard placed after an unbounded read fixes the accept-set and
+  none of the cost.
 - [06 — Recursion shape](06-recursion-shape.md) *(draft)*: the P6
   many-tiny-frames overflow — recursion depth equals frame count on the
   non-tail loops, plus an accidental quadratic; termination proofs live
