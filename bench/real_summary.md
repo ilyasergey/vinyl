@@ -25,18 +25,18 @@
 
 | suite | vinyl -j8 | flac -5 -j1 | flac -8 -j1 | flac -8 -j8 | vinyl decode -j8 | flac decode -j1 |
 |---|---|---|---|---|---|---|
-| sqam | 167 MB/s | 122 MB/s | 63 MB/s | 263 MB/s | 228 MB/s | 200 MB/s |
-| librispeech-test-clean | 151 MB/s | 152 MB/s | 88 MB/s | 375 MB/s | 214 MB/s | 187 MB/s |
-| librispeech-test-other | 154 MB/s | 156 MB/s | 89 MB/s | 387 MB/s | 220 MB/s | 189 MB/s |
-| **TOTAL** | 157 MB/s | 142 MB/s | 78 MB/s | 331 MB/s | 220 MB/s | 192 MB/s |
+| sqam | 310 MB/s | 164 MB/s | 83 MB/s | 438 MB/s | 378 MB/s | 261 MB/s |
+| librispeech-test-clean | 284 MB/s | 201 MB/s | 115 MB/s | 570 MB/s | 359 MB/s | 245 MB/s |
+| librispeech-test-other | 292 MB/s | 207 MB/s | 117 MB/s | 596 MB/s | 371 MB/s | 250 MB/s |
+| **TOTAL** | 295 MB/s | 189 MB/s | 102 MB/s | 524 MB/s | 369 MB/s | 252 MB/s |
 
 ### Scaling with thread count, corpus throughput
 
 | threads | vinyl (encode) | flac -8 (encode) | vinyl decode (decode) | flac decode |
 |---:|---|---|---|---|
-| 1 | 30 MB/s | 78 MB/s | 48 MB/s | 192 MB/s |
-| 2 | 57 MB/s | 147 MB/s | 89 MB/s | no `-j` |
-| 4 | 110 MB/s | 268 MB/s | 165 MB/s | no `-j` |
-| 8 | 157 MB/s | 331 MB/s | 220 MB/s | no `-j` |
+| 1 | 46 MB/s | 102 MB/s | 68 MB/s | 252 MB/s |
+| 2 | 90 MB/s | 193 MB/s | 129 MB/s | no `-j` |
+| 4 | 170 MB/s | 355 MB/s | 234 MB/s | no `-j` |
+| 8 | 295 MB/s | 524 MB/s | 369 MB/s | no `-j` |
 
-Speedup at 8 threads: vinyl 5.20×, flac -8 4.26×, vinyl decode 4.55×.
+Speedup at 8 threads: vinyl 6.38×, flac -8 5.13×, vinyl decode 5.47×.

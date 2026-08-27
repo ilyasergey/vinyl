@@ -2280,3 +2280,39 @@ decode to `none`" remain the open research items.
 **Next:** spec-validation adoption path (must-reject corpus in
 `conformance/`, ffmpeg as second referee); optionally relocate the CLI
 out of the test package (P9's recorded smell).
+
+## 2026-08-27 — Session 23: full regression rerun on new hardware, dashboards republished
+
+**Attempted:** rerun of everything measurable after the audit round: unit
+suite, both benchmark suites, plot regeneration, README dashboards.
+
+**Environment first.** This machine (18-core Apple M5 Max) had no `flac`
+CLI, no matplotlib, and neither corpus. Installed flac 1.5.0 (same version
+as every prior baseline), regenerated the synthetic corpus, and re-fetched
+SQAM + LibriSpeech from the publishers — all archive checksums verified,
+143 units rebuilt bit-identical to `real_corpora.lock.json`.
+
+**No effectiveness regression, verified at the byte level.** `lake exe
+flactest`: 155 checks green. Synthetic suite (15 reps): all 555 size
+records — every `(file, encoder)` pair, whole-file and payload — are
+byte-identical to the committed baseline. Real suite (5 reps): all 2002
+size records identical; compression totals unchanged (47.9% vs `flac -8`'s
+45.5% payload). All 143 units passed the three cross-decode checks,
+including byte-exact decode of libFLAC's `-8` output.
+
+**No performance regression; absolute rates are a new baseline.** Every
+number in both READMEs before today came from an 8-core Apple M2 and is
+not comparable with this machine's absolute rates; the same-run *gaps*
+all moved in Vinyl's favour: per-thread encode 2.34×→1.88× (synthetic)
+and 2.6×→2.2× (real), thread-matched encode at eight 2.11×→1.78×, decode
+at eight 1.15×→1.46× ahead (369 vs 252 MB/s corpus rate). Vinyl now beats
+`flac -8 -j8` on 2 of 143 units (was 0). Both READMEs' tables, headline
+gaps and derived stats (median/mean/CV, SQAM-vs-LibriSpeech split
+1.41×/2.01×/2.04×) republished from this run; the six PNGs and both
+summary files regenerated. Part 3's stage tables stay as historical
+stage-to-stage comparisons, marked as measured on the M2.
+
+**Blocked:** nothing.
+
+**Next:** unchanged from session 22 — spec-validation adoption path;
+optionally relocate the CLI out of the test package.

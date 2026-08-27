@@ -2,21 +2,23 @@
 
 ## Where Vinyl stands against libFLAC
 
-**Per thread, Vinyl is ~3× slower than libFLAC 1.5.0 in both directions, and
-compresses 2–5% worse. It parallelises better than libFLAC, so the encode gap
-narrows with thread count — to 1.6× on the synthetic corpus and 2.2× on real
-audio at eight threads — and the decoder reaches parity around four threads and
-passes libFLAC by eight.**
+**Per thread, Vinyl is ~2× slower than libFLAC 1.5.0 on encode and 2–4×
+slower on decode, and compresses 2–5% worse. It parallelises better than
+libFLAC, so the encode gap narrows with thread count — to 1.2× on the
+synthetic corpus and 1.8× on real audio at eight threads — and the decoder
+reaches parity around four threads and passes libFLAC by eight.**
 
 Wall-clock throughput, corpus totals (total raw MB ÷ total seconds), at equal
-thread counts:
+thread counts. Measured 2026-08-27 on an 18-core Apple M5 Max against
+flac 1.5.0; the gaps are same-run comparisons, the absolute rates are specific
+to that machine:
 
 | threads | encode vs `flac -8` | decode vs `flac -d` |
 |---:|---|---|
-| 1 | 2.4× / 2.7× slower | 2.6× / 3.9× slower |
-| 2 | 2.1× / 2.6× slower | 1.7× / 2.2× slower |
-| 4 | 1.9× / 2.5× slower | 1.2× / 1.2× slower |
-| 8 | **1.6× / 2.1× slower** | **1.08× slower / 1.15× faster** |
+| 1 | 1.9× / 2.2× slower | 2.1× / 3.7× slower |
+| 2 | 1.6× / 2.1× slower | 1.4× / 2.0× slower |
+| 4 | 1.4× / 2.1× slower | 1.05× / 1.08× slower |
+| 8 | **1.2× / 1.8× slower** | **1.07× / 1.46× faster** |
 
 *First figure is the synthetic corpus, second the real-audio corpus. libFLAC's
 decoder takes no `-j`, so every decode row compares N Vinyl threads against
@@ -30,16 +32,16 @@ threads and why the 1-thread row is the like-for-like one.*
 
 How to read that:
 
-- **The per-thread number is the codec comparison.** ~3× in each direction,
-  and the fact that it is a comparable factor both ways points at
-  per-operation cost — pure Lean against `int32` SIMD — rather than anything
-  structural about one path.
-- **Vinyl scales better.** From 1 to 8 threads it gains 3.6× (synthetic) and
-  5.2× (real) on encode, against libFLAC's 2.4× and 4.3×. Every decoder fast
+- **The per-thread number is the codec comparison.** ~2× on encode, ~4× on
+  decode (real audio), and the fact that the two directions carry comparable
+  factors points at per-operation cost — pure Lean against `int32` SIMD —
+  rather than anything structural about one path.
+- **Vinyl scales better.** From 1 to 8 threads it gains 3.4× (synthetic) and
+  6.4× (real) on encode, against libFLAC's 2.1× and 5.1×. Every decoder fast
   path is proven equal to its bit-level specification, frame-parallel decoding
   and serialization included, so that scaling is not bought with trust.
 - **Decoding gets faster with more threads, and that is the one place Vinyl
-  wins on wall clock**: 220 MB/s against libFLAC's 192 MB/s on real audio at
+  wins on wall clock**: 369 MB/s against libFLAC's 252 MB/s on real audio at
   eight threads. libFLAC cannot answer, because it has no threaded decoder.
 - **`flac -8` compresses better on both corpora**, and so does `flac -5`. There
   is no libFLAC preset Vinyl beats on both speed and ratio.
@@ -56,21 +58,22 @@ is what every table, every figure's dashed levels and legend, and every prose
 checking which is which.
 
 The alternative is the *per-unit median*: sort the units by throughput, take the
-middle one, divide. It is not used. On the current run it reads ×2.13 where the
-corpus rate reads ×2.11 — a 2% difference, and its *sign* is not stable: one
-run earlier the median read ×2.43 against a rate of ×2.22, 9% the other way.
+middle one, divide. It is not used. On the current run it reads ×1.91 where the
+corpus rate reads ×1.78 — 7% apart — and how far apart the two sit is not
+stable: one earlier run had them 2% apart (×2.13 against ×2.11), another 9%
+(×2.43 against ×2.22).
 
 | encode, 8 threads | vinyl | `flac -8` | gap |
 |---|---:|---:|---:|
-| corpus rate, ΣMB ÷ Σs | 157.3 MB/s | 331.4 MB/s | **2.11×** |
-| per-unit median | 155.4 MB/s | 335.5 MB/s | 2.16× |
-| per-unit mean | 160.4 MB/s | 319.5 MB/s | 1.99× |
-| coefficient of variation | 0.14 | 0.21 | |
+| corpus rate, ΣMB ÷ Σs | 294.7 MB/s | 524.4 MB/s | **1.78×** |
+| per-unit median | 289.3 MB/s | 553.3 MB/s | 1.91× |
+| per-unit mean | 293.9 MB/s | 494.4 MB/s | 1.68× |
+| coefficient of variation | 0.13 | 0.20 | |
 
 The mechanism is SQAM's weight. It is **70 of 143 units but only 33% of the
 bytes**, so equal-per-unit weighting gives it half the say and byte weighting a
-third — and SQAM is exactly where the two encoders diverge most (gap 1.57× there
-against 2.48× and 2.51× on the two LibriSpeech suites, because `flac -8` pays an
+third — and SQAM is exactly where the two encoders diverge most (gap 1.41× there
+against 2.01× and 2.04× on the two LibriSpeech suites, because `flac -8` pays an
 exhaustive mid/side decision on stereo that Vinyl's heuristic decides directly).
 A corpus rate is also a harmonic mean, so it is pulled toward whichever units
 take longest. Those two effects act in opposite directions and neither is small
@@ -84,7 +87,7 @@ Corpus rate wins the tie for three reasons, in order of weight:
    ([what a benchmark unit is](#what-a-benchmark-unit-is)). Regroup the same
    audio differently and the median gap moves while the corpus gap barely does.
    A headline must not depend on how the corpus was cut up.
-2. **It is the wall clock.** Encoding this corpus really does take 2.11× longer.
+2. **It is the wall clock.** Encoding this corpus really does take 1.78× longer.
 3. **It is already the ratchet.** The thread-scaling tables, the parallel
    speedup figures and the performance targets in `PROGRESS.md` are all corpus
    rates.
@@ -158,7 +161,8 @@ results produced by the current one.**
 These files are 1 MB each by design: `gen_corpus.py` sizes them for compression
 coverage, not throughput. At that size **process startup is a third of the
 measurement** — 3.1 ms of Lean runtime init against libFLAC's 2.7 ms, on an
-8–9 ms decode — and only 0.09 ms of Vinyl's share is this project's own module
+8–9 ms decode, milliseconds measured on the earlier Apple M2 benchmark
+machine — and only 0.09 ms of Vinyl's share is this project's own module
 initialization (a trivial Lean binary also takes 3.10 ms; the binary is already
 statically linked against Lean, so there is no dynamic-loading cost to remove).
 
@@ -222,23 +226,23 @@ parallel speedup against the ideal line.
 
 ![Scaling with thread count](threads.png)
 
-Fifteen-run repetition medians, aggregated to corpus totals, 2026-08-24:
+Fifteen-run repetition medians, aggregated to corpus totals, 2026-08-27:
 
 | threads | vinyl encode | `flac -8` encode | encode gap | vinyl decode | `flac` decode | decode gap |
 |---:|---|---|---|---|---|---|
-| 1 | 31.1 MB/s | 72.8 MB/s | 2.34× | 51.2 MB/s | 132.9 MB/s | 2.60× |
-| 2 | 53.5 MB/s | 113.3 MB/s | 2.12× | 80.4 MB/s | no `-j` | 1.65× |
-| 4 | 88.8 MB/s | 162.1 MB/s | 1.82× | 110.9 MB/s | no `-j` | 1.20× |
-| 8 | 111.2 MB/s | 175.6 MB/s | **1.58×** | 123.0 MB/s | no `-j` | **1.08×** |
-| **speedup** | **3.57×** | 2.41× | | 2.40× | — | |
+| 1 | 46.6 MB/s | 87.6 MB/s | 1.88× | 69.8 MB/s | 149.9 MB/s | 2.15× |
+| 2 | 79.6 MB/s | 127.3 MB/s | 1.60× | 108.3 MB/s | no `-j` | 1.38× |
+| 4 | 122.9 MB/s | 171.6 MB/s | 1.40× | 142.6 MB/s | no `-j` | 1.05× |
+| 8 | 158.6 MB/s | 185.3 MB/s | **1.17×** | 160.7 MB/s | no `-j` | **0.93×** |
+| **speedup** | **3.40×** | 2.11× | | 2.30× | — | |
 
-Context presets, one thread: `flac -0` 125.7 MB/s, `flac -5` 108.0 MB/s. Vinyl
-at eight threads is now level with single-threaded `flac -5` on this corpus
-(111.2 against 108.7, now slightly ahead), though `flac -5` still compresses better.
+Context presets, one thread: `flac -0` 144.7 MB/s, `flac -5` 126.1 MB/s. Vinyl
+at eight threads is now clearly past single-threaded `flac -5` on this corpus
+(158.6 against 126.1), though `flac -5` still compresses better.
 
 Both codecs scale poorly here for the same reason — 1 MB files, so a fixed
-per-file cost bounds the gain — and libFLAC scales *worse* (2.41×) than Vinyl
-(3.57×) because its share of fixed cost is larger relative to its work. That is
+per-file cost bounds the gain — and libFLAC scales *worse* (2.11×) than Vinyl
+(3.40×) because its share of fixed cost is larger relative to its work. That is
 an artifact of the corpus, not a property of the codecs; Part 2 measures the
 same thing on units where it is not.
 
@@ -494,10 +498,10 @@ than by unit and so is the number to quote for aggregate speed:
 
 | suite | vinyl `-j8` | flac -5 `-j1` | flac -8 `-j1` | flac -8 `-j8` | vinyl decode `-j8` | flac decode `-j1` |
 |---|---|---|---|---|---|---|
-| sqam | 167 MB/s | 122 MB/s | 63 MB/s | **263 MB/s** | **228 MB/s** | 200 MB/s |
-| librispeech-test-clean | 151 MB/s | 152 MB/s | 88 MB/s | **375 MB/s** | **214 MB/s** | 187 MB/s |
-| librispeech-test-other | 154 MB/s | 156 MB/s | 89 MB/s | **387 MB/s** | **220 MB/s** | 189 MB/s |
-| **TOTAL** | 157 MB/s | 142 MB/s | 78 MB/s | **331 MB/s** | **220 MB/s** | 192 MB/s |
+| sqam | 310 MB/s | 164 MB/s | 83 MB/s | **438 MB/s** | **378 MB/s** | 261 MB/s |
+| librispeech-test-clean | 284 MB/s | 201 MB/s | 115 MB/s | **570 MB/s** | **359 MB/s** | 245 MB/s |
+| librispeech-test-other | 292 MB/s | 207 MB/s | 117 MB/s | **596 MB/s** | **371 MB/s** | 250 MB/s |
+| **TOTAL** | 295 MB/s | 189 MB/s | 102 MB/s | **524 MB/s** | **369 MB/s** | 252 MB/s |
 
 #### Scaling, and the per-core comparison
 
@@ -509,41 +513,41 @@ parallel speedup against the ideal line.
 
 | threads | vinyl encode | `flac -8` encode | vinyl decode | `flac` decode |
 |---:|---|---|---|---|
-| 1 | 30 MB/s | 78 MB/s | 48 MB/s | 192 MB/s |
-| 2 | 57 MB/s | 147 MB/s | 89 MB/s | no `-j` |
-| 4 | 110 MB/s | 268 MB/s | 165 MB/s | no `-j` |
-| 8 | 157 MB/s | 331 MB/s | 220 MB/s | no `-j` |
-| **speedup** | **5.20×** | 4.26× | 4.55× | — |
+| 1 | 46 MB/s | 102 MB/s | 68 MB/s | 252 MB/s |
+| 2 | 90 MB/s | 193 MB/s | 129 MB/s | no `-j` |
+| 4 | 170 MB/s | 355 MB/s | 234 MB/s | no `-j` |
+| 8 | 295 MB/s | 524 MB/s | 369 MB/s | no `-j` |
+| **speedup** | **6.38×** | 5.13× | 5.47× | — |
 
-**Per core, Vinyl is about 3× behind on encode and 4× on decode** — encode
-2.6× (30 vs 78 MB/s), decode 4.0× (48 vs 192 MB/s). That is the like-for-like
+**Per core, Vinyl is about 2× behind on encode and 4× on decode** — encode
+2.2× (46 vs 102 MB/s), decode 3.7× (68 vs 252 MB/s). That is the like-for-like
 comparison, and two comparable factors rather than one bad path says the
 distance is per-operation cost rather than anything structural.
 
-The one thing that favours Vinyl is that **it scales better**: 5.20× on eight
-threads for encode against libFLAC's 4.26×, so the encode gap narrows from
-2.6× at one thread to 2.1× at eight. Vinyl's decoder crosses libFLAC's
+The one thing that favours Vinyl is that **it scales better**: 6.38× on eight
+threads for encode against libFLAC's 5.13×, so the encode gap narrows from
+2.2× at one thread to 1.8× at eight. Vinyl's decoder crosses libFLAC's
 single-threaded decode level at about **five threads** — which is the whole
 content of the "decode is ahead" result below.
 
 Reading the wall-clock comparisons in order of how much they are worth:
 
-- **Per core, encode is 2.6× behind and decode 4.0× behind.** The honest
+- **Per core, encode is 2.2× behind and decode 3.7× behind.** The honest
   per-operation numbers.
-- **Thread-matched at eight, encode is 2.1× behind** (157 vs 331 MB/s).
-  Vinyl is faster on **0 of 143** units.
-- **Against single-threaded `flac -5`, encode is now slightly ahead** at eight
-  threads (157 vs 142 MB/s) — but `flac -5` still compresses better, so there
+- **Thread-matched at eight, encode is 1.8× behind** (295 vs 524 MB/s).
+  Vinyl is faster on **2 of 143** units.
+- **Against single-threaded `flac -5`, encode is 1.56× ahead** at eight
+  threads (295 vs 189 MB/s) — but `flac -5` still compresses better, so there
   is still no libFLAC preset Vinyl beats on both axes.
-- **Against single-threaded `flac -8`, encode is 2.01× ahead** (157 vs
-  78 MB/s). This is the preset's default configuration and the historical
+- **Against single-threaded `flac -8`, encode is 2.88× ahead** (295 vs
+  102 MB/s). This is the preset's default configuration and the historical
   reference in Part 3, but it is eight threads against one.
-- **Decode is 1.15× ahead** (220 vs 192 MB/s) — eight threads against one,
+- **Decode is 1.46× ahead** (369 vs 252 MB/s) — eight threads against one,
   because libFLAC offers no other decode configuration.
 
 The SQAM column is where the two encoders diverge most: `flac -8` drops to
-63 MB/s on stereo 44.1 kHz material against 89 MB/s on mono speech, while
-Vinyl runs *faster* on SQAM (167 MB/s) than on LibriSpeech (151–154). Stereo
+83 MB/s on stereo 44.1 kHz material against 115–117 MB/s on mono speech, while
+Vinyl runs *faster* on SQAM (310 MB/s) than on LibriSpeech (284–292). Stereo
 costs libFLAC's `-8` an exhaustive mid/side decision that Vinyl's certified
 heuristic decides directly.
 
@@ -566,12 +570,12 @@ the other way.
 **"Encode is at parity with `flac -8`."** At one thread each it is not close —
 libFLAC 1.5.0 has `-j` and Vinyl has been frame-parallel since session 6, so
 parity against the single-threaded default was measuring a thread count, not a
-codec. Per thread the encode gap is **2.6×**; thread-matched at eight it is
-2.1×.
+codec. Per thread the encode gap is **2.2×**; thread-matched at eight it is
+1.8×.
 
-**"Decode is ahead of libFLAC."** True on wall clock at eight threads (1.15×),
+**"Decode is ahead of libFLAC."** True on wall clock at eight threads (1.46×),
 and it was labelled as eight threads against one — but the thread sweep shows
-what that label was hiding. Per thread the decoder is **4.0× behind**, and
+what that label was hiding. Per thread the decoder is **3.7× behind**, and
 Vinyl's decode curve only crosses libFLAC's single-threaded level at about
 **five threads**. The win is real for a user on a multicore machine and it is
 the only wall-clock win Vinyl has; it is not a statement about the decoder's
@@ -579,14 +583,14 @@ per-operation speed.
 
 What holds up:
 
-- **Vinyl parallelises better than libFLAC.** 5.20× on eight threads for
-  encode against libFLAC's 4.26×, and 4.55× for decode against a libFLAC
+- **Vinyl parallelises better than libFLAC.** 6.38× on eight threads for
+  encode against libFLAC's 5.13×, and 5.47× for decode against a libFLAC
   decoder that cannot scale at all. That is the direction where the proofs are
   deepest — every decoder fast path is proven equal to its bit-level
   specification, frame-parallel decoding and serialization included — so the
   scaling is not bought with trust.
-- **Decoding is where Vinyl wins on wall clock**, 220 MB/s against libFLAC's
-  192 MB/s at eight threads, and libFLAC has no threaded decoder to answer
+- **Decoding is where Vinyl wins on wall clock**, 369 MB/s against libFLAC's
+  252 MB/s at eight threads, and libFLAC has no threaded decoder to answer
   with.
 - **Interoperability is solid.** 143/143 units round-trip through Vinyl, pass
   `flac -t`, and — in the other direction — libFLAC's `-8` output decodes
@@ -598,8 +602,8 @@ What holds up:
   describes what libFLAC's `-8` buys with several apodization windows that Vinyl
   does not have.
 
-**Where the distance actually is.** Per thread the gap is ~2.6× on encode and
-~4.0× on decode, which is the informative part: a structural problem in one path
+**Where the distance actually is.** Per thread the gap is ~2.2× on encode and
+~3.7× on decode, which is the informative part: a structural problem in one path
 would not produce two comparable factors. It is per-operation cost. libFLAC's
 inner loops are `int32` SIMD; Lean offers `FloatArray` and `ByteArray` as its
 only unboxed numeric arrays, `Array Int64` would be *worse* than `Array Int`
@@ -611,10 +615,11 @@ attempts — see [Part 3](#part-3--optimization-history).
 - **No CPU-time accounting.** Every number is wall clock. The `-j1` rows give
   the per-core comparison directly, which is what the previous version of this
   list said was missing; what is still not recorded is `rusage` per
-  invocation, so oversubscription and efficiency-core effects on an
-  asymmetric-core machine (this one is an Apple M2: four performance cores,
-  four efficiency) are not separated out. That is the likeliest reason neither
-  codec scales linearly past four threads.
+  invocation, so scheduling and efficiency-core effects on an
+  asymmetric-core machine (this one is an 18-core Apple M5 Max; the numbers
+  before 2026-08-27 came from an 8-core Apple M2) are not separated out.
+  That is the likeliest reason neither codec scales linearly to eight
+  threads even with cores to spare.
 - **`flac -0` is not measured on real audio**, so Vinyl's ratio is bracketed
   from above by `flac -5` but not from below.
 - **16-bit only, two sample rates.** Both corpora are S16; the codec and the
@@ -776,7 +781,7 @@ per tap as the floor.
 ### Where the remaining encode gap is
 
 On a large file the encoder is 6% ahead of *single-threaded* `flac -8`;
-thread-matched on real audio it is 3.4× behind, and 4.7% behind on ratio
+thread-matched on real audio it is 1.8× behind, and ~5% behind on ratio
 ([Part 2](#speed-1)). So the gap is real, and this is where it lives, for
 anyone pushing further.
 
