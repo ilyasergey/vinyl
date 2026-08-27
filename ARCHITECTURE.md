@@ -318,7 +318,7 @@ function of the samples. Nothing on a shipped fast path used it.
 **What the encoder still checks at run time** is five O(1) guards, exactly
 the conditions the certificate silently covered: `0 < ch ≤ 8`, the byte
 count a multiple of `2·ch`, `sampleRate < 2^20`, the sample count below
-`2^36`, and `16 ≤ blockSize ≤ 65535`. Everything else `Stream.encode`
+`2^36`, and `16 ≤ blockSize ≤ 4608`. Everything else `Stream.encode`
 checks — `Audio.WellFormed` in full — is discharged by
 `Flac.Encode.audio_wellFormed`.
 

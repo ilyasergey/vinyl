@@ -26,10 +26,13 @@ def encodeChecked (a : Flac.Stream.Audio) : Option ByteArray :=
   if a.WellFormed then some (encode a) else none
 
 /-- Checked encode under an arbitrary configuration (block size and
-    heuristic supplied by the caller). -/
+    heuristic supplied by the caller). Block sizes stop at 4608: above
+    that, an all-CONSTANT stream (silence) can exceed the decoder's
+    decompression-bomb budget (`Flac.Stream.decodeBudget`), and the
+    round-trip guarantee would no longer be unconditional. -/
 def encodeCheckedCfg (cfg : Flac.Stream.EncoderCfg) (a : Flac.Stream.Audio) :
     Option ByteArray :=
-  if a.WellFormed ∧ 16 ≤ cfg.blockSize ∧ cfg.blockSize ≤ 65535 then
+  if a.WellFormed ∧ 16 ≤ cfg.blockSize ∧ cfg.blockSize ≤ 4608 then
     some (Flac.Stream.encode cfg a)
   else none
 
@@ -209,7 +212,7 @@ theorem (`Flac.Encode.audio_wellFormed`). -/
 def encodePcm16Fast (blockSize ch sampleRate : Nat) (bytes : ByteArray) :
     Option ByteArray :=
   if 0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧ sampleRate < 2 ^ 20
-      ∧ bytes.size / (2 * ch) < 2 ^ 36 ∧ 16 ≤ blockSize ∧ blockSize ≤ 65535 then
+      ∧ bytes.size / (2 * ch) < 2 ^ 36 ∧ 16 ≤ blockSize ∧ blockSize ≤ 4608 then
     some (Encode.encodePcm16 blockSize ch sampleRate bytes)
   else none
 

@@ -1979,3 +1979,61 @@ sufficiency), replays of P1 and P3 as proof holes, the trusted residue
 research questions, a staged adoption path, and literature pointers
 (CakeML space semantics, time credits, RAML, Danielsson, Perceus).
 Cross-linked from `robustness-theorems.md`.
+
+## 2026-08-27 — Session 18: P2 fix — the decoded-output budget
+
+**Landed:** the decompression-bomb fix (audit P2, issue #2). Every decode
+path now threads a budget through its frame loop: a frame that would push
+cumulative decoded output (at `2 ·` samples, the PCM16 measure) past
+`Stream.decodeBudget bytes = 4096 · bytes.size + 65536` makes the decode
+return `none`, exactly like a corrupt stream. The parallel precompute is
+capped separately — `stepsPar`/`byteStepsPar` used to materialize *every*
+sync candidate's frame before the serial loop checked anything, so each
+chunk now gets `decodeAmpl ·` (the input bytes its candidates span) and
+stops early; that cap is heuristic and proof-free, because dropped steps
+are simply decoded serially under the global budget.
+
+**The design decision:** no cap can separate a bomb from encoded silence —
+an all-CONSTANT stream *is* the legitimate compression of silence, so any
+budget that stops the bomb rejects some conformant streams. What keeps the
+capstones hypothesis-free is choosing the constant against the encoder's
+*provable* worst case: a frame costs at least `80 + 8·ch` bits to write
+(`frame_write_length_lb`: 32 fixed header bits, a coded number, the
+explicit 16-bit block size, CRC-8/CRC-16, one byte per subframe) and at
+most `2·ch·blockSize` budget to decode (`frameCostTotal_le`), and
+`16·ch·bs ≤ 4096·(80+8·ch)` holds for all `ch ≤ 8` iff `bs ≤ 4608`
+(`encode_cost_le_budget`). So the configurable-block-size guards
+(`encodeCheckedCfg`, `encodePcm16Fast`) tightened 65535 → 4608; the
+default 4096 is unaffected and `decode_encode` keeps its statement.
+
+**Proof structure — one bridging equation per loop, nothing re-proven:**
+each budgeted loop is proven equal to its old loop plus a single
+cumulative cost check on a `some` result
+(`readFramesB_eq`, `readFramesStepsB_eq`, `readFramesFastB_eq_At`,
+`readBytesStepsB_spec`), so the whole native/reference/steps/byte
+equivalence stack is untouched. `ByteStep` gained a runtime `samples`
+field carrying its own equation, so the byte loop charges exactly what
+the sample loop charges at every bit depth. The new guarantee the audit
+noted was missing is now a theorem: `Flac.decode_size_le` /
+`Stream.decodeReference_size_le` — for **arbitrary** bytes, a `some`
+result satisfies `2 · Σ samples ≤ 4096 · bytes.size + 65536`.
+
+**Verified:** a synthesized 105 KB / 3000-frame CONSTANT bomb (would be
+3.1 GB of PCM, the audit's reproducer shape) is rejected with `DECODE
+ERROR` on both `--decode-fast` and `--decode-pcm16` at ~1.9–2.8 GB peak
+RSS (the budget being consumed before rejection) instead of the previous
+unbounded OOM abort; a same-generator 1-frame file within budget still
+decodes to the exact 1,048,560 expected bytes; CLI round trip
+byte-identical; 117 checks green (6 new in `bombTests`, including
+encoded-silence-still-decodes and the 4608/4609 guard edge).
+
+**Residual, deliberately not attempted here:** the budget is charged
+*after* a frame is materialized, so rejection costs up to the budget in
+RAM (linear in input, constant ≈ `decodeAmpl` × allocator overhead);
+charging from the frame header's declared `blockSize × channels` before
+`readContent` allocates would shrink the constant but reshapes the
+bridging statements. P3's header-driven `emptyWithCapacity` allocation is
+untouched (issue #3).
+
+**Next:** P3 (early validation of `totalSamples` against input size),
+then the end-to-end value-boundedness statement from Session 17.

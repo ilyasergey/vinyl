@@ -2214,7 +2214,7 @@ theorem encodePcm16_eq {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
 theorem encodePcm16Cfg_fast {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
     (bytes : ByteArray) (hsz : bytes.size % (2 * ch) = 0) (hsr : sr < 2 ^ 20)
     (hn : bytes.size / (2 * ch) < 2 ^ 36) (hbs16 : 16 ≤ blockSize)
-    (hbs : blockSize ≤ 65535) :
+    (hbs : blockSize ≤ 4608) :
     Flac.encodePcm16Cfg ⟨blockSize, false, fastChooser 16⟩ ch sr bytes
       = some (encodePcm16 blockSize ch sr bytes) := by
   unfold Flac.encodePcm16Cfg
@@ -2228,7 +2228,7 @@ theorem encodePcm16Cfg_fast {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch �
 theorem decodePcm16_encodePcm16_direct {blockSize ch sr : Nat} (hch : 0 < ch)
     (hch8 : ch ≤ 8) (bytes : ByteArray) (hsz : bytes.size % (2 * ch) = 0)
     (hsr : sr < 2 ^ 20) (hn : bytes.size / (2 * ch) < 2 ^ 36)
-    (hbs16 : 16 ≤ blockSize) (hbs : blockSize ≤ 65535) :
+    (hbs16 : 16 ≤ blockSize) (hbs : blockSize ≤ 4608) :
     Flac.decodePcm16 (encodePcm16 blockSize ch sr bytes) = .ok bytes :=
   Flac.decodePcm16_encodePcm16Cfg
     (encodePcm16Cfg_fast hch hch8 bytes hsz hsr hn hbs16 hbs)

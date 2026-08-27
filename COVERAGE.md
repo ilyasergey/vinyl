@@ -13,7 +13,7 @@ listed here.
 | feature | decode | encode |
 |---|---|---|
 | `fLaC` marker + STREAMINFO; all other metadata blocks (padding, application, seektable, Vorbis comment, cuesheet, picture, …) | ✓ (parsed / skipped) | STREAMINFO only |
-| block sizes: all codes incl. explicit 8/16-bit (192, 576·2ᵏ, 256·2ᵏ, arbitrary 1–65536) | ✓ | 16–65535, explicit code |
+| block sizes: all codes incl. explicit 8/16-bit (192, 576·2ᵏ, 256·2ᵏ, arbitrary 1–65536) | ✓ | 16–4608, explicit code |
 | both frame-numbering strategies (fixed / variable block size) | ✓ | ✓ |
 | sample rates: STREAMINFO up to 2²⁰−1 Hz; all frame-header codes incl. explicit 8/16-bit | ✓ | STREAMINFO code |
 | bit depths 1–32; per-frame bit-depth codes (8/12/16/20/24/32 + STREAMINFO) | ✓ | STREAMINFO code, 1–32 |
@@ -46,7 +46,9 @@ listed here.
 The byte-level PCM16 entry point (`Flac.encodePcm16Fast`) checks the
 preconditions of the rows above at run time and returns `none` rather than
 guessing: 1–8 channels, a byte count that is a whole number of frames,
-`16 ≤ blockSize ≤ 65535` (RFC 9639 §9.1 for a fixed-blocksize stream),
+`16 ≤ blockSize ≤ 4608` (RFC 9639 §9.1 requires ≥ 16; the encoder stops
+at 4608 so its output always clears the decoder's decompression-bomb
+budget, keeping the round-trip guarantee unconditional),
 sample rate below 2²⁰ and sample count below 2³⁶ (the STREAMINFO field
 widths). Everything else the encoder needs — equal-length channels, samples
 in range for the bit depth — is a *theorem* about the derived audio

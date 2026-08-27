@@ -671,13 +671,40 @@ def syncCandidates (d : ByteArray) (start : Nat) : Array Nat :=
       tasks.foldl (fun acc t => acc ++ t.get)
         (Array.emptyWithCapacity ((hi - start) / 128 + 8))
 
+/-- What one decoded frame costs against the output budget — the arrays'
+    measure of `Flac.Stream.frameCost`. -/
+def frameCostA (chs : List (Array Int)) : Nat :=
+  2 * (chs.map (·.size)).sum
+
+/-- What a whole frame sequence costs against the budget — the arrays'
+    measure of `Flac.Stream.frameCostTotal`. -/
+def frameCostTotalA (frs : List (List (Array Int))) : Nat :=
+  (frs.map frameCostA).sum
+
+/-- A chunk's share of the output budget: proportional to the input bytes
+    its candidates span. Chunk budgets are *heuristic* — a chunk that runs
+    out just stops precomputing, and the serial loop decodes the rest of
+    its frames under the global budget — but they are what keeps the
+    parallel precompute itself from materializing a bomb before the serial
+    loop ever checks anything. Spans of consecutive chunks tile the input,
+    so the precompute's total output stays within `decodeAmpl · d.size`. -/
+def chunkBudget (d : ByteArray) (cands : Array Nat) (lo hi : Nat) : Nat :=
+  Flac.Stream.decodeAmpl * (cands.getD hi d.size - cands.getD lo 0)
+
 /-- Decode one chunk of candidate positions (the unit of parallel work). -/
 def stepChunk (b0 : Nat) (d : ByteArray) (cands : Array Nat) (lo hi : Nat) :
     Array (Step b0 d) := Id.run do
   let mut out : Array (Step b0 d) := Array.emptyWithCapacity (hi - lo)
+  let mut budget := chunkBudget d cands lo hi
   for i in [lo : hi] do
     match stepAt b0 d (8 * cands.getD i 0) with
-    | some st => out := out.push st
+    | some st =>
+      let c := frameCostA st.chs
+      if c ≤ budget then
+        out := out.push st
+        budget := budget - c
+      else
+        break
     | none => pure ()
   return out
 
@@ -742,6 +769,24 @@ def readFramesSteps (b0 : Nat) (d : ByteArray) (steps : Array (Step b0 d)) :
         | none => none
         | some rest => some (chs :: rest)
 
+/-- `readFramesSteps` with the decoded-output budget threaded through:
+    identical results, except that a stream whose decoded size passes the
+    budget is rejected (`Flac.Spec.Decode.readFramesStepsB_eq`). -/
+def readFramesStepsB (b0 : Nat) (d : ByteArray) (steps : Array (Step b0 d)) :
+    Nat → Nat → Nat → Option (List (List (Array Int)))
+  | _, 0, pos => if 8 * d.size - pos = 0 then some [] else none
+  | budget, fuel + 1, pos =>
+    if 8 * d.size - pos = 0 then some []
+    else
+      match stepFor b0 d steps pos with
+      | none => none
+      | some (chs, next) =>
+        if frameCostA chs ≤ budget then
+          match readFramesStepsB b0 d steps (budget - frameCostA chs) fuel next with
+          | none => none
+          | some rest => some (chs :: rest)
+        else none
+
 /-- Candidates per parallel task: enough that task setup is negligible,
     small enough to keep every core fed. Re-measured for the byte-emitting
     workers (1/2/4/8/16 on an 8-core M2): 2 is best at both 1 MB and
@@ -761,6 +806,16 @@ def readFramesFast (b0 : Nat) (d : ByteArray) (fuel pos : Nat) :
   else
     readFramesSteps b0 d
       (stepsPar b0 d (syncCandidates d (pos / 8)) stepChunkSize) fuel pos
+
+/-- `readFramesFast` with the decoded-output budget: the serial branch is
+    the steps loop over no steps at all (same loop, so one bridging lemma
+    covers both branches). -/
+def readFramesFastB (b0 : Nat) (d : ByteArray) (budget fuel pos : Nat) :
+    Option (List (List (Array Int))) :=
+  if d.size < parThreshold then readFramesStepsB b0 d #[] budget fuel pos
+  else
+    readFramesStepsB b0 d
+      (stepsPar b0 d (syncCandidates d (pos / 8)) stepChunkSize) budget fuel pos
 
 /-! ## Frame-parallel *serialization*
 
@@ -785,15 +840,19 @@ channels the same length) and carries the stream's channel count, which is
 what the concatenation lemma needs; a frame that is neither is simply
 refused, and the caller falls back to the sample path. -/
 
-/-- A frame's interleaved PCM bytes, with the equation they satisfy. -/
+/-- A frame's interleaved PCM bytes, with the equation they satisfy. The
+    sample count is carried at runtime (the channel arrays are erased), so
+    the byte loop charges the *same* output budget the sample loop does. -/
 structure ByteStep (b0 bps ch : Nat) (d : ByteArray) where
   pos : Nat
   bytes : ByteArray
   next : Nat
+  samples : Nat
   ok : ∃ chs, readFrameAt b0 d pos = some (chs, next)
         ∧ chs.length = ch
         ∧ (∀ a ∈ chs, a.size = (chs.headD #[]).size)
         ∧ bytes = Stream.pcmBytesRange bps chs 0 (chs.headD #[]).size
+        ∧ samples = (chs.map (·.size)).sum
 
 /-- Decode the frame at `pos` and serialize it, packaging the equation.
     `none` when the frame does not read, or is not a uniform `ch`-channel
@@ -805,17 +864,25 @@ def byteStepAt (b0 bps ch : Nat) (d : ByteArray) (pos : Nat) :
   | some (chs, next) =>
     if hu : chs.length = ch ∧ ∀ a ∈ chs, a.size = (chs.headD #[]).size then
       some ⟨pos, Stream.pcmBytesRange bps chs 0 (chs.headD #[]).size, next,
-        ⟨chs, h, hu.1, hu.2, rfl⟩⟩
+        (chs.map (·.size)).sum, ⟨chs, h, hu.1, hu.2, rfl, rfl⟩⟩
     else none
 
 /-- Serialize one chunk of candidate positions (the unit of parallel
-    work). -/
+    work), within the chunk's share of the output budget (`chunkBudget`;
+    a chunk that runs out just stops, and the serial loop decodes the rest
+    of its frames under the global budget). -/
 def byteStepChunk (b0 bps ch : Nat) (d : ByteArray) (cands : Array Nat) (lo hi : Nat) :
     Array (ByteStep b0 bps ch d) := Id.run do
   let mut out : Array (ByteStep b0 bps ch d) := Array.emptyWithCapacity (hi - lo)
+  let mut budget := chunkBudget d cands lo hi
   for i in [lo : hi] do
     match byteStepAt b0 bps ch d (8 * cands.getD i 0) with
-    | some st => out := out.push st
+    | some st =>
+      if 2 * st.samples ≤ budget then
+        out := out.push st
+        budget := budget - 2 * st.samples
+      else
+        break
     | none => pure ()
   return out
 
@@ -873,6 +940,24 @@ def readBytesSteps (b0 bps ch : Nat) (d : ByteArray)
       | none => none
       | some st => readBytesSteps b0 bps ch d steps fuel st.next (out ++ st.bytes)
 
+/-- The byte-accumulating loop with the decoded-output budget threaded
+    through, charging exactly what the sample loop charges (each step
+    carries its frame's sample count and the equation for it). -/
+def readBytesStepsB (b0 bps ch : Nat) (d : ByteArray)
+    (steps : Array (ByteStep b0 bps ch d)) :
+    Nat → Nat → Nat → ByteArray → Option ByteArray
+  | _, 0, pos, out => if 8 * d.size - pos = 0 then some out else none
+  | budget, fuel + 1, pos, out =>
+    if 8 * d.size - pos = 0 then some out
+    else
+      match byteStepFor b0 bps ch d steps pos with
+      | none => none
+      | some st =>
+        if 2 * st.samples ≤ budget then
+          readBytesStepsB b0 bps ch d steps (budget - 2 * st.samples) fuel
+            st.next (out ++ st.bytes)
+        else none
+
 /-- **Decode straight to interleaved PCM bytes**, one worker per frame
     chunk, returning the bytes and the stream's bit depth. A `some` result
     is exactly the serialization of what `decodeArrays` returns
@@ -887,10 +972,11 @@ def decodeBytes (bytes : ByteArray) : Option (ByteArray × Nat) :=
       match readMeta br.remaining br with
       | none => none
       | some (si, br) =>
-        (readBytesSteps si.bps si.bps si.channels br.data
+        (readBytesStepsB si.bps si.bps si.channels br.data
           (if br.data.size < parThreshold then #[]
            else byteStepsPar si.bps si.bps si.channels br.data
              (syncCandidates br.data (br.pos / 8)) stepChunkSize)
+          (Flac.Stream.decodeBudget br.data)
           (br.remaining + 1) br.pos
           (ByteArray.emptyWithCapacity (2 * si.channels * si.totalSamples + 64))).map
           (fun out => (out, si.bps))
@@ -912,7 +998,8 @@ def decodeArrays (bytes : ByteArray) : Option (List (Array Int) × Nat × Nat) :
       match readMeta br.remaining br with
       | none => none
       | some (si, br) =>
-        match readFramesFast si.bps br.data (br.remaining + 1) br.pos with
+        match readFramesFastB si.bps br.data (Flac.Stream.decodeBudget br.data)
+            (br.remaining + 1) br.pos with
         | none => none
         | some frames =>
           some (recombineA si.channels frames, si.bps, si.sampleRate)

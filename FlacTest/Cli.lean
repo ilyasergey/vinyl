@@ -359,6 +359,38 @@ def wrapTests : TestM Unit := do
   check "fixed order-0 restore wraps to 8-bit"
     ((Fixed.restoreA 8 0 [] #[300, -300]).all fun x => -128 ≤ x && x < 128)
 
+def bombTests : TestM Unit := do
+  -- P2 regression: a conformant all-CONSTANT stream (eight channels of
+  -- silence at block size 65535) amplifies ~50 input bytes into ~1 MB of
+  -- output per frame. `Stream.encode` is total, so it writes such a
+  -- stream happily; every decoder entry point must reject it against
+  -- `Stream.decodeBudget` instead of materializing it.
+  let silence8 : List (List Int) := List.replicate 8 (List.replicate 65535 0)
+  let bomb := Stream.encode ⟨65535, false, Heuristics.defaultAsgChooser 16⟩
+    ⟨silence8, 16, 44100⟩
+  check "P2 bomb: reference decoder rejects"
+    (Stream.decodeReference bomb).isNone
+  check "P2 bomb: production decoder rejects"
+    (match Flac.decode bomb with | .error _ => true | .ok _ => false)
+  check "P2 bomb: fused byte decoder rejects"
+    (Flac.Decode.decodeBytes bomb).isNone
+  -- silence at the default block size is legitimately high-amplification
+  -- (~1600×) and must keep decoding: the budget admits everything the
+  -- guarded encoder can emit (`Flac.Spec.Stream.encode_cost_le_budget`)
+  let silence : List (List Int) := List.replicate 8 (List.replicate 20000 0)
+  let ok := Stream.encode ⟨4096, false, Heuristics.defaultAsgChooser 16⟩
+    ⟨silence, 16, 44100⟩
+  check "silence at default block size still decodes"
+    (match Flac.decode ok with
+     | .ok a => a.channels == silence
+     | .error _ => false)
+  -- the block-size guard is exactly where the budget proof stops
+  let pcm : ByteArray := ByteArray.mk (Array.replicate 4000 0)
+  check "fast encoder accepts block size 4608"
+    (Flac.encodePcm16Fast 4608 2 44100 pcm).isSome
+  check "fast encoder rejects block size 4609"
+    (Flac.encodePcm16Fast 4609 2 44100 pcm).isNone
+
 /-- With an argument, write sample encoded streams into that directory
     (for differential testing against `flac`/`ffmpeg` from the shell). -/
 def emitSamples (dir : String) : IO Unit := do
@@ -547,7 +579,7 @@ def cliMain (args : List String) : IO UInt32 := do
     IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
     IO.eprintln usage
     return 2
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0

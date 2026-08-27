@@ -288,6 +288,62 @@ def readFrames (b0 : Nat) : Nat → BitStream → Option (List (List (List Int))
         | none => none
         | some rest => some (chs :: rest)
 
+/-! ## Decoded-output budget
+
+A CONSTANT subframe stores one value and materializes `blockSize` copies,
+so decoded output is not bounded by input size: chaining maximal CONSTANT
+frames amplifies a 150 KB stream into gigabytes and kills the process
+(RFC 9639 §11, audit finding P2). The decoder therefore carries a *budget*
+through its frame loop — a frame that would push cumulative output past
+`decodeAmpl · input bytes + decodeFloor` makes the whole decode return
+`none`, exactly like a corrupt stream.
+
+`decodeAmpl` must admit everything the encoder can emit, or the round-trip
+capstones break: an all-CONSTANT frame legitimately costs about
+`80 + 8·ch` bits (`Flac.Spec.Stream.frame_write_length_lb`) for
+`2·ch·blockSize` bytes of output, which at the default block size 4096 and
+8 channels is a ratio of 3641. 4096 covers it; block sizes above 4608 can
+exceed it, which is why the configurable-block-size guards stop there. -/
+
+/-- Maximum decoded bytes (as `2 ·` samples) per input byte. -/
+def decodeAmpl : Nat := 4096
+
+/-- Absolute allowance on top of the proportional cap, so no small stream
+    is ever rejected by rounding. -/
+def decodeFloor : Nat := 65536
+
+/-- The decoded-output budget for a stream. -/
+def decodeBudget (bytes : ByteArray) : Nat :=
+  decodeAmpl * bytes.size + decodeFloor
+
+/-- What one decoded frame costs against the budget: two bytes per sample
+    per channel (the interleaved 16-bit serialization's measure, used for
+    every bit depth). -/
+def frameCost (fr : List (List Int)) : Nat :=
+  2 * (fr.map (·.length)).sum
+
+/-- What a whole frame sequence costs against the budget. -/
+def frameCostTotal (frs : List (List (List Int))) : Nat :=
+  (frs.map frameCost).sum
+
+/-- `readFrames` with the output budget threaded through: identical
+    results, except that a stream whose decoded size passes the budget is
+    rejected (`Flac.Spec.Decode.readFramesB_eq`). -/
+def readFramesB (b0 : Nat) : Nat → Nat → BitStream →
+    Option (List (List (List Int)))
+  | _, 0, s => if s = [] then some [] else none
+  | budget, fuel + 1, s =>
+    if s = [] then some []
+    else
+      match Frame.read b0 s with
+      | none => none
+      | some (chs, s') =>
+        if frameCost chs ≤ budget then
+          match readFramesB b0 (budget - frameCost chs) fuel s' with
+          | none => none
+          | some rest => some (chs :: rest)
+        else none
+
 /-! ## Top level -/
 
 /-- Interleaved multichannel PCM. -/
@@ -355,7 +411,9 @@ def peekInfo (bytes : ByteArray) : Option Info :=
     else none
 
 /-- **The verified reference decoder**: returns the decoded audio —
-    channels, bit depth, and sample rate, as read from the stream. -/
+    channels, bit depth, and sample rate, as read from the stream. Decoded
+    output is bounded by `decodeBudget bytes`; a stream that would exceed
+    it (a decompression bomb) is rejected like a corrupt one. -/
 def decodeReference (bytes : ByteArray) : Option Audio :=
   let s := bytesToBits bytes
   match readBits 32 s with
@@ -365,7 +423,7 @@ def decodeReference (bytes : ByteArray) : Option Audio :=
       match readMeta s.length s with
       | none => none
       | some (si, s) =>
-        match readFrames si.bps (s.length + 1) s with
+        match readFramesB si.bps (decodeBudget bytes) (s.length + 1) s with
         | none => none
         | some frames =>
           some ⟨recombine si.channels frames, si.bps, si.sampleRate⟩

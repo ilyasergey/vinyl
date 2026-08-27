@@ -588,7 +588,7 @@ theorem readBytesSteps_spec (b0 bps ch : Nat) (d : ByteArray)
       | none => rw [hf] at h; exact absurd h (by simp)
       | some st =>
         rw [hf] at h
-        obtain ⟨chs, hread, hlen, hunif, hbytes⟩ := st.ok
+        obtain ⟨chs, hread, hlen, hunif, hbytes, -⟩ := st.ok
         rw [byteStepFor_pos hf] at hread
         dsimp only at h
         obtain ⟨frames, hframes, hch', hun', hr⟩ := ih st.next (out ++ st.bytes) r h
@@ -597,6 +597,82 @@ theorem readBytesSteps_spec (b0 bps ch : Nat) (d : ByteArray)
           rw [if_neg hne, hread]
           dsimp only
           rw [hframes]
+        · intro fr hfr
+          rcases List.mem_cons.mp hfr with h1 | h1
+          · rw [h1]; exact hlen
+          · exact hch' fr h1
+        · intro fr hfr
+          rcases List.mem_cons.mp hfr with h1 | h1
+          · rw [h1]; exact hunif
+          · exact hun' fr h1
+        · rw [hr, hbytes, pcmBytesRange_eq]
+          apply bytes_ext
+          rw [append_toList, append_toList, append_toList, toByteArray_toList,
+            toByteArray_toList, toByteArray_toList]
+          simp only [framesModel, List.map_cons, List.flatten_cons, frLen,
+            List.append_assoc]
+
+/-- **Soundness of the budgeted fused byte path**: whenever it returns
+    bytes, the serial frame loop returns uniform `ch`-channel frames whose
+    decode cost fits the budget, and the bytes are exactly those frames
+    serialized in order. -/
+theorem readBytesStepsB_spec (b0 bps ch : Nat) (d : ByteArray)
+    (steps : Array (ByteStep b0 bps ch d)) :
+    ∀ (budget fuel pos : Nat) (out r : ByteArray),
+      readBytesStepsB b0 bps ch d steps budget fuel pos out = some r →
+      ∃ frames, readFramesAt b0 d fuel pos = some frames
+        ∧ Flac.Decode.frameCostTotalA frames ≤ budget
+        ∧ (∀ fr ∈ frames, fr.length = ch)
+        ∧ (∀ fr ∈ frames, ∀ a ∈ fr, a.size = frLen fr)
+        ∧ r = out ++ (framesModel ((bps + 7) / 8) frames).toByteArray := by
+  intro budget fuel
+  induction fuel generalizing budget with
+  | zero =>
+    intro pos out r h
+    unfold readBytesStepsB at h
+    split at h
+    · injection h with h
+      refine ⟨[], ?_, ?_, by simp, by simp, ?_⟩
+      · unfold readFramesAt; rw [if_pos (by assumption)]
+      · simp [Flac.Decode.frameCostTotalA]
+      · rw [← h]; simp only [framesModel, List.map_nil, List.flatten_nil]
+        exact (append_empty_bytes out).symm
+    · exact absurd h (by simp)
+  | succ fuel ih =>
+    intro pos out r h
+    unfold readBytesStepsB at h
+    split at h
+    · injection h with h
+      refine ⟨[], ?_, ?_, by simp, by simp, ?_⟩
+      · unfold readFramesAt; rw [if_pos (by assumption)]
+      · simp [Flac.Decode.frameCostTotalA]
+      · rw [← h]; simp only [framesModel, List.map_nil, List.flatten_nil]
+        exact (append_empty_bytes out).symm
+    · rename_i hne
+      match hf : byteStepFor b0 bps ch d steps pos with
+      | none => rw [hf] at h; exact absurd h (by simp)
+      | some st =>
+        rw [hf] at h
+        obtain ⟨chs, hread, hlen, hunif, hbytes, hsamp⟩ := st.ok
+        rw [byteStepFor_pos hf] at hread
+        dsimp only at h
+        by_cases hb : 2 * st.samples ≤ budget
+        case neg => rw [if_neg hb] at h; exact absurd h (by simp)
+        rw [if_pos hb] at h
+        obtain ⟨frames, hframes, hcost, hch', hun', hr⟩ :=
+          ih (budget - 2 * st.samples) st.next (out ++ st.bytes) r h
+        have hcostchs : Flac.Decode.frameCostA chs = 2 * st.samples := by
+          rw [hsamp]; rfl
+        refine ⟨chs :: frames, ?_, ?_, ?_, ?_, ?_⟩
+        · unfold readFramesAt
+          rw [if_neg hne, hread]
+          dsimp only
+          rw [hframes]
+        · have htot : Flac.Decode.frameCostTotalA (chs :: frames)
+              = Flac.Decode.frameCostA chs
+                + Flac.Decode.frameCostTotalA frames := by
+            simp [Flac.Decode.frameCostTotalA]
+          omega
         · intro fr hfr
           rcases List.mem_cons.mp hfr with h1 | h1
           · rw [h1]; exact hlen
@@ -722,16 +798,19 @@ theorem decodeBytes_spec (bytes out : ByteArray) (bps : Nat) :
         injection hpair with h1 h2
         subst h1
         subst h2
-        obtain ⟨frames, hframes, hch, hunif, hr⟩ :=
-          readBytesSteps_spec si.bps si.bps si.channels br2.data _
-            (br2.remaining + 1) br2.pos _ raw hraw
+        obtain ⟨frames, hframes, hcost, hch, hunif, hr⟩ :=
+          readBytesStepsB_spec si.bps si.bps si.channels br2.data _
+            (Flac.Stream.decodeBudget br2.data) (br2.remaining + 1) br2.pos
+            _ raw hraw
         refine ⟨Flac.Decode.recombineA si.channels frames, si.sampleRate, ?_, ?_⟩
         · simp only [Flac.Decode.decodeArrays]
           rw [hm]
           dsimp only
           rw [if_pos hmk, hme]
           dsimp only
-          rw [readFramesFast_eq_At, hframes]
+          rw [Flac.Decode.readFramesFastB_eq_At, hframes]
+          dsimp only [Option.bind_some]
+          rw [if_pos hcost]
         · rw [hr, pcmBytesRange_eq, recombineA_headD_size si.channels frames hch hunif,
             recombineA_model ((si.bps + 7) / 8) si.channels frames hch hunif]
           apply bytes_ext
