@@ -353,6 +353,77 @@ cost model is immediately tested against code that cheats for speed.
    point has a concrete failing or trusted spot in the development to
    point at.
 
+## 9. Future direction: validating the cost model against the compiler
+
+Everything in §6's trusted residue reduces to one question: does the
+model's ledger of charges match what the compiled artifact actually does?
+CakeML answers it in the strongest possible way, and it is worth being
+precise about the direction of that answer: CakeML does **not** validate a
+cost model against its compiler — it verifies the *compiler against the
+cost semantics*. The space cost semantics of [6] is part of the compiler's
+correctness theorem: compiled programs provably stay within the heap and
+stack the source-level semantics predicts, all the way to machine code.
+The model needs no validation because nothing between it and the metal is
+unverified. Quantitative CompCert [7] has the same shape for stack bounds.
+Lean cannot have that relationship today (its compiler is unverified and
+not built for it), so the honest question for this proposal is the
+surrogate one: how much confidence can be manufactured that a shallow
+model and an unverified compiler agree? Four ideas, in increasing
+strength:
+
+1. **Measurement-based validation (the model as a falsifiable
+   hypothesis).** Run the instrumented and production forms side by side
+   over a corpus that *includes the adversarial shapes* (the audit's
+   bombs and storms, fuzzer output — constants calibrated on honest audio
+   can hide an asymptotic miss), interpose on the allocator (malloc
+   interposition, heaptrack, or the runtime's own allocation counters),
+   and assert `measured bytes ≤ k · predicted credits + c` per run. Wire
+   the assertion into the bench harness so it runs at the merge gate. A
+   violation means a missing charge or a compiler behavior change; either
+   way the model, like the toolchain, gets version-pinned and re-derived
+   on upgrade. This is runtime verification of the model, not proof — but
+   it is cheap, continuous, and catches exactly the silent-undercharge
+   failure §6 worries about.
+
+2. **Translation validation at the compiler's IR.** Lean exposes its
+   compilation pipeline as data (`trace.compiler.ir.result` prints the
+   post-Perceus IR, where allocations appear as explicit `ctor`/`reset`/
+   `reuse` instructions and tail calls are visible). A metaprogram can
+   walk each instrumented function's IR and check, per path, that the
+   `charge` calls in the cost twin dominate the allocation instructions
+   the compiler actually emitted — per build, per function, in the style
+   of translation validation [16]. This removes the hand-placement of
+   charges from the trusted base: the checker, not the author, asserts
+   charging completeness. Its natural extension is *generation*: derive
+   the charged twin from the IR mechanically, so the model is extracted
+   from the artifact rather than written alongside it.
+
+3. **Mechanize the cost calculus of the one pass that matters.** The
+   adequacy risk is concentrated in Perceus-style reference counting —
+   whether an update reuses memory in place or copies — and both relevant
+   systems come with paper formalisms: Counting Immutable Beans [13] and
+   Perceus [14] each define an RC calculus with soundness results.
+   Mechanizing that calculus in Lean and proving the model's charges
+   dominate its costs turns the vague "we trust the runtime" into one
+   crisp, narrow assumption: the compiler implements the published
+   calculus. Everything from the calculus to the charges becomes theorem.
+
+4. **Certificate-producing compilation.** The compiler emits, per
+   definition, a small machine-checkable cost certificate — allocation
+   count per path, in-place-reuse decisions, tail-call flags — and a Lean
+   metaprogram checks the model against it at build time, in the spirit
+   of proof-carrying code [17]. This needs upstream cooperation, but the
+   Lean compiler is itself being rewritten in Lean, which makes
+   per-definition hooks a realistic ask; and unlike (2), which inspects
+   an IR the pipeline may still transform, a certificate is a contract
+   the compiler *commits* to. Short of a verified compiler, this is the
+   strongest reachable form: adequacy stops being an assumption and
+   becomes a per-build check with a named counterparty.
+
+The four compose: (1) now, (2) once `Flac/Cost/` exists, (3) as the
+research contribution, (4) as the upstream conversation. Each strictly
+shrinks what §6 asks a reader to take on faith.
+
 ## References
 
 [1] L. de Moura, S. Ullrich. *The Lean 4 Theorem Prover and Programming
@@ -416,6 +487,14 @@ Reference Counting with Reuse.* PLDI 2021. (The reuse discipline behind
 Formalizing Asymptotic Complexity Claims via Deductive Program
 Verification.* ESOP 2018. (How to state O(·) claims without constant
 lies — relevant to phrasing `decodeBytesC_linear` honestly.)
+
+[16] A. Pnueli, M. Siegel, E. Singerman. *Translation Validation.*
+TACAS 1998. (Checking each compilation rather than verifying the
+compiler — the shape of §9's IR-level idea.)
+
+[17] G. C. Necula. *Proof-Carrying Code.* POPL 1997. (Artifacts shipped
+with machine-checkable certificates — the shape of §9's
+certificate-producing compilation.)
 
 Project-internal starting points: `docs/01-robustness-theorems.md` (the
 taxonomy this note extends),
