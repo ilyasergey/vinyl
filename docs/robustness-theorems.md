@@ -1,39 +1,44 @@
 # Robustness theorems: what to prove so adversarial inputs cannot hurt us
 
-"Formally verified" names a guarantee much narrower than the confidence it
-inspires. A verification effort proves specific theorems about specific
-functions; everything about the running program that those theorems do not
-mention — how much memory it allocates, how deep its stack grows, what it
-does on inputs outside the theorems' quantifiers — is exactly as
-trustworthy as in unverified software. The gap is widest in code that
-parses untrusted input. Correctness theorems are naturally phrased over a
-*producer's* outputs ("decoding an encoded file recovers the original"),
-while an attacker picks from the far larger set of all byte strings, and
-the harm an attacker aims for — memory exhaustion, stack overflow, CPU
-burn — lives in dimensions a logic of pure functions does not model at
-all.
+Everyone who works with verification knows where the proven artifact ends:
+theorems attach to the denotation of pure functions, while the compiler,
+the runtime, and the cost of execution remain in the trusted base. What is
+easy to underestimate is how that familiar boundary composes with
+*adversarial* input. A codec's natural correctness statements are
+round-trips, and round-trips quantify over the encoder's image — a
+measure-zero slice of the decoder's actual domain, which is every byte
+string an attacker cares to construct. Meanwhile the properties an
+attacker targets — heap, stack, time — are exactly the ones a denotational
+reading erases: a decoder can be proven correct on all valid streams and
+total on all input, and still be trivially killable by a crafted file,
+with no theorem falsified and nothing wrong with the proofs.
 
-Closing this gap is not one problem but several, and the working answer of
-this note is a classification: for each robustness property, identify the
-kind of theorem that excludes it (statements quantifying over *arbitrary*
-inputs rather than valid ones; bounds on the values a function builds;
-bounds on output size relative to input size; constraints on the shape of
-recursion), prove that kind where the logic can express it, and where it
-cannot — allocation hints, in-place updates, tail calls — enforce the
-property by construction and by checked convention, labeled honestly as
-living outside the proofs.
+The working answer of this note is a classification rather than a single
+technique. For each robustness property, identify the kind of statement
+that excludes it: quantification over arbitrary inputs instead of valid
+ones, invariants bounding the values a function builds, bounds on output
+size as a function of input size, constraints on recursion shape. Prove
+the ones the logic can express — most of them, it turns out, and cheaply,
+once stated. For the residue the logic cannot see (allocation hints,
+reference-count-dependent in-place reuse, tail-call structure), enforce by
+construction and by checked convention at the merge gate, and record
+explicitly which tier every guarantee lives in — the dangerous zone being
+a guarantee a reader assumes is kernel-checked when it is a convention.
 
-Vinyl makes this concrete. It is a FLAC codec in pure Lean 4 whose encode
-and decode paths carry kernel-checked round-trip proofs, and it received
-an independent security audit
+The case study is Vinyl, a FLAC codec written in pure Lean 4: its encoder
+and decoder carry kernel-checked round-trip capstones over the full
+configuration space, and its decode paths are total by construction (no
+`partial`, no panicking indexing, fuel-bounded loops). An independent
+security audit
 ([issues #1–#11](https://github.com/ilyasergey/vinyl/issues?q=label%3Aaudit),
-tracking [issue #12](https://github.com/ilyasergey/vinyl/issues/12)) that
-found no input violating any theorem — and eleven ways to hurt the program
-anyway. This note was written after fixing the first of them, P1
+tracking [issue #12](https://github.com/ilyasergey/vinyl/issues/12))
+falsified none of its theorems and still produced eleven findings, mostly
+denial-of-service, several against the verified fast paths. This note was
+written after fixing the first of them, P1
 ([issue #1](https://github.com/ilyasergey/vinyl/issues/1), the LPC
-predictor divergence). That fix itself is small; the reason the bug
-existed at all is general and worth keeping, because every future decoder
-path can repeat it.
+predictor divergence). The fix itself is small; the reason the bug existed
+at all is general and worth keeping, because every future decoder path can
+repeat it.
 
 ## The incident, in one paragraph
 
