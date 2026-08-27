@@ -153,7 +153,7 @@ Known residual, recorded so it is not rediscovered:
   ([issue #3](https://github.com/ilyasergey/vinyl/issues/3)); that is an
   early-validation fix, one line, and its invisibility to the logic is the
   motivating example of
-  [`shallow-cost-semantics.md`](shallow-cost-semantics.md).
+  [`cost-semantics.md`](cost-semantics.md).
 
 - **The budget bounds samples, not resident bytes.** What the process
   actually spends per admitted sample (boxed arrays, concatenation copies,

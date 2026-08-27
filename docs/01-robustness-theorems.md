@@ -178,7 +178,7 @@ Before merging a function that consumes untrusted bits, answer for it:
 - Making resource consumption itself provable: value-level theorems bound
   what the decoder *returns*, never what it *spends* computing it (the
   capacity hint in P3 is definitionally invisible to the logic).
-  [`shallow-cost-semantics.md`](shallow-cost-semantics.md) develops this
+  [`cost-semantics.md`](cost-semantics.md) develops this
   into a concrete proposal: a
   credit-charging cost monad over Lean, its two theorem shapes, and the
   research questions Vinyl makes concrete.
