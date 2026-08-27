@@ -52,8 +52,18 @@ with its own note:
   would upgrade **#3** (the capacity hint becomes a charged allocation),
   **#4** (spawning and candidate gathering become charges the storm
   cannot pay), and **#8** (deciding a guard is charged in evaluation
-  order, so guard-order bugs fail the budget proof). The value-bound
-  theorems from **#1** are what such proofs would consume.
+  order, so guard-order bugs fail the budget proof). **#1**, **#2**, and
+  **#5** were cost bugs too — the reason they rate **T** rather than
+  **C+R** is that their fixes *reified the resource into a value* the
+  current logic can bound: samples wrapped to their width (#1), output
+  measured in sample count (#2), a read capped at `lim := b` (#5). The
+  property each attack needed is excluded by theorem today; what remains
+  for the cost model is only the value-to-bytes constant — that a
+  33-bit-bounded sample occupies O(1) memory, that `decode_size_le`'s
+  sample count bounds resident bytes (02's recorded residual: a bomb
+  still costs the budget in memory before its rejection) — and those
+  value-bound theorems are precisely the lemmas the cost proofs would
+  consume.
 - *Provable stack depth* ([stack semantics](stack-semantics.md)) would
   upgrade **#6**: today the accumulator rewrite is pinned by equalities,
   but constant depth itself rests on syntax plus the compiler.
@@ -150,27 +160,62 @@ correct by construction, which is what tier **C** without **+R** marks.
 ## Research notes
 
 - [Cost semantics](cost-semantics.md): a credit-charging cost monad for
-  Lean, making heap and time bounds provable for arbitrary input;
-  motivated by P1/P3, with the two theorem shapes (pin + linear-budget
-  sufficiency), the trusted residue, an adoption path, and literature.
-- [Stack semantics](stack-semantics.md): making recursion depth provable,
-  motivated by P6. Four routes — reify the stack into data (trampoline),
-  a scoped depth charge in the cost monad, a syntactic tail certifier,
-  verified stack-cost compilation — and the principle that an erased
-  resource becomes specifiable once reified as a value.
-- [API contracts](api-contracts.md): the coverage bug class, motivated by
-  P7 — proven properties not attached to the names users call. The four
-  rules (guard by default, natural names carry the strongest guarantee,
-  an API-to-theorem map at the gate, subtype escalation) and how far the
-  map can be mechanized with a `@[covered_by]` checker; plus the
-  perimeter corollaries from P9/P10 (gate scope follows the linker,
-  prose claims need checkers).
+  Lean, making heap and time bounds provable for arbitrary input, with
+  the two theorem shapes (pin + linear-budget sufficiency), the trusted
+  residue, an adoption path, and literature. Related findings:
+  - **#1** — the motivating example for value-dependent cost: bignum
+    arithmetic charges by magnitude, so its budget proof consumes
+    exactly the value-bound lemmas the fix introduced.
+  - **#2** — the sample-count budget is proven; the recorded residual
+    (a bomb still costs the budget in *memory* before rejection) is what
+    a charged frame loop would bound.
+  - **#3** — the motivating example for logic-invisible cost: a capacity
+    hint is definitionally erased, and only a charged allocator can make
+    a linear budget fail on it.
+  - **#4** — charged `Task.spawn` and per-candidate charges would bound
+    the speculative layer no correctness theorem mentions (§7).
+  - **#5** — reading a unary field costs O(run) before any guard can see
+    the value; the landed cap bounds this by construction, a charge
+    would bound it by theorem.
+  - **#8** — deciding a guard has a cost: the `Decidable` instance runs
+    on data built first, so guard-order bugs fail a budget proof (§7).
+- [Stack semantics](stack-semantics.md): making recursion depth provable.
+  Four routes — reify the stack into data (trampoline), a scoped depth
+  charge in the cost monad, a syntactic tail certifier, verified
+  stack-cost compilation — and the principle that an erased resource
+  becomes specifiable once reified as a value. Related findings:
+  - **#6** — the motivating case: depth equals frame count on the
+    non-tail loops, and tail-position is not even expressible in the
+    logic.
+  - **#5** — the reproducer overflowed the C stack *through the unary
+    reader* before the guard could run; `Bits.readUnary`'s non-tail
+    shape is inherited by the #6 round.
+- [API contracts](api-contracts.md): the coverage bug class — proven
+  properties not attached to the names users call. The four rules (guard
+  by default, natural names carry the strongest guarantee, an
+  API-to-theorem map at the gate, subtype escalation) and how far the
+  map can be mechanized with a `@[covered_by]` checker. Related
+  findings:
+  - **#7** — the motivating case: the capstones cover a sibling of the
+    naturally-named encoder, and out-of-envelope input round-trips to a
+    different value silently.
+  - **#9** — the perimeter corollary: the gate's no-panic jurisdiction
+    must follow what the executables link, not where the proofs live.
+  - **#10** — the other perimeter corollary: a quantified docstring
+    claim is a contract with no checker; documentation must derive from
+    checked artifacts or demote itself to description.
 - [Spec validation](spec-validation.md): checking the model against
-  RFC 9639, motivated by P5/P11 — the four accept/emit set relations and
-  why the existing referees only tested the positive two; an RFC
-  traceability matrix as a gate-checked artifact, must-reject corpora,
-  referee triangulation, and an explicit accept-set predicate as the
-  research goal.
+  RFC 9639 — the four accept/emit set relations and why the existing
+  referees only tested the positive two; an RFC traceability matrix as a
+  gate-checked artifact, must-reject corpora, referee triangulation, and
+  an explicit accept-set predicate as the research goal. Related
+  findings:
+  - **#11** — the motivating case on the *emit* side: theorems correct
+    about a `WellFormed` laxer than the RFC, so non-conformant files are
+    emitted with every proof intact.
+  - **#5** — the same gap on the *accept* side: the decoder accepted
+    streams the RFC declares invalid, invisible to round-trips because
+    both directions agree on the same lax model.
 
 ## See also
 
