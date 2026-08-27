@@ -2037,3 +2037,12 @@ untouched (issue #3).
 
 **Next:** P3 (early validation of `totalSamples` against input size),
 then the end-to-end value-boundedness statement from Session 17.
+
+**Addendum 2 (same session):** reworked the intro of the robustness note
+twice on request — first adding a general-audience introduction, then
+repitching it for verification-literate readers and tightening the first
+two paragraphs — and linked all audit-issue references in both notes to
+GitHub. The final tightened intro landed via the parallel P2 session's
+docs commit (72c92a2, which also renamed the notes to the numbered
+01/02/03 scheme); recorded here since that commit message does not
+mention it.
