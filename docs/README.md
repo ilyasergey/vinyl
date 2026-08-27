@@ -1,10 +1,13 @@
 # Vinyl hardening notes
 
-Notes from hardening Vinyl after its independent security audit
+Notes from hardening Vinyl after its independent security audit by
+Bartosz Barwikowski
 ([issues #1–#12](https://github.com/ilyasergey/vinyl/issues?q=label%3Aaudit)).
-Numbered notes record the findings, one per fix, in fix order — a note is
-marked **DRAFT** until its fix lands. Unnumbered notes are research
-proposals the findings motivate.
+The audit examined commit `25cf904` (2026-08-24, toolchain
+`leanprover/lean4:v4.33.0`); the findings were filed on 2026-08-26, and
+all eleven fixes landed on the `hardening/audit-fixes` branch on
+2026-08-27. Numbered notes record the findings, one per fix, in fix
+order. Unnumbered notes are research proposals the findings motivate.
 
 ## The findings
 
