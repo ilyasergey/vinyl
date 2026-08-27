@@ -1,8 +1,39 @@
 # Robustness theorems: what to prove so adversarial inputs cannot hurt us
 
-Written after fixing audit finding P1 (issue #1, the LPC predictor
-divergence). The fix itself is small; the reason the bug existed at all is
-general and worth keeping, because every future decoder path can repeat it.
+"Formally verified" names a guarantee much narrower than the confidence it
+inspires. A verification effort proves specific theorems about specific
+functions; everything about the running program that those theorems do not
+mention — how much memory it allocates, how deep its stack grows, what it
+does on inputs outside the theorems' quantifiers — is exactly as
+trustworthy as in unverified software. The gap is widest in code that
+parses untrusted input. Correctness theorems are naturally phrased over a
+*producer's* outputs ("decoding an encoded file recovers the original"),
+while an attacker picks from the far larger set of all byte strings, and
+the harm an attacker aims for — memory exhaustion, stack overflow, CPU
+burn — lives in dimensions a logic of pure functions does not model at
+all.
+
+Closing this gap is not one problem but several, and the working answer of
+this note is a classification: for each robustness property, identify the
+kind of theorem that excludes it (statements quantifying over *arbitrary*
+inputs rather than valid ones; bounds on the values a function builds;
+bounds on output size relative to input size; constraints on the shape of
+recursion), prove that kind where the logic can express it, and where it
+cannot — allocation hints, in-place updates, tail calls — enforce the
+property by construction and by checked convention, labeled honestly as
+living outside the proofs.
+
+Vinyl makes this concrete. It is a FLAC codec in pure Lean 4 whose encode
+and decode paths carry kernel-checked round-trip proofs, and it received
+an independent security audit
+([issues #1–#11](https://github.com/ilyasergey/vinyl/issues?q=label%3Aaudit),
+tracking [issue #12](https://github.com/ilyasergey/vinyl/issues/12)) that
+found no input violating any theorem — and eleven ways to hurt the program
+anyway. This note was written after fixing the first of them, P1
+([issue #1](https://github.com/ilyasergey/vinyl/issues/1), the LPC
+predictor divergence). That fix itself is small; the reason the bug
+existed at all is general and worth keeping, because every future decoder
+path can repeat it.
 
 ## The incident, in one paragraph
 
@@ -48,10 +79,10 @@ Each one, when missing, admits a distinct class of attack.
 |---|---|---|---|
 | Round-trip correctness | `decode (encode a) = a` on well-formed `a` | wrong output on *valid* streams | proven (capstones) |
 | Value boundedness | for *arbitrary* input, every intermediate and output value fits a fixed width | value blowup: bignum divergence, GMP abort (P1) | wrap by construction + `fitsSInt_wrapSInt`; end-to-end statement is future work |
-| Output-size bound | `size (decode bytes) ≤ k · size bytes + c` | decompression bombs / amplification OOM (P2, P3) | not yet stated (issues #2, #3) |
-| Stack shape | recursion is tail (or depth ≤ constant) for arbitrary input | stack overflow on many tiny frames (P6) | lint-enforced style, no theorem (issue #6) |
+| Output-size bound | `size (decode bytes) ≤ k · size bytes + c` | decompression bombs / amplification OOM (P2, P3) | not yet stated ([#2](https://github.com/ilyasergey/vinyl/issues/2), [#3](https://github.com/ilyasergey/vinyl/issues/3)) |
+| Stack shape | recursion is tail (or depth ≤ constant) for arbitrary input | stack overflow on many tiny frames (P6) | lint-enforced style, no theorem ([#6](https://github.com/ilyasergey/vinyl/issues/6)) |
 | Termination | fuel-bounded loops, no `partial` | infinite loops on crafted input | by construction |
-| Early validation | header claims are checked against input size *before* any allocation proportional to them | huge up-front allocation from a tiny file (P3, P8) | not yet (issues #3, #8) |
+| Early validation | header claims are checked against input size *before* any allocation proportional to them | huge up-front allocation from a tiny file (P3, P8) | not yet ([#3](https://github.com/ilyasergey/vinyl/issues/3), [#8](https://github.com/ilyasergey/vinyl/issues/8)) |
 
 The key discipline: for each theorem, ask **which set of inputs it
 quantifies over**. "All well-formed audio" protects users of the encoder.
@@ -140,8 +171,9 @@ Before merging a function that consumes untrusted bits, answer for it:
   `b`/`b+1`, plus one bit of headroom through stereo reconstruction), for
   arbitrary input bytes. All local pieces now exist.
 - Output-size and early-validation theorems for the amplification
-  findings (issues #2, #3), which need a size-vs-input bound in the frame
-  loop, not a value bound.
+  findings (issues [#2](https://github.com/ilyasergey/vinyl/issues/2) and
+  [#3](https://github.com/ilyasergey/vinyl/issues/3)), which need a
+  size-vs-input bound in the frame loop, not a value bound.
 - Making resource consumption itself provable: value-level theorems bound
   what the decoder *returns*, never what it *spends* computing it (the
   capacity hint in P3 is definitionally invisible to the logic).

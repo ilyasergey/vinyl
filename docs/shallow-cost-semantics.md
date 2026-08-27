@@ -12,18 +12,21 @@ Vinyl is a FLAC codec written in pure Lean 4. Its central results are
 kernel-checked round-trip theorems (`decode (encode a) = a` for well-formed
 `a`, over every encoder configuration), and its decode paths are total by
 construction: no `partial`, no panicking indexing, fuel-bounded loops. An
-independent audit (issues #1–#11, tracking issue #12) found no input
+independent audit ([issues #1–#11](https://github.com/ilyasergey/vinyl/issues?q=label%3Aaudit),
+tracking [issue #12](https://github.com/ilyasergey/vinyl/issues/12)) found no input
 violating any theorem. It nevertheless found several inputs that kill the
 process. Two of them frame this note:
 
-- **P1 (issue #1).** LPC decoding reconstructs samples by a feedback
+- **P1 ([issue #1](https://github.com/ilyasergey/vinyl/issues/1)).** LPC
+  decoding reconstructs samples by a feedback
   recurrence over arbitrary-precision `Int`. A crafted 8 KB stream made the
   reconstruction diverge geometrically (`sample[n] = 16383^n`); the bignums
   reached gigabytes within one block and GMP aborted the process. The
   function was total and returned a perfectly well-defined value; the value
   merely did not fit in physical memory.
 
-- **P3 (issue #3).** The fast decoder pre-sizes its output buffer from the
+- **P3 ([issue #3](https://github.com/ilyasergey/vinyl/issues/3)).** The
+  fast decoder pre-sizes its output buffer from the
   stream header's 36-bit `totalSamples` field, before parsing any audio.
   A 42-byte file claiming ~4·10⁹ samples requests ~1.1 TB as the decoder's
   first act. Under any memory ceiling (a container limit, `ulimit -v`) the
@@ -296,13 +299,17 @@ cost model is immediately tested against code that cheats for speed.
   the instrumented form instead be compiled with credits erased (charge ≡
   id) so *one* definition serves both roles, with the erasure itself
   proven?
-- **Stack as a resource.** P6 (issue #6) is a stack-depth bug; depth
+- **Stack as a resource.** P6
+  ([issue #6](https://github.com/ilyasergey/vinyl/issues/6)) is a
+  stack-depth bug; depth
   charging in the same monad would cover it, but Lean's compiler decides
   tail calls, which puts adequacy under pressure again.
 
 ## 8. A concrete starting path for Vinyl
 
-1. Land the value-level fixes for #2/#3 first (output-size checks in the
+1. Land the value-level fixes for
+   [#2](https://github.com/ilyasergey/vinyl/issues/2)/[#3](https://github.com/ilyasergey/vinyl/issues/3)
+   first (output-size checks in the
    frame loop); their theorems are prerequisites and need no new
    machinery.
 2. Build `Flac/Cost/` : `CostM`, `charge`, charged wrappers for
@@ -383,6 +390,8 @@ Verification.* ESOP 2018. (How to state O(·) claims without constant
 lies — relevant to phrasing `decodeBytesC_linear` honestly.)
 
 Project-internal starting points: `docs/robustness-theorems.md` (the
-taxonomy this note extends), issues #1–#12 (the audit), `Flac/Spec/Bits.lean`
+taxonomy this note extends),
+[issues #1–#12](https://github.com/ilyasergey/vinyl/issues?q=label%3Aaudit)
+(the audit), `Flac/Spec/Bits.lean`
 (`wrapSInt_eq_of_fits`, `fitsSInt_wrapSInt` — the value-bound lemmas §5
 connects to), and `scripts/check.sh` (the merge-gate lint that §6 extends).
