@@ -2812,7 +2812,8 @@ theorem decodePcm16_encodePcm16Cfg {cfg : Stream.EncoderCfg}
   split at h
   case isFalse => cases h
   case isTrue hc =>
-    obtain ⟨hch, hsz⟩ := hc
+    unfold Pcm16ShapeOk at hc
+    obtain ⟨hch, _hch8, hsz, _hsr0⟩ := hc
     have hdec := decode_encodeCheckedCfg h
     unfold decodePcm16
     simp only [hdec]

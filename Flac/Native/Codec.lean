@@ -78,12 +78,28 @@ def deinterleave (ch : Nat) (l : List Int) : List (List Int) :=
 def interleave (chs : List (List Int)) : List Int :=
   interleaveN (chs.headD []).length chs
 
+/-- The O(1) shape guard shared by both byte-level encoders, checked
+    before anything sized by its arguments is built (audit finding P8; the
+    two entry points used to disagree about guard order, and the slow one
+    materialized `ch` channel lists before `Audio.WellFormed` ever saw
+    `ch`): channel count positive and within FLAC's limit of 8, byte count
+    an even split into 16-bit channels, and a nonzero sample rate whenever
+    there is audio to stamp it on (RFC 9639 §8.2, audit finding P11 —
+    rate 0 is defensible only for empty content). -/
+def Pcm16ShapeOk (ch sampleRate : Nat) (bytes : ByteArray) : Prop :=
+  0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧
+  (bytes.size = 0 ∨ 0 < sampleRate)
+
+instance (ch sr : Nat) (bytes : ByteArray) : Decidable (Pcm16ShapeOk ch sr bytes) := by
+  unfold Pcm16ShapeOk; exact inferInstance
+
 /-- Byte-level encoder, arbitrary configuration: interleaved signed 16-bit
     little-endian PCM with `ch` channels. Checks its whole precondition at
-    runtime (byte-count shape plus audio well-formedness). -/
+    runtime — the O(1) shape guard first, so nothing sized by `ch` exists
+    until `ch` has passed, then audio well-formedness. -/
 def encodePcm16Cfg (cfg : Flac.Stream.EncoderCfg) (ch sampleRate : Nat)
     (bytes : ByteArray) : Option ByteArray :=
-  if 0 < ch ∧ bytes.size % (2 * ch) = 0 then
+  if Pcm16ShapeOk ch sampleRate bytes then
     encodeCheckedCfg cfg
       ⟨deinterleave ch (pcm16OfByteList bytes.data.toList), 16, sampleRate⟩
   else none
@@ -211,7 +227,7 @@ theorem (`Flac.Encode.audio_wellFormed`). -/
     guarantee (`Flac.Stream.decodePcm16_encodePcm16Fast`). -/
 def encodePcm16Fast (blockSize ch sampleRate : Nat) (bytes : ByteArray) :
     Option ByteArray :=
-  if 0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧ sampleRate < 2 ^ 20
+  if Pcm16ShapeOk ch sampleRate bytes ∧ sampleRate < 2 ^ 20
       ∧ bytes.size / (2 * ch) < 2 ^ 36 ∧ 16 ≤ blockSize ∧ blockSize ≤ 4608 then
     some (Encode.encodePcm16 blockSize ch sampleRate bytes)
   else none

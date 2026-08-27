@@ -476,6 +476,38 @@ def bombTests : TestM Unit := do
     (Flac.Decode.readSubframe 4096 16
       ⟨Bits.bitsToBytes (Bits.alignToByte longRun), 0⟩).isNone
 
+/-! ## Encoder shape guards (audit findings P8 and P11)
+
+Both byte-level encoders now run the shared O(1) `Pcm16ShapeOk` guard
+before anything sized by its arguments exists. These pin the two incidents:
+a channel count whose only rejection used to come from `Audio.WellFormed`,
+checked *after* `ch` channel lists were materialized (P8 — the first check
+below used to OOM), and `sampleRate = 0` stamped on nonempty audio, which
+RFC 9639 §8.2 forbids (P11). -/
+
+def encoderGuardTests : TestM Unit := do
+  let cfg : Stream.EncoderCfg := ⟨4096, false, Heuristics.defaultAsgChooser 16⟩
+  -- P8: empty input satisfies the divisibility guard for every `ch`, so
+  -- `ch ≤ 8` must be part of the same O(1) conjunction
+  check "P8: huge channels + empty input refused (slow)"
+    (Flac.encodePcm16Cfg cfg 4000000000 44100 ByteArray.empty).isNone
+  check "P8: huge channels + empty input refused (fast)"
+    (Flac.encodePcm16Fast 4096 4000000000 44100 ByteArray.empty).isNone
+  check "P8: nine channels refused (slow)"
+    (Flac.encodePcm16Cfg cfg 9 44100 (ByteArray.mk (Array.replicate 18 0))).isNone
+  check "P8: eight channels accepted (slow)"
+    (Flac.encodePcm16Cfg cfg 8 44100 (ByteArray.mk (Array.replicate 16 0))).isSome
+  -- P11: rate 0 is defensible only for empty content
+  let audio := ByteArray.mk (Array.replicate 4000 0)
+  check "P11: rate 0 with audio refused (fast)"
+    (Flac.encodePcm16Fast 4096 1 0 audio).isNone
+  check "P11: rate 0 with audio refused (slow)"
+    (Flac.encodePcm16Cfg cfg 1 0 audio).isNone
+  check "P11: rate 0 with empty input still encodes (fast)"
+    (Flac.encodePcm16Fast 4096 1 0 ByteArray.empty).isSome
+  check "P11: rate 1 with audio encodes (fast)"
+    (Flac.encodePcm16Fast 4096 1 1 audio).isSome
+
 /-- With an argument, write sample encoded streams into that directory
     (for differential testing against `flac`/`ffmpeg` from the shell). -/
 def emitSamples (dir : String) : IO Unit := do
@@ -576,7 +608,7 @@ def encodeFastMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
     IO.println s!"encoded {bytes.size / (2 * ch)} samples x {ch} channels @ {sampleRate} Hz (round-trip guaranteed by Flac.Stream.decodePcm16_encodePcm16Fast)"
     return 0
   | none =>
-    IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, or channels/blockSize/sampleRate out of range)"
+    IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, channels/blockSize/sampleRate out of range, or sample rate 0 with nonempty audio)"
     return 1
 
 /-- The fully verified encoder as a CLI action; kept for differential testing. -/
@@ -590,7 +622,7 @@ def encodeSlowMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
     IO.println s!"encoded {bytes.size / (2 * ch)} samples x {ch} channels @ {sampleRate} Hz (checked: round-trip guaranteed by Flac.decodePcm16_encodePcm16Cfg)"
     return 0
   | none =>
-    IO.println "ENCODE ERROR: input not FLAC-representable"
+    IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, channels/blockSize/sampleRate out of range, or sample rate 0 with nonempty audio)"
     return 1
 
 def cliMain (args : List String) : IO UInt32 := do
@@ -664,7 +696,7 @@ def cliMain (args : List String) : IO UInt32 := do
     IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
     IO.eprintln usage
     return 2
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; encoderGuardTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0
