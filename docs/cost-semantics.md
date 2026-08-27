@@ -317,6 +317,19 @@ cost model is immediately tested against code that cheats for speed.
   (a scoped `deeper` bracket, trampoline reification, a syntactic tail
   certifier, verified stack-cost compilation) is worked out in
   [`stack-semantics.md`](stack-semantics.md).
+- **Speculation and spawning as charges.** P4
+  ([issue #4](https://github.com/ilyasergey/vinyl/issues/4),
+  [`04-speculative-work.md`](04-speculative-work.md)) spent unbounded
+  memory *guessing* frame starts and spawning a task per guess. A charged
+  `Task.spawn` and a per-candidate charge in `stepsPar` would make a
+  linear budget over the parallel decoder unprovable against the storm,
+  in the same way §5's replays fail on P1/P3 — and the density bail that
+  fixed it is exactly the guard that would make the budget go through.
+  The wrinkle is that the speculative layer is deliberately *outside* the
+  functional proofs (its guesses are validated by each step's own
+  equation), so instrumenting it means charging code no correctness
+  theorem mentions: a clean test of whether the cost monad can bound work
+  the value logic never looks at.
 
 ## 8. A concrete starting path for Vinyl
 

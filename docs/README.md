@@ -23,7 +23,7 @@ Every finding lives in a layer the proofs do not reach.
 | [#1](https://github.com/ilyasergey/vinyl/issues/1) | LPC predictor divergence → GMP abort | High | Decoder DoS | fixed ([01](01-robustness-theorems.md)) |
 | [#2](https://github.com/ilyasergey/vinyl/issues/2) | Constant-subframe decompression bomb | High | Decoder DoS | fixed ([02](02-output-size-bounds.md)) |
 | [#3](https://github.com/ilyasergey/vinyl/issues/3) | Unvalidated `totalSamples` → 1.1 TB allocation | Med-High | Decoder DoS | fixed ([03](03-untrusted-sizes.md)) |
-| [#4](https://github.com/ilyasergey/vinyl/issues/4) | Sync-candidate / task storm | Medium | Decoder DoS | in progress ([04](04-speculative-work.md), draft) |
+| [#4](https://github.com/ilyasergey/vinyl/issues/4) | Sync-candidate / task storm | Medium | Decoder DoS | fixed ([04](04-speculative-work.md)) |
 | [#5](https://github.com/ilyasergey/vinyl/issues/5) | Unbounded wasted-bits count, saturating depth | Medium | Decoder DoS | open ([05](05-saturating-arithmetic.md), draft) |
 | [#6](https://github.com/ilyasergey/vinyl/issues/6) | Many tiny frames → non-tail recursion | Medium | Decoder DoS | open ([06](06-recursion-shape.md), draft) |
 | [#7](https://github.com/ilyasergey/vinyl/issues/7) | Unguarded public encoder → silent wrong value | Medium | Correctness | open |
@@ -47,10 +47,11 @@ Every finding lives in a layer the proofs do not reach.
 - [03 — Untrusted sizes](03-untrusted-sizes.md): the P3 header-driven
   allocation — a fix no theorem could require, why the capacity cap is
   shaped the way it is, and what pins proof-invisible fixes.
-- [04 — Speculative work](04-speculative-work.md) *(draft)*: the P4
-  sync-candidate storm — resources spent guessing; why the parallel-path
-  theorems are unconditional in the candidate array, and why speculation
-  behind a self-validating boundary can be capped proof-free.
+- [04 — Speculative work](04-speculative-work.md): the P4 sync-candidate
+  storm — resources spent guessing; why the parallel-path theorems are
+  unconditional in the candidate array, and why speculation behind a
+  self-validating boundary (the density bail and task cap) can be capped
+  proof-free.
 - [05 — Saturating arithmetic](05-saturating-arithmetic.md) *(draft)*:
   the P5 wasted-bits bomb — a functional bug wearing a DoS symptom:
   saturating `Nat` subtraction silently accepts streams the RFC rejects;

@@ -1,12 +1,5 @@
 # Speculative work: when the optimizer is the attack surface
 
-> **DRAFT — the P4 fix is in flight.** Markers of the form `TODO(fix)`
-> hold places for details of the landed change (final shape, constants,
-> lemma and test names, measurements). Structure and analysis are ready
-> for review; the owner of the P4 round should fill, adjust, and de-draft
-> this note in the same docs commit that records the fix, and add the
-> README bullet.
-
 Written after fixing audit finding P4
 ([issue #4](https://github.com/ilyasergey/vinyl/issues/4), the
 sync-candidate storm). The previous notes covered resources spent
@@ -24,12 +17,12 @@ says where frame `n + 1` starts. The parallel decoder therefore guesses.
 It scans the input for every offset that merely *looks* like a frame sync
 code (`0xFF` then `0b111110xx`), collects each hit as a candidate, and
 spawns speculative decode tasks for all of them up front (`syncScan`,
-`syncCandidates`, `stepsPar`; two candidates per task). A file whose tail
-is a run of `FF F8` pairs makes every second offset a candidate: a 64 MB
-file yields ~32 million candidates and ~16 million task objects, all
-allocated before a single candidate is parsed, and the process dies with
-`std::bad_alloc`. Not one candidate was a real frame; the entire cost was
-paid from guessing.
+`syncCandidates`, `stepsPar`; a fixed few candidates per task). A file
+whose tail is a run of `FF F8` pairs makes every second offset a
+candidate: a 64 MB file yields ~32 million candidates and ~16 million
+task objects, all allocated before a single candidate is parsed, and the
+process dies with `std::bad_alloc` (rc 134) after ~183 s. Not one
+candidate was a real frame; the entire cost was paid from guessing.
 
 ## Why the proofs don't catch it — and were designed not to
 
@@ -72,26 +65,53 @@ guarded by lint and checklist, recorded here.
 
 ## The fix
 
-`TODO(fix)` — replace with the landed shape. The suggested design from the
-audit, for comparison with what landed:
+Two independent caps landed, both in `Flac/Native/Decode.lean`, matching
+the audit's two suggestions.
 
-- **Density cap.** A real frame needs at least `minFrameBytes` of input
-  (cf. `frame_write_length_lb` from the P2 round: ≥ 80 + 8·ch bits), so
-  more than `d.size / minFrameBytes`-ish candidates proves the file is
-  lying about being frames. Past a multiple of that density, fall back to
-  the serial loop, which is already the semantics the equations collapse
-  to.
-- **Task granularity.** Chunk speculative work by byte range rather than
-  per candidate, so the number of task objects is bounded by input size
-  over chunk size regardless of candidate density.
+**Density bail, at gathering.** `minFrameBytes := 16` records that no
+honestly framed stream carries a sync candidate denser than one per
+16 bytes — a real frame is far larger (`frame_write_length_lb` gives
+≥ `80 + 8·ch` bits, and that is before any subframe payload). Two places
+act on it:
 
-`TODO(fix)`: final constants and where they live; whether the cap is at
-`syncCandidates` (gathering) or `stepsPar`/`byteStepsPar` (spawning) or
-both; interaction with the P2 per-chunk precompute allowance; reproducer
-behavior after the fix (rc, peak RSS, wall time, serial-fallback
-threshold); regression test names; perf spot-check that real corpora do
-not trip the density cap (they must not — density caps are only sound
-when real data sits orders of magnitude below them).
+- `syncScan` caps each window's collected candidates at `(hi - lo) /
+  minFrameBytes + 8` and stops scanning (`break`) once full, so no single
+  window can allocate an array proportional to the attacker's pattern.
+- `syncCandidates`, after gathering, discards the entire set —
+  `if minFrameBytes * cands.size ≥ d.size then #[]` — when the density is
+  impossible. An empty candidate array is not a special case downstream:
+  the frame loop already decodes on the spot wherever no step is recorded,
+  so `#[]` simply means "decode serially from `start`", and the first
+  non-frame is rejected in O(1). The bail sits at `syncCandidates` rather
+  than at each use, so both the sample path (`stepsPar`) and the byte path
+  (`byteStepsPar`) inherit it from the one function they both call.
+
+**Task-count cap, at spawning.** `maxStepTasks := 1024`, and
+`stepChunkFor n := max stepChunkSize ((n + maxStepTasks - 1) /
+maxStepTasks)` grows the per-task chunk so that `stepsPar` and
+`byteStepsPar` spawn at most `maxStepTasks` task objects whatever the
+candidate count. This is defense in depth: the density bail already
+empties the pathological case, but the task cap bounds fan-out memory by
+`input / chunk` for any input that *does* keep candidates, decoupling task
+count from candidate count permanently. It composes cleanly with the P2
+per-chunk precompute allowance (`chunkBudget`), which bounds the *output*
+each surviving task may materialize; this bounds *how many* tasks there
+are. Neither cap knows about the other.
+
+The threshold has large provable slack. A frame at the smallest legal
+block size still runs tens of bytes, so honest candidate density stays
+well under 1/16; measured, a 1.47 MB sine gives 499 candidates against a
+92 110 threshold (~185× headroom), and it decodes on the full parallel
+path unchanged. The `FF F8` pattern sits at 1/2, four orders of magnitude
+the other side of the line.
+
+After the fix the audit's 64 MB storm returns a clean `DECODE ERROR` in
+0.48 s at 246 MB peak RSS (from `std::bad_alloc` at ~4.1 GB after 183 s);
+the 8 MB variant is instant at 32 MB. Regression tests (`syncStormTests`,
+folded into the hardening test group): the density bail returns `#[]`,
+both decoders reject the storm, honest audio keeps a nonempty candidate
+set, and the task count stays `≤ maxStepTasks` for an arbitrarily large
+candidate count.
 
 ## What is deliberately not proven
 
@@ -101,10 +121,21 @@ execution cost, which the logic erases; unlike `03`, even the *result* it
 feeds downstream is already unconditionally covered. The honest register
 of this fix is the convention tier. The cost-semantics proposal
 ([`cost-semantics.md`](cost-semantics.md)) would change that: a charged
-`Task.spawn` and per-candidate charge in `stepsPar` would make the linear
+`Task.spawn` and a per-candidate charge in `stepsPar` would make a linear
 budget unprovable against the storm exactly as its §5 replays do for
-P1/P3. `TODO(fix)`: link the landed cap from cost-semantics §7/§8 if the
-peer note's example list is updated.
+P1/P3, and the density bail is what would let the proof go through again —
+the same shape as the P2 budget, one layer out.
+
+There is also a concrete residual, worth stating plainly. The bail
+discards the candidate set only *after* gathering it, and `syncScan`'s
+per-window cap allows up to `d.size / minFrameBytes` candidates in total
+(≈ input/16) before the discard. So peak memory on the attack is linear
+in input, not O(1) — the 246 MB above is mostly the 64 MB input plus that
+transient candidate array and its parallel-window pieces. A genuinely
+constant-memory rejection would abort the scan the moment the first window
+saturates, since one saturated window already proves the density is
+impossible; that is a worthwhile tightening but changes `syncScan`'s
+window-parallel structure, so it was left for when the constant matters.
 
 ## Checklist addition for new decoder paths
 
