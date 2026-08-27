@@ -6,25 +6,17 @@ which falsified no theorem and still produced eleven findings. Numbered
 notes record landed work in fix order; unnumbered notes are research
 proposals.
 
-- [01 — Robustness theorems](01-robustness-theorems.md): why a verified
-  decoder was still killable; taxonomy of theorem kinds vs bug classes;
-  the P1 fix pattern; checklist for new decoder paths.
-- [02 — Output-size bounds](02-output-size-bounds.md): the P2
-  decompression-bomb budget as a theorem (`Flac.decode_size_le`), and the
-  bridging-equation technique that reused the existing proofs.
-- [03 — Untrusted sizes](03-untrusted-sizes.md): the P3
-  header-driven allocation — a fix no theorem could require, why the
-  capacity cap is shaped the way it is, and what pins proof-invisible
-  fixes.
-- [Cost semantics](cost-semantics.md) *(research)*: a credit-charging
-  cost monad for Lean to make resource bounds provable, motivated by
-  P1/P3; theorem shapes, trusted residue, literature.
-
 ## The findings
 
 From the audit's tracking issue
-([#12](https://github.com/ilyasergey/vinyl/issues/12)); none falsifies a
-theorem.
+([#12](https://github.com/ilyasergey/vinyl/issues/12)). None falsifies any
+of the project's theorems: the audit exercised the round-trip capstones
+(`Flac.decode_encode` and its checked/configurable variants,
+`decodeReference_encode`) and the fast-path equivalence theorems
+(`emitFast_eq_encode`, `decodeBytes_spec`) on the compiled binary, found
+no input violating them within their stated scope, and confirmed the
+axiom footprint is the standard `propext, Classical.choice, Quot.sound`.
+Every finding lives in a layer the proofs do not reach.
 
 | # | Finding | Severity | Class | Status |
 |---|---------|----------|-------|--------|
@@ -42,3 +34,19 @@ theorem.
 
 See also [`PROGRESS.md`](../PROGRESS.md) (per-session log, sessions 17+)
 and [`scripts/check.sh`](../scripts/check.sh) (the merge-gate lint).
+
+
+- [01 — Robustness theorems](01-robustness-theorems.md): why a verified
+  decoder was still killable; taxonomy of theorem kinds vs bug classes;
+  the P1 fix pattern; checklist for new decoder paths.
+- [02 — Output-size bounds](02-output-size-bounds.md): the P2
+  decompression-bomb budget as a theorem (`Flac.decode_size_le`), and the
+  bridging-equation technique that reused the existing proofs.
+- [03 — Untrusted sizes](03-untrusted-sizes.md): the P3
+  header-driven allocation — a fix no theorem could require, why the
+  capacity cap is shaped the way it is, and what pins proof-invisible
+  fixes.
+- [Cost semantics](cost-semantics.md) *(research)*: a credit-charging
+  cost monad for Lean to make resource bounds provable, motivated by
+  P1/P3; theorem shapes, trusted residue, literature.
+
