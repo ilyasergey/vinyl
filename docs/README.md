@@ -18,19 +18,81 @@ no input violating them within their stated scope, and confirmed the
 axiom footprint is the standard `propext, Classical.choice, Quot.sound`.
 Every finding lives in a layer the proofs do not reach.
 
-| # | Finding | Severity | Class | Status |
-|---|---------|----------|-------|--------|
-| [#1](https://github.com/ilyasergey/vinyl/issues/1) | LPC predictor divergence → GMP abort | High | Decoder DoS | fixed ([01](01-robustness-theorems.md)) |
-| [#2](https://github.com/ilyasergey/vinyl/issues/2) | Constant-subframe decompression bomb | High | Decoder DoS | fixed ([02](02-output-size-bounds.md)) |
-| [#3](https://github.com/ilyasergey/vinyl/issues/3) | Unvalidated `totalSamples` → 1.1 TB allocation | Med-High | Decoder DoS | fixed ([03](03-untrusted-sizes.md)) |
-| [#4](https://github.com/ilyasergey/vinyl/issues/4) | Sync-candidate / task storm | Medium | Decoder DoS | fixed ([04](04-speculative-work.md)) |
-| [#5](https://github.com/ilyasergey/vinyl/issues/5) | Unbounded wasted-bits count, saturating depth | Medium | Decoder DoS | fixed ([05](05-saturating-arithmetic.md)) |
-| [#6](https://github.com/ilyasergey/vinyl/issues/6) | Many tiny frames → non-tail recursion | Medium | Decoder DoS | open ([06](06-recursion-shape.md), draft) |
-| [#7](https://github.com/ilyasergey/vinyl/issues/7) | Unguarded public encoder → silent wrong value | Medium | Correctness | open ([07](07-api-surface.md), draft) |
-| [#8](https://github.com/ilyasergey/vinyl/issues/8) | `--encode-slow` huge channels + empty file | Medium | Encoder DoS | open ([08](08-late-guards.md), draft) |
-| [#9](https://github.com/ilyasergey/vinyl/issues/9) | `toNat!` panic on bad numeric argument | Low-Med | CLI robustness | open ([09](09-lint-surface.md), draft) |
-| [#10](https://github.com/ilyasergey/vinyl/issues/10) | `-j` re-executes once per flag | Low | CLI robustness | open ([10](10-prose-claims.md), draft) |
-| [#11](https://github.com/ilyasergey/vinyl/issues/11) | `sampleRate = 0` emitted with audio | Low | Conformance | open ([11](11-spec-adequacy.md), draft) |
+| # | Finding | Severity | Class | Tier | Status |
+|---|---------|----------|-------|------|--------|
+| [#1](https://github.com/ilyasergey/vinyl/issues/1) | LPC predictor divergence → GMP abort | High | Decoder DoS | T | fixed ([01](01-robustness-theorems.md)) |
+| [#2](https://github.com/ilyasergey/vinyl/issues/2) | Constant-subframe decompression bomb | High | Decoder DoS | T | fixed ([02](02-output-size-bounds.md)) |
+| [#3](https://github.com/ilyasergey/vinyl/issues/3) | Unvalidated `totalSamples` → 1.1 TB allocation | Med-High | Decoder DoS | C+R | fixed ([03](03-untrusted-sizes.md)) |
+| [#4](https://github.com/ilyasergey/vinyl/issues/4) | Sync-candidate / task storm | Medium | Decoder DoS | C+R | fixed ([04](04-speculative-work.md)) |
+| [#5](https://github.com/ilyasergey/vinyl/issues/5) | Unbounded wasted-bits count, saturating depth | Medium | Decoder DoS | T | fixed ([05](05-saturating-arithmetic.md)) |
+| [#6](https://github.com/ilyasergey/vinyl/issues/6) | Many tiny frames → non-tail recursion | Medium | Decoder DoS | C+R | open ([06](06-recursion-shape.md), draft) |
+| [#7](https://github.com/ilyasergey/vinyl/issues/7) | Unguarded public encoder → silent wrong value | Medium | Correctness | T+R | open ([07](07-api-surface.md), draft) |
+| [#8](https://github.com/ilyasergey/vinyl/issues/8) | `--encode-slow` huge channels + empty file | Medium | Encoder DoS | C+R | open ([08](08-late-guards.md), draft) |
+| [#9](https://github.com/ilyasergey/vinyl/issues/9) | `toNat!` panic on bad numeric argument | Low-Med | CLI robustness | C | open ([09](09-lint-surface.md), draft) |
+| [#10](https://github.com/ilyasergey/vinyl/issues/10) | `-j` re-executes once per flag | Low | CLI robustness | C | open ([10](10-prose-claims.md), draft) |
+| [#11](https://github.com/ilyasergey/vinyl/issues/11) | `sampleRate = 0` emitted with audio | Low | Conformance | T+R | open ([11](11-spec-adequacy.md), draft) |
+
+**Tier legend** — how each fix is (or will be) secured; see
+[Formal-methods coverage](#formal-methods-coverage) below.
+
+- **T** — theorem tier: the fix is secured by kernel-checked theorems
+  using existing machinery; no new theory was needed.
+- **C** — construction tier: enforced by code shape, lint, or test;
+  no theorem can state the property in the current semantics.
+- **+R** — a research note proposes the theory that would upgrade it to
+  **T** (or, for T+R, that would secure the finding's whole *class*
+  rather than this instance).
+
+## Formal-methods coverage
+
+**What research would buy, per issue.** Four directions surfaced, each
+with its own note:
+
+- *Provable heap and time bounds* ([cost semantics](cost-semantics.md))
+  would upgrade **#3** (the capacity hint becomes a charged allocation),
+  **#4** (spawning and candidate gathering become charges the storm
+  cannot pay), and **#8** (deciding a guard is charged in evaluation
+  order, so guard-order bugs fail the budget proof). The value-bound
+  theorems from **#1** are what such proofs would consume.
+- *Provable stack depth* ([stack semantics](stack-semantics.md)) would
+  upgrade **#6**: today the accumulator rewrite is pinned by equalities,
+  but constant depth itself rests on syntax plus the compiler.
+- *Mechanized name-to-theorem coverage*
+  ([API contracts](api-contracts.md)) addresses **#7**'s class: a
+  `@[covered_by]` checker makes "the natural name carries the strongest
+  guarantee" a build failure instead of a review habit, and its
+  perimeter corollaries absorb the lessons of **#9**/**#10**.
+- *Validating the model against the standard*
+  ([spec validation](spec-validation.md)) addresses **#11**'s class (and
+  the accept-set half of **#5**): traceability matrix, must-reject
+  corpora, referee triangulation, and an explicit accept-set predicate,
+  so model-vs-RFC deviations surface at the gate instead of in audits.
+
+**What formal methods cannot close, in principle.** No finding is beyond
+formal methods entirely — each can be moved from *silent* to *checked*.
+But two bindings at the edges are irreducibly informal, and several
+findings bottom out in them. The *prose-to-formal binding*: no theorem
+can certify that `WellFormed` means what RFC 9639's English means
+(**#11**), or that a docstring's promise matches its author's intent
+(**#10**) — formalization shrinks the text a human must compare, and
+stops there. The *model-to-machine binding*: any cost, stack, or IO
+model is adequate only up to trust in compiler, runtime, and hardware
+(**#3**, **#4**, **#6**, **#8** even after the research lands); verified
+compilation à la CakeML moves this boundary down to the hardware model,
+never past it. Everything else about all eleven findings is, in
+principle, theorem-shaped.
+
+**What needed no new theory at all.** **#1**, **#2**, and **#5** are
+fixed and theorem-secured today with machinery the project already had:
+a bounding primitive plus an identity-on-valid lemma (#1), a budget
+bridged to the old loops by one equation each (#2), an accept-set guard
+carried through the existing simulation stack (#5). **#7** and **#11**
+are the same kind — their drafts show existing theorems suffice (the
+hypothesis-free checked capstone, and `some`-conditional guard
+tightening) — pending their rounds. **#9** and **#10** need no theory
+either, but in the opposite sense: after the fix there is nothing left
+for a theorem to say; a total parser and a tested re-exec loop are
+correct by construction, which is what tier **C** without **+R** marks.
 
 ## Incident notes
 
