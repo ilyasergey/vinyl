@@ -78,7 +78,7 @@ Each one, when missing, admits a distinct class of attack.
 | Round-trip correctness | `decode (encode a) = a` on well-formed `a` | wrong output on *valid* streams | proven (capstones) |
 | Value boundedness | for *arbitrary* input, every intermediate and output value fits a fixed width | value blowup: bignum divergence, GMP abort (P1) | wrap by construction + `fitsSInt_wrapSInt`; end-to-end statement is future work |
 | Output-size bound | `size (decode bytes) ≤ k · size bytes + c` | decompression bombs / amplification OOM (P2, P3) | proven: `Flac.decode_size_le` at `k = 4096` ([`02-output-size-bounds.md`](02-output-size-bounds.md)); P3's up-front allocation fixed proof-free ([`03-untrusted-sizes.md`](03-untrusted-sizes.md)) |
-| Stack shape | recursion is tail (or depth ≤ constant) for arbitrary input | stack overflow on many tiny frames (P6) | lint-enforced style, no theorem ([#6](https://github.com/ilyasergey/vinyl/issues/6)) |
+| Stack shape | recursion is tail (or depth ≤ constant) for arbitrary input | stack overflow on many tiny frames (P6) | lint-enforced style, no theorem ([#6](https://github.com/ilyasergey/vinyl/issues/6)); ways to make depth provable: [`stack-semantics.md`](stack-semantics.md) |
 | Termination | fuel-bounded loops, no `partial` | infinite loops on crafted input | by construction |
 | Early validation | header claims are checked against input size *before* any allocation proportional to them | huge up-front allocation from a tiny file (P3, P8) | P3 fixed — a capped capacity hint, unenforceable by any theorem ([`03-untrusted-sizes.md`](03-untrusted-sizes.md)); P8 open ([#8](https://github.com/ilyasergey/vinyl/issues/8)) |
 

@@ -313,7 +313,10 @@ cost model is immediately tested against code that cheats for speed.
   ([issue #6](https://github.com/ilyasergey/vinyl/issues/6)) is a
   stack-depth bug; depth
   charging in the same monad would cover it, but Lean's compiler decides
-  tail calls, which puts adequacy under pressure again.
+  tail calls, which puts adequacy under pressure again. The design space
+  (a scoped `deeper` bracket, trampoline reification, a syntactic tail
+  certifier, verified stack-cost compilation) is worked out in
+  [`stack-semantics.md`](stack-semantics.md).
 
 ## 8. A concrete starting path for Vinyl
 
