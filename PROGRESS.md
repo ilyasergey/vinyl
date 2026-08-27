@@ -1968,3 +1968,14 @@ bounds, stack shape, early validation), and the reusable fix pattern
 **Next:** end-to-end boundedness theorem (`decodeArrays` samples fit
 `bps + 2` for arbitrary bytes — all local pieces now exist), then P2/P3
 (output-size vs input-size bound in the frame loop).
+
+**Addendum (same session):** wrote `docs/shallow-cost-semantics.md` — a
+research note motivating a shallowly-embedded cost semantics for Lean from
+P1/P3: why cost bugs are invisible to the logic (capacity hints are
+definitionally erased; totality does not bound bignum magnitude), a
+`CostM`/`charge` sketch with the two theorem shapes (pin + linear-budget
+sufficiency), replays of P1 and P3 as proof holes, the trusted residue
+(charging completeness via lint, adequacy constants, RC-uniqueness), open
+research questions, a staged adoption path, and literature pointers
+(CakeML space semantics, time credits, RAML, Danielsson, Perceus).
+Cross-linked from `robustness-theorems.md`.

@@ -142,3 +142,9 @@ Before merging a function that consumes untrusted bits, answer for it:
 - Output-size and early-validation theorems for the amplification
   findings (issues #2, #3), which need a size-vs-input bound in the frame
   loop, not a value bound.
+- Making resource consumption itself provable: value-level theorems bound
+  what the decoder *returns*, never what it *spends* computing it (the
+  capacity hint in P3 is definitionally invisible to the logic).
+  `shallow-cost-semantics.md` develops this into a concrete proposal: a
+  credit-charging cost monad over Lean, its two theorem shapes, and the
+  research questions Vinyl makes concrete.
