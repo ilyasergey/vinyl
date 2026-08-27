@@ -86,40 +86,22 @@ one of two findings (with P1) whose fix touches proven functions, yet the
 change is entirely at the boundary between the theorems and their
 audience.
 
-## The methodology: keeping names and guarantees aligned
+## The methodology, in brief
 
-The reusable discipline, stated as rules for any verified library:
-
-1. **Precondition-as-guard by default.** Public entry points check their
-   preconditions at runtime and return `Option`/`Except`; the
-   hypothesis-conditional theorem lives *behind* the guard, packaged as a
-   hypothesis-free statement about the guarded function ("every `some`
-   round-trips"). Decidability of `WellFormed` is what makes this free;
-   keeping preconditions decidable is therefore an API decision, not just
-   a proof convenience.
-2. **The natural name goes to the guarded form.** Unchecked variants
-   exist for proofs and for callers who own the precondition; they live
-   in a namespace that says so (`Unchecked`, `Internal`), never as the
-   shortest path. A docstring may not claim more than the theorem that
-   mentions the function by name.
-3. **An API-to-theorem map, checked at the gate.** For every exported
-   entry point: which theorem covers *this name* (not a sibling), and is
-   it hypothesis-free? `scripts/check.sh` already pins that the CLI
-   branches call the functions the capstones are about; the same
-   mechanism extends to the library surface — every public entry point is
-   either capstone-covered or runtime-guarded, and the gate greps for it.
-   `TODO(fix)`: record the check if the round adds it.
-4. **Consider making the precondition unrepresentable.** The stronger
-   form is a subtype (`{a : Audio // a.WellFormed}`) with a smart
-   constructor, so the guard runs once and the type carries it — worth it
-   when callers hold values across many calls; the `Option` guard is the
-   lighter default.
-
-The general statement of the class, for the taxonomy: a *coverage* bug.
-Value bounds, size bounds, and stack shape asked "is the property
-proven?"; this asks "is the proven property attached to what users
-actually touch?" — a question about every exported name, answerable by
-inspection, and worth a row in any audit of a verified artifact.
+The reusable discipline is developed in its own research note,
+[`api-contracts.md`](api-contracts.md); the short form: this is a
+*coverage* bug — earlier notes asked "is the property proven?", this one
+asks "is the proven property attached to what users actually touch?" The
+four rules: precondition-as-guard by default (with the
+hypothesis-free-capstone packaging, and preconditions kept decidable as
+an API decision); the natural, shortest-path name carries the strongest
+guarantee, unchecked forms live in a namespace that says so; an
+API-to-theorem map — which theorem covers *this name*, not a sibling —
+checked at the merge gate, with a metaprogrammed `@[covered_by]`
+annotation as the mechanized form; and escalation to a subtype
+(`{a : Audio // a.WellFormed}`) when callers hold values across many
+calls. `TODO(fix)`: record whichever gate check the round adds, here and
+in the research note.
 
 ## Checklist addition for new entry points
 
