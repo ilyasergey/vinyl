@@ -107,8 +107,8 @@ the other side of the line.
 
 After the fix the audit's 64 MB storm returns a clean `DECODE ERROR` in
 0.48 s at 246 MB peak RSS (from `std::bad_alloc` at ~4.1 GB after 183 s);
-the 8 MB variant is instant at 32 MB. Regression tests (`syncStormTests`,
-folded into the hardening test group): the density bail returns `#[]`,
+the 8 MB variant is instant at 32 MB. Regression tests (the P4 checks in
+`bombTests`, `FlacTest/Cli.lean`): the density bail returns `#[]`,
 both decoders reject the storm, honest audio keeps a nonempty candidate
 set, and the task count stays `≤ maxStepTasks` for an arbitrarily large
 candidate count.
