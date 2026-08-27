@@ -148,12 +148,14 @@ Known residual, recorded so it is not rediscovered:
   shrink the constant substantially, but changes what the bridging
   equations are stated over. Worth doing if the constant ever matters.
 
-- **P3 is not this bug.** `decodeBytes` still pre-sizes its output buffer
-  from the header's untrusted `totalSamples`
-  ([issue #3](https://github.com/ilyasergey/vinyl/issues/3)); that is an
-  early-validation fix, one line, and its invisibility to the logic is the
-  motivating example of
-  [`cost-semantics.md`](cost-semantics.md).
+- **P3 is not this bug** — and has since been fixed separately.
+  `decodeBytes` pre-sized its output buffer from the header's untrusted
+  `totalSamples` ([issue #3](https://github.com/ilyasergey/vinyl/issues/3));
+  that fix is one line and invisible to the logic, which is the
+  motivating example of [`cost-semantics.md`](cost-semantics.md) and the
+  subject of [`03-untrusted-sizes.md`](03-untrusted-sizes.md). Notably,
+  the budget defined here is deliberately *not* its capacity cap: a
+  rejection threshold is not a size estimate.
 
 - **The budget bounds samples, not resident bytes.** What the process
   actually spends per admitted sample (boxed arrays, concatenation copies,

@@ -12,6 +12,10 @@ proposals.
 - [02 — Output-size bounds](02-output-size-bounds.md): the P2
   decompression-bomb budget as a theorem (`Flac.decode_size_le`), and the
   bridging-equation technique that reused the existing proofs.
+- [03 — Untrusted sizes](03-untrusted-sizes.md): the P3
+  header-driven allocation — a fix no theorem could require, why the
+  capacity cap is shaped the way it is, and what pins proof-invisible
+  fixes.
 - [Cost semantics](cost-semantics.md) *(research)*: a credit-charging
   cost monad for Lean to make resource bounds provable, motivated by
   P1/P3; theorem shapes, trusted residue, literature.

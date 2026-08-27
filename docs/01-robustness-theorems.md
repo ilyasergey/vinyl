@@ -77,10 +77,10 @@ Each one, when missing, admits a distinct class of attack.
 |---|---|---|---|
 | Round-trip correctness | `decode (encode a) = a` on well-formed `a` | wrong output on *valid* streams | proven (capstones) |
 | Value boundedness | for *arbitrary* input, every intermediate and output value fits a fixed width | value blowup: bignum divergence, GMP abort (P1) | wrap by construction + `fitsSInt_wrapSInt`; end-to-end statement is future work |
-| Output-size bound | `size (decode bytes) ≤ k · size bytes + c` | decompression bombs / amplification OOM (P2, P3) | proven: `Flac.decode_size_le` at `k = 4096` ([`02-output-size-bounds.md`](02-output-size-bounds.md)); P3's up-front allocation still open ([#3](https://github.com/ilyasergey/vinyl/issues/3)) |
+| Output-size bound | `size (decode bytes) ≤ k · size bytes + c` | decompression bombs / amplification OOM (P2, P3) | proven: `Flac.decode_size_le` at `k = 4096` ([`02-output-size-bounds.md`](02-output-size-bounds.md)); P3's up-front allocation fixed proof-free ([`03-untrusted-sizes.md`](03-untrusted-sizes.md)) |
 | Stack shape | recursion is tail (or depth ≤ constant) for arbitrary input | stack overflow on many tiny frames (P6) | lint-enforced style, no theorem ([#6](https://github.com/ilyasergey/vinyl/issues/6)) |
 | Termination | fuel-bounded loops, no `partial` | infinite loops on crafted input | by construction |
-| Early validation | header claims are checked against input size *before* any allocation proportional to them | huge up-front allocation from a tiny file (P3, P8) | not yet ([#3](https://github.com/ilyasergey/vinyl/issues/3), [#8](https://github.com/ilyasergey/vinyl/issues/8)) |
+| Early validation | header claims are checked against input size *before* any allocation proportional to them | huge up-front allocation from a tiny file (P3, P8) | P3 fixed — a capped capacity hint, unenforceable by any theorem ([`03-untrusted-sizes.md`](03-untrusted-sizes.md)); P8 open ([#8](https://github.com/ilyasergey/vinyl/issues/8)) |
 
 The key discipline: for each theorem, ask **which set of inputs it
 quantifies over**. "All well-formed audio" protects users of the encoder.
@@ -172,12 +172,15 @@ Before merging a function that consumes untrusted bits, answer for it:
   `Flac.decode_size_le` bounds decoded samples linearly in input size for
   arbitrary bytes; the fix pattern (a budget threaded through the frame
   loop, bridged to the unbudgeted loop by one equation per loop) is
-  [`02-output-size-bounds.md`](02-output-size-bounds.md). Early
-  validation for P3's header-driven allocation
-  ([#3](https://github.com/ilyasergey/vinyl/issues/3)) remains.
+  [`02-output-size-bounds.md`](02-output-size-bounds.md). P3's
+  header-driven allocation is also fixed
+  ([`03-untrusted-sizes.md`](03-untrusted-sizes.md)) — proof-free by
+  necessity, which is its own lesson; P8's early-validation gap
+  ([#8](https://github.com/ilyasergey/vinyl/issues/8)) remains.
 - Making resource consumption itself provable: value-level theorems bound
   what the decoder *returns*, never what it *spends* computing it (the
-  capacity hint in P3 is definitionally invisible to the logic).
+  P3 capacity hint was definitionally invisible to the logic, and its fix
+  changed no proof — [`03-untrusted-sizes.md`](03-untrusted-sizes.md)).
   [`cost-semantics.md`](cost-semantics.md) develops this
   into a concrete proposal: a
   credit-charging cost monad over Lean, its two theorem shapes, and the

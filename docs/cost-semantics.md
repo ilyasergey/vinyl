@@ -26,11 +26,13 @@ process. Two of them frame this note:
   merely did not fit in physical memory.
 
 - **P3 ([issue #3](https://github.com/ilyasergey/vinyl/issues/3)).** The
-  fast decoder pre-sizes its output buffer from the
+  fast decoder pre-sized its output buffer from the
   stream header's 36-bit `totalSamples` field, before parsing any audio.
-  A 42-byte file claiming ~4·10⁹ samples requests ~1.1 TB as the decoder's
-  first act. Under any memory ceiling (a container limit, `ulimit -v`) the
-  process aborts having decoded nothing.
+  A 42-byte file claiming ~4·10⁹ samples requested ~1.1 TB as the
+  decoder's first act. Under any memory ceiling (a container limit,
+  `ulimit -v`) the process aborted having decoded nothing. (Since fixed —
+  [`03-untrusted-sizes.md`](03-untrusted-sizes.md) — in exactly the
+  clamped form §5 derives, a point taken up there.)
 
 Neither is a functional-correctness bug. Both are *cost* bugs: the machine
 resources consumed while computing a value, which Lean's logic does not
@@ -229,6 +231,14 @@ let out ← emptyWithCapacityC (min (2 * si.channels * si.totalSamples + 64)
 surfaced at development time, in the same workflow that surfaces
 functional bugs. That is the entire thesis of the approach in one example.
 
+This replay was written before the fix landed; the fix that later landed
+(`Decode.outCapacity`, [`03-untrusted-sizes.md`](03-untrusted-sizes.md))
+is the `min`-clamped form above with `k = 16` — chosen by hand and by
+review, since without the instrumentation nothing forces it. The
+prediction and the fix agreeing is mild evidence for the model; that
+nothing but review *keeps* them agreeing is the argument for building
+it.
+
 **P1, replayed.** In the restore recurrence, each step's charge is
 `limbs r + Σᵢ (limbs cᵢ + limbs histᵢ)` through `mulC`. On the unwrapped
 recurrence, no bound on `limbs histᵢ` is available — the magnitude of a
@@ -307,10 +317,12 @@ cost model is immediately tested against code that cheats for speed.
 
 ## 8. A concrete starting path for Vinyl
 
-1. Land the value-level fixes for
-   [#2](https://github.com/ilyasergey/vinyl/issues/2)/[#3](https://github.com/ilyasergey/vinyl/issues/3)
-   first (output-size checks in the
-   frame loop); their theorems are prerequisites and need no new
+1. ~~Land the value-level fixes for #2/#3 first~~ — done:
+   [`02-output-size-bounds.md`](02-output-size-bounds.md) (the frame-loop
+   budget and `Flac.decode_size_le`) and
+   [`03-untrusted-sizes.md`](03-untrusted-sizes.md) (the capacity clamp).
+   The value lemmas the cost proofs will consume exist
+   (`frameCostTotal_le`, `encode_cost_le_budget`), and needed no new
    machinery.
 2. Build `Flac/Cost/` : `CostM`, `charge`, charged wrappers for
    `ByteArray`/`Array` allocation and `Int` arithmetic; extend
