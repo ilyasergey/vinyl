@@ -390,6 +390,26 @@ def bombTests : TestM Unit := do
     (Flac.encodePcm16Fast 4608 2 44100 pcm).isSome
   check "fast encoder rejects block size 4609"
     (Flac.encodePcm16Fast 4609 2 44100 pcm).isNone
+  -- P3 regression: STREAMINFO's totalSamples reaches the decoder only as
+  -- a capacity hint, capped by `outCapacity` against the input size.
+  -- Setting the 36-bit field to all-ones (file bytes 21–25: layout is 108
+  -- header bits before it) must change nothing about the decode — and
+  -- must not reserve ~1.1 TB, which is what this test used to request.
+  let lying := ByteArray.mk <| ok.data.mapIdx fun i b =>
+    if i = 21 then b ||| 0x0F
+    else if 22 ≤ i ∧ i ≤ 25 then 0xFF
+    else b
+  check "P3: lying totalSamples decodes identically (byte path)"
+    (Flac.Decode.decodeBytes lying == Flac.Decode.decodeBytes ok
+      && (Flac.Decode.decodeBytes ok).isSome)
+  check "P3: lying totalSamples decodes identically (sample path)"
+    (match Flac.decode lying with
+     | .ok a => a.channels == silence
+     | .error _ => false)
+  -- the audit's 42-byte shape: header only, no frames, maximal claim
+  let frameless := lying.extract 0 42
+  check "P3: frameless maximal-claim file decodes to empty"
+    ((Flac.Decode.decodeBytes frameless).map (·.1.size) == some 0)
 
 /-- With an argument, write sample encoded streams into that directory
     (for differential testing against `flac`/`ffmpeg` from the shell). -/

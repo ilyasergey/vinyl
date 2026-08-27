@@ -2046,3 +2046,46 @@ GitHub. The final tightened intro landed via the parallel P2 session's
 docs commit (72c92a2, which also renamed the notes to the numbered
 01/02/03 scheme); recorded here since that commit message does not
 mention it.
+
+## 2026-08-27 — Session 19: P3 fix — cap the header-driven capacity hint
+
+**Landed:** the unvalidated-`totalSamples` fix (audit P3, issue #3).
+`decodeBytes` pre-sized its output buffer as
+`2 · channels · totalSamples + 64` straight from the untrusted 36-bit
+STREAMINFO field — up to ~1.1 TB requested for a 42-byte file, before any
+frame is parsed, aborting under any memory ceiling (`ulimit -v`, container
+`memory.max`). The hint now goes through `Decode.outCapacity`:
+`min declared (16 · bytes.size + 65536)`. Sixteen input bytes of output
+per input byte covers every realistic compression ratio, so honest
+streams keep their exact pre-size; a stream that genuinely beats 16×
+(heavy silence) just grows the buffer by doubling; the 42-byte attack now
+requests ~66 KB. A survey confirmed this was the only allocation sized by
+an unvalidated header field (frame-header block sizes are 16-bit-bounded,
+everything else is encoder-side or derived from decoded values).
+
+**Zero proof changes, and that is the finding:** `emptyWithCapacity n` is
+definitionally the empty array, so the buggy and fixed programs are
+propositionally equal — `lake build` passed untouched. Nothing in
+`Flac/Spec/` could ever have required this fix, which is the motivating
+example of `docs/cost-semantics.md` §2 and §5, and the fix landed in
+exactly the `min`-clamped form that note predicted the cost proof would
+force. Until something like that exists, the only guards are the
+checklist and review.
+
+**Verified:** 120 checks green (3 new: a stream whose `totalSamples`
+field is rewritten to all-ones decodes byte-identically on both paths,
+and the audit's 42-byte frameless shape decodes to empty). On macOS the
+old binary also "succeeded" (heuristic overcommit never touches the
+reservation; `ulimit -v` is unsupported), so the abort itself is the
+audit's Linux-ceiling result; the capped request is verified by
+construction and by the tests exercising the maximal field.
+
+**Deliberately not done here:** cross-checking the decoded sample count
+against a nonzero `totalSamples` and rejecting a mismatch (the issue's
+"separately" suggestion). That changes the accept-set — every equivalence
+and capstone would need the check threaded through, P2-style — for a
+conformance gain, not a DoS fix. Recorded in `docs/03-untrusted-sizes.md`
+as follow-up.
+
+**Next:** remaining audit findings (P4–P11); the end-to-end
+value-boundedness statement from Session 17.

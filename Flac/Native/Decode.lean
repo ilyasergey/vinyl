@@ -958,6 +958,18 @@ def readBytesStepsB (b0 bps ch : Nat) (d : ByteArray)
             st.next (out ++ st.bytes)
         else none
 
+/-- The output buffer's capacity hint. STREAMINFO's `totalSamples` is a
+    36-bit *untrusted* field read before any frame is parsed: taken
+    verbatim it reserves up to ~1.1 TB for a 42-byte file (audit finding
+    P3), aborting under any memory ceiling. Honest streams rarely
+    decompress past 16×, so capping the hint at `16 · input + 64 KB`
+    leaves it exact for real audio; a stream that genuinely beats 16×
+    (heavy silence) merely grows the buffer by doubling. The hint is
+    semantically erased — `emptyWithCapacity n` is definitionally the
+    empty array — so this cap can change no decoded byte and no proof. -/
+def outCapacity (declared inputBytes : Nat) : Nat :=
+  min declared (16 * inputBytes + 65536)
+
 /-- **Decode straight to interleaved PCM bytes**, one worker per frame
     chunk, returning the bytes and the stream's bit depth. A `some` result
     is exactly the serialization of what `decodeArrays` returns
@@ -978,7 +990,9 @@ def decodeBytes (bytes : ByteArray) : Option (ByteArray × Nat) :=
              (syncCandidates br.data (br.pos / 8)) stepChunkSize)
           (Flac.Stream.decodeBudget br.data)
           (br.remaining + 1) br.pos
-          (ByteArray.emptyWithCapacity (2 * si.channels * si.totalSamples + 64))).map
+          (ByteArray.emptyWithCapacity
+            (outCapacity (2 * si.channels * si.totalSamples + 64)
+              br.data.size))).map
           (fun out => (out, si.bps))
     else none
 
