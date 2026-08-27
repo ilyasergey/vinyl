@@ -118,7 +118,8 @@ opposite sense: after the fix there is nothing left for a theorem to say
 about the instance; a total parser and a tested re-exec loop are correct
 by construction. Their research role is *class* only — the api-contracts
 perimeter rules prevent recurrence, they do not (and need not) make
-anything provable. **#6** landed one notch above its draft's plan: the
+anything provable. **#6** landed one notch above what its note first
+planned: the
 bridging equalities carry `@[csimp]`, so the kernel checks the swap and
 no Spec proof moved — but constant depth itself still rests on syntax
 plus the compiler, which is exactly the *upgrade* stack-semantics
