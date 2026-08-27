@@ -88,7 +88,21 @@ the existing lemma stack unchanged.
   reference decoder's *purpose* — it is the specification-shaped path —
   so it stays; `TODO(fix)`: record whatever stance the round takes (keep
   `--decode` as the spec path with documented cost, or route the CLI's
-  `--decode` through a verified-equal cheaper form).
+  `--decode` through a verified-equal cheaper form). For scale: the P5
+  round measured the reference path at roughly 480 bytes of heap per
+  input byte.
+- **Sites inherited from the P5 round.** `Bits.readUnary` is itself
+  non-tail-recursive — discovered when P5's `2^26`-bit unary run
+  overflowed the stack *through the reader* before any guard could see
+  the count (see [`05-saturating-arithmetic.md`](05-saturating-arithmetic.md),
+  "the half the guard does not cover"). P5 capped the one unbounded call
+  site (`readUnaryUpTo`, `lim := b`), but Rice-residual unary runs on the
+  list path still go through the uncapped reader, and a crafted partition
+  can make a run as long as the remaining input: partition structure
+  bounds the *value*'s cost in the budget, not the reader's recursion
+  depth. `TODO(fix)`: convert `Bits.readUnary` to accumulator form (or
+  record why its depth is acceptably bounded), and audit the other
+  list-path bit readers for the same shape.
 
 Note the division of labor: the equalities are real kernel-checked
 theorems and the round-trip capstones flow through them untouched, yet
