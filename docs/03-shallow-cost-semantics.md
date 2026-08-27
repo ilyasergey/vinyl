@@ -1,6 +1,6 @@
 # A shallowly-embedded cost semantics for Lean, motivated by Vinyl
 
-*A research note. Companion to [`robustness-theorems.md`](robustness-theorems.md),
+*A research note. Companion to [`01-robustness-theorems.md`](01-robustness-theorems.md),
 which classifies the theorem kinds this project does and does not have; this
 note develops one row of that taxonomy — resource bounds — into a concrete
 proposal. It is written for someone who did not participate in Vinyl's
@@ -196,7 +196,7 @@ theorem decodeBytesC_linear (bytes : ByteArray) :
 
 This single statement is the anti-DoS specification: *no byte string can
 make the decoder spend more than linearly many credits*. It is the
-output-size theorems of `robustness-theorems.md` upgraded from "the result
+output-size theorems of `01-robustness-theorems.md` upgraded from "the result
 is small" to "the computation was cheap".
 
 ## 5. How the two incidents die inside the proof
@@ -389,7 +389,7 @@ Formalizing Asymptotic Complexity Claims via Deductive Program
 Verification.* ESOP 2018. (How to state O(·) claims without constant
 lies — relevant to phrasing `decodeBytesC_linear` honestly.)
 
-Project-internal starting points: `docs/robustness-theorems.md` (the
+Project-internal starting points: `docs/01-robustness-theorems.md` (the
 taxonomy this note extends),
 [issues #1–#12](https://github.com/ilyasergey/vinyl/issues?q=label%3Aaudit)
 (the audit), `Flac/Spec/Bits.lean`

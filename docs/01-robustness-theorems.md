@@ -1,29 +1,22 @@
 # Robustness theorems: what to prove so adversarial inputs cannot hurt us
 
-Everyone who works with verification knows where the proven artifact ends:
-theorems attach to the denotation of pure functions, while the compiler,
-the runtime, and the cost of execution remain in the trusted base. What is
-easy to underestimate is how that familiar boundary composes with
-*adversarial* input. A codec's natural correctness statements are
-round-trips, and round-trips quantify over the encoder's image — a
-measure-zero slice of the decoder's actual domain, which is every byte
-string an attacker cares to construct. Meanwhile the properties an
-attacker targets — heap, stack, time — are exactly the ones a denotational
-reading erases: a decoder can be proven correct on all valid streams and
-total on all input, and still be trivially killable by a crafted file,
-with no theorem falsified and nothing wrong with the proofs.
+Theorems attach to the denotation of pure functions; the compiler, the
+runtime, and the cost of execution stay in the trusted base. For a decoder
+this boundary bites twice: round-trip theorems quantify over the encoder's
+image, while the decoder's domain is every byte string an attacker can
+construct, and the resources an attacker exhausts (heap, stack, time) are
+invisible to a denotational semantics. A decoder can therefore be proven
+correct on valid streams, total on all input, and still be killed by a
+crafted file without falsifying any theorem.
 
-The working answer of this note is a classification rather than a single
-technique. For each robustness property, identify the kind of statement
-that excludes it: quantification over arbitrary inputs instead of valid
-ones, invariants bounding the values a function builds, bounds on output
-size as a function of input size, constraints on recursion shape. Prove
-the ones the logic can express — most of them, it turns out, and cheaply,
-once stated. For the residue the logic cannot see (allocation hints,
-reference-count-dependent in-place reuse, tail-call structure), enforce by
-construction and by checked convention at the merge gate, and record
-explicitly which tier every guarantee lives in — the dangerous zone being
-a guarantee a reader assumes is kernel-checked when it is a convention.
+This note answers with a classification. For each robustness property,
+find the statement kind that excludes it: quantification over arbitrary
+inputs, bounds on the values a function builds, bounds on output size
+against input size, constraints on recursion shape. Prove the ones the
+logic can express. Enforce the rest (allocation hints, in-place reuse,
+tail calls) by construction and by lint at the merge gate, and record
+which tier each guarantee lives in; the danger sits wherever a convention
+can be mistaken for a kernel-checked fact.
 
 The case study is Vinyl, a FLAC codec written in pure Lean 4: its encoder
 and decoder carry kernel-checked round-trip capstones over the full
@@ -84,7 +77,7 @@ Each one, when missing, admits a distinct class of attack.
 |---|---|---|---|
 | Round-trip correctness | `decode (encode a) = a` on well-formed `a` | wrong output on *valid* streams | proven (capstones) |
 | Value boundedness | for *arbitrary* input, every intermediate and output value fits a fixed width | value blowup: bignum divergence, GMP abort (P1) | wrap by construction + `fitsSInt_wrapSInt`; end-to-end statement is future work |
-| Output-size bound | `size (decode bytes) ≤ k · size bytes + c` | decompression bombs / amplification OOM (P2, P3) | not yet stated ([#2](https://github.com/ilyasergey/vinyl/issues/2), [#3](https://github.com/ilyasergey/vinyl/issues/3)) |
+| Output-size bound | `size (decode bytes) ≤ k · size bytes + c` | decompression bombs / amplification OOM (P2, P3) | proven: `Flac.decode_size_le` at `k = 4096` ([`02-output-size-bounds.md`](02-output-size-bounds.md)); P3's up-front allocation still open ([#3](https://github.com/ilyasergey/vinyl/issues/3)) |
 | Stack shape | recursion is tail (or depth ≤ constant) for arbitrary input | stack overflow on many tiny frames (P6) | lint-enforced style, no theorem ([#6](https://github.com/ilyasergey/vinyl/issues/6)) |
 | Termination | fuel-bounded loops, no `partial` | infinite loops on crafted input | by construction |
 | Early validation | header claims are checked against input size *before* any allocation proportional to them | huge up-front allocation from a tiny file (P3, P8) | not yet ([#3](https://github.com/ilyasergey/vinyl/issues/3), [#8](https://github.com/ilyasergey/vinyl/issues/8)) |
@@ -175,13 +168,16 @@ Before merging a function that consumes untrusted bits, answer for it:
   returns has all elements `FitsSInt (bps + 2)` (subframe wrap at
   `b`/`b+1`, plus one bit of headroom through stereo reconstruction), for
   arbitrary input bytes. All local pieces now exist.
-- Output-size and early-validation theorems for the amplification
-  findings (issues [#2](https://github.com/ilyasergey/vinyl/issues/2) and
-  [#3](https://github.com/ilyasergey/vinyl/issues/3)), which need a
-  size-vs-input bound in the frame loop, not a value bound.
+- ~~Output-size theorems for the amplification findings~~ — done for P2:
+  `Flac.decode_size_le` bounds decoded samples linearly in input size for
+  arbitrary bytes; the fix pattern (a budget threaded through the frame
+  loop, bridged to the unbudgeted loop by one equation per loop) is
+  [`02-output-size-bounds.md`](02-output-size-bounds.md). Early
+  validation for P3's header-driven allocation
+  ([#3](https://github.com/ilyasergey/vinyl/issues/3)) remains.
 - Making resource consumption itself provable: value-level theorems bound
   what the decoder *returns*, never what it *spends* computing it (the
   capacity hint in P3 is definitionally invisible to the logic).
-  `shallow-cost-semantics.md` develops this into a concrete proposal: a
+  `03-shallow-cost-semantics.md` develops this into a concrete proposal: a
   credit-charging cost monad over Lean, its two theorem shapes, and the
   research questions Vinyl makes concrete.
