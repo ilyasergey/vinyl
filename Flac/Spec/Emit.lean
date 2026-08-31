@@ -1269,4 +1269,16 @@ theorem emitFast_eq_encode (cfg : Stream.EncoderCfg) (a : Stream.Audio) :
     emitFast cfg a = Stream.Unchecked.encode cfg a :=
   encode_eq cfg a
 
+/-- Swap the compiled `Unchecked.encode` for the tail-recursive `emitFast`
+    (a `ByteArray` writer whose `pushFrames` loop is in tail position). The
+    reference `writeStream`/`writeFrames` fold is non-tail — `Frame.write … ++
+    writeFrames … frs` keeps one native stack frame per frame — and overflows
+    the runtime stack on a many-frame encode (audit finding P6, encoder side).
+    Value-identical by `emitFast_eq_encode`, so every theorem and capstone keeps
+    the reference definition; only the compiled implementation changes. -/
+@[csimp] theorem Unchecked_encode_eq_emitFast :
+    @Flac.Stream.Unchecked.encode = @Flac.Emit.emitFast := by
+  funext cfg a
+  exact (emitFast_eq_encode cfg a).symm
+
 end Flac.Emit

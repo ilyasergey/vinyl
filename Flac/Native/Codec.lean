@@ -72,6 +72,27 @@ def pcm16OfByteList : List UInt8 → List Int
   | lo :: hi :: rest => sInt16 lo hi :: pcm16OfByteList rest
   | _ => []
 
+/-- `pcm16OfByteList` with the samples collected in an accumulator so the
+    recursive call is in tail position: the input length is unbounded, so the
+    parser must not keep a native stack frame per sample (audit finding P6). -/
+def pcm16OfByteListAcc : List Int → List UInt8 → List Int
+  | acc, lo :: hi :: rest => pcm16OfByteListAcc (sInt16 lo hi :: acc) rest
+  | acc, _ => acc.reverse
+
+theorem pcm16OfByteListAcc_eq (acc : List Int) (l : List UInt8) :
+    pcm16OfByteListAcc acc l = acc.reverse ++ pcm16OfByteList l := by
+  induction l using pcm16OfByteList.induct generalizing acc with
+  | case1 lo hi rest ih =>
+    rw [pcm16OfByteListAcc, pcm16OfByteList, ih (sInt16 lo hi :: acc)]; simp
+  | case2 l => cases l <;> simp [pcm16OfByteListAcc, pcm16OfByteList]
+
+def pcm16OfByteListTR (l : List UInt8) : List Int :=
+  pcm16OfByteListAcc [] l
+
+@[csimp] theorem pcm16OfByteList_eq_pcm16OfByteListTR :
+    @pcm16OfByteList = @pcm16OfByteListTR := by
+  funext l; unfold pcm16OfByteListTR; rw [pcm16OfByteListAcc_eq]; simp
+
 /-- Serialize samples as little-endian 16-bit (two's complement). -/
 def byteListOfPcm16 : List Int → List UInt8
   | [] => []
@@ -84,6 +105,107 @@ def deinterleaveN (ch : Nat) : Nat → List Int → List (List Int)
   | 0, _ => List.replicate ch []
   | n + 1, l =>
     List.zipWith (· :: ·) (l.take ch) (deinterleaveN ch n (l.drop ch))
+
+/-- `deinterleaveN` with each column accumulated front-to-back in reverse,
+    so the recursion on `n` (= samples per channel, attacker-sized) is in
+    tail position and the transpose runs in constant stack (audit finding
+    P6 — the structural form keeps one native frame per sample). Each step
+    pushes the current row's samples onto the fronts of the reversed
+    columns; a final `reverse` per column undoes the ordering. -/
+def deinterleaveAcc (ch : Nat) : Nat → List Int → List (List Int) → List (List Int)
+  | 0, _, acc => acc.map List.reverse
+  | n + 1, l, acc =>
+    deinterleaveAcc ch n (l.drop ch) (List.zipWith (fun col x => x :: col) acc (l.take ch))
+
+/-- The recursion never lengthens a column list, so the transpose has at
+    most `ch` columns — the bound that makes the `replicate ch []` seed
+    behave as an identity under the accumulator's `zipWith (· ++ ·)`. -/
+theorem length_deinterleaveN_le (ch n : Nat) (l : List Int) :
+    (deinterleaveN ch n l).length ≤ ch := by
+  induction n generalizing l with
+  | zero => simp [deinterleaveN]
+  | succ n ih =>
+    simp only [deinterleaveN, List.length_zipWith, List.length_take]
+    exact Nat.le_trans (Nat.min_le_right _ _) (ih (l.drop ch))
+
+/-- `zipWith (· ++ ·)` with an all-empty seed on the right is the identity
+    on a list no longer than the seed — the base case of the bridge. -/
+theorem zipWith_append_replicate_nil {α : Type _} :
+    ∀ (k : Nat) (A : List (List α)), A.length ≤ k →
+      List.zipWith (· ++ ·) A (List.replicate k []) = A
+  | _, [], _ => by simp
+  | 0, _ :: _, h => by simp at h
+  | k + 1, a :: A, h => by
+    simp only [List.replicate_succ, List.zipWith_cons_cons, List.append_nil]
+    rw [zipWith_append_replicate_nil k A (by simpa using h)]
+
+/-- Same, with the empty seed on the left. -/
+theorem zipWith_replicate_nil_append {α : Type _} :
+    ∀ (k : Nat) (A : List (List α)), A.length ≤ k →
+      List.zipWith (· ++ ·) (List.replicate k []) A = A
+  | _, [], _ => by simp
+  | 0, _ :: _, h => by simp at h
+  | k + 1, a :: A, h => by
+    simp only [List.replicate_succ, List.zipWith_cons_cons, List.nil_append]
+    rw [zipWith_replicate_nil_append k A (by simpa using h)]
+
+/-- The core zipWith rearrangement: pushing one sample onto the end of each
+    reversed column and then prepending the rest of that column equals
+    prepending the sample-plus-rest directly (append associativity, lifted
+    over three parallel lists). -/
+theorem zipWith_append_snoc {α : Type _}
+    (A : List (List α)) (T : List α) (D : List (List α)) :
+    List.zipWith (· ++ ·) (List.zipWith (fun r x => r ++ [x]) A T) D
+      = List.zipWith (· ++ ·) A (List.zipWith (· :: ·) T D) := by
+  induction A generalizing T D with
+  | nil => simp
+  | cons a A ih =>
+    cases T with
+    | nil => simp
+    | cons x T =>
+      cases D with
+      | nil => simp
+      | cons d D =>
+        simp only [List.zipWith_cons_cons, List.append_assoc, List.singleton_append]
+        exact congrArg _ (ih T D)
+
+/-- The bridge: the accumulator loop computes the transpose with each
+    reversed column prepended back onto the front of the structural
+    result. -/
+theorem deinterleaveAcc_eq (ch : Nat) :
+    ∀ (n : Nat) (l : List Int) (acc : List (List Int)), acc.length ≤ ch →
+      deinterleaveAcc ch n l acc
+        = List.zipWith (· ++ ·) (acc.map List.reverse) (deinterleaveN ch n l) := by
+  intro n
+  induction n with
+  | zero =>
+    intro l acc hacc
+    simp only [deinterleaveAcc, deinterleaveN]
+    rw [zipWith_append_replicate_nil ch (acc.map List.reverse) (by simpa using hacc)]
+  | succ n ih =>
+    intro l acc hacc
+    simp only [deinterleaveAcc, deinterleaveN]
+    have hlen : (List.zipWith (fun col x => x :: col) acc (l.take ch)).length ≤ ch :=
+      Nat.le_trans (by simp [List.length_zipWith]; exact Nat.min_le_left _ _) hacc
+    rw [ih (l.drop ch) _ hlen]
+    have hmap : (List.zipWith (fun col x => x :: col) acc (l.take ch)).map List.reverse
+        = List.zipWith (fun r x => r ++ [x]) (acc.map List.reverse) (l.take ch) := by
+      simp only [List.map_zipWith, List.zipWith_map_left, List.reverse_cons]
+    rw [hmap, zipWith_append_snoc]
+
+/-- Tail-recursive `deinterleaveN`, seeded with the `ch` empty columns. -/
+def deinterleaveNTR (ch : Nat) (n : Nat) (l : List Int) : List (List Int) :=
+  deinterleaveAcc ch n l (List.replicate ch [])
+
+/-- Swap the compiled `deinterleaveN` for the accumulator form; every
+    theorem keeps reading the structural definition above. -/
+@[csimp] theorem deinterleaveN_eq_deinterleaveNTR : @deinterleaveN = @deinterleaveNTR := by
+  funext ch n l
+  unfold deinterleaveNTR
+  rw [deinterleaveAcc_eq ch n l _ (by simp)]
+  simp only [List.map_replicate, List.reverse_nil]
+  exact (zipWith_replicate_nil_append ch (deinterleaveN ch n l)
+    (length_deinterleaveN_le ch n l)).symm
 
 /-- Interleave equal-length channels of `n` samples each. -/
 def interleaveN : Nat → List (List Int) → List Int

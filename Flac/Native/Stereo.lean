@@ -25,20 +25,20 @@ def mid (l r : List Int) : List Int :=
   List.zipWith (fun a b => sar (a + b) 1) l r
 
 /-- Left/side decode: `R = L - S`. -/
-def decodeLS (l s : List Int) : List Int :=
-  List.zipWith (fun a v => a - v) l s
+def decodeLS (b : Nat) (l s : List Int) : List Int :=
+  List.zipWith (fun a v => Bits.wrapSInt b (a - v)) l s
 
 /-- Right/side decode: `L = R + S`. -/
-def decodeRS (s r : List Int) : List Int :=
-  List.zipWith (fun v b => b + v) s r
+def decodeRS (b : Nat) (s r : List Int) : List Int :=
+  List.zipWith (fun v rr => Bits.wrapSInt b (rr + v)) s r
 
 /-- Mid/side decode, left: `L = (2·M + parity(S) + S) >>ₐ 1`. -/
-def decodeMSL (m s : List Int) : List Int :=
-  List.zipWith (fun mm ss => sar (2 * mm + ss % 2 + ss) 1) m s
+def decodeMSL (b : Nat) (m s : List Int) : List Int :=
+  List.zipWith (fun mm ss => Bits.wrapSInt b (sar (2 * mm + ss % 2 + ss) 1)) m s
 
 /-- Mid/side decode, right: `R = (2·M + parity(S) - S) >>ₐ 1`. -/
-def decodeMSR (m s : List Int) : List Int :=
-  List.zipWith (fun mm ss => sar (2 * mm + ss % 2 - ss) 1) m s
+def decodeMSR (b : Nat) (m s : List Int) : List Int :=
+  List.zipWith (fun mm ss => Bits.wrapSInt b (sar (2 * mm + ss % 2 - ss) 1)) m s
 
 /-! ### Array forms (the production codec's hot paths; proven equal to
 the list forms in `Flac.Spec.Stereo`) -/
@@ -51,16 +51,16 @@ def sideA (l r : Array Int) : Array Int :=
 def midA (l r : Array Int) : Array Int :=
   Array.zipWith (fun a b => sar (a + b) 1) l r
 
-def decodeLSA (l s : Array Int) : Array Int :=
-  Array.zipWith (fun a v => a - v) l s
+def decodeLSA (b : Nat) (l s : Array Int) : Array Int :=
+  Array.zipWith (fun a v => Bits.wrapSInt b (a - v)) l s
 
-def decodeRSA (s r : Array Int) : Array Int :=
-  Array.zipWith (fun v b => b + v) s r
+def decodeRSA (b : Nat) (s r : Array Int) : Array Int :=
+  Array.zipWith (fun v rr => Bits.wrapSInt b (rr + v)) s r
 
-def decodeMSLA (m s : Array Int) : Array Int :=
-  Array.zipWith (fun mm ss => sar (2 * mm + ss % 2 + ss) 1) m s
+def decodeMSLA (b : Nat) (m s : Array Int) : Array Int :=
+  Array.zipWith (fun mm ss => Bits.wrapSInt b (sar (2 * mm + ss % 2 + ss) 1)) m s
 
-def decodeMSRA (m s : Array Int) : Array Int :=
-  Array.zipWith (fun mm ss => sar (2 * mm + ss % 2 - ss) 1) m s
+def decodeMSRA (b : Nat) (m s : Array Int) : Array Int :=
+  Array.zipWith (fun mm ss => Bits.wrapSInt b (sar (2 * mm + ss % 2 - ss) 1)) m s
 
 end Flac.Stereo

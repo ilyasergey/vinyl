@@ -197,7 +197,7 @@ theorem readChannels_spec (b bs : Nat) (asg : ChannelAsg)
         List.flatMap_cons, List.flatMap_nil, List.append_nil, List.append_assoc]
       unfold readChannels
       rw [if_neg (by omega : ¬(8 ≤ 7)), if_pos (by trivial)]
-      simp only [hs0, hs1, Stereo.decodeLS_side l r (by omega)]
+      simp only [hs0, hs1, Stereo.decodeLS_side b l r (by omega) hfr]
   | .rightSide c0 c1 =>
     match chs, hshape with
     | [l, r], hsh =>
@@ -217,7 +217,7 @@ theorem readChannels_spec (b bs : Nat) (asg : ChannelAsg)
       unfold readChannels
       rw [if_neg (by omega : ¬(9 ≤ 7)), if_neg (by omega : ¬(9 = 8)),
         if_pos (by trivial)]
-      simp only [hs0, hs1, Stereo.decodeRS_side l r (by omega)]
+      simp only [hs0, hs1, Stereo.decodeRS_side b l r (by omega) hfl]
   | .midSide c0 c1 =>
     match chs, hshape with
     | [l, r], hsh =>
@@ -240,8 +240,8 @@ theorem readChannels_spec (b bs : Nat) (asg : ChannelAsg)
       unfold readChannels
       rw [if_neg (by omega : ¬(10 ≤ 7)), if_neg (by omega : ¬(10 = 8)),
         if_neg (by omega : ¬(10 = 9)), if_pos (by trivial)]
-      simp only [hs0, hs1, Stereo.decodeMSL_mid_side l r (by omega),
-        Stereo.decodeMSR_mid_side l r (by omega)]
+      simp only [hs0, hs1, Stereo.decodeMSL_mid_side b l r (by omega) hfl,
+        Stereo.decodeMSR_mid_side b l r (by omega) hfr]
 
 /-! ## Frame assembly -/
 

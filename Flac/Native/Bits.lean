@@ -221,6 +221,36 @@ def bitsToByteList : BitStream → List UInt8
     bitsToByte b0 b1 b2 b3 b4 b5 b6 b7 :: bitsToByteList rest
   | _ => []
 
+/-- `bitsToByteList` with the packed bytes collected in an accumulator, so the
+    recursive call is in tail position: the output-byte count is encoder-chosen
+    and unbounded, so the packer must not keep a native stack frame per byte
+    (audit finding P6, encoder side). -/
+def bitsToByteListAcc : List UInt8 → BitStream → List UInt8
+  | acc, b0 :: b1 :: b2 :: b3 :: b4 :: b5 :: b6 :: b7 :: rest =>
+    bitsToByteListAcc (bitsToByte b0 b1 b2 b3 b4 b5 b6 b7 :: acc) rest
+  | acc, _ => acc.reverse
+
+theorem bitsToByteListAcc_eq (acc : List UInt8) (s : BitStream) :
+    bitsToByteListAcc acc s = acc.reverse ++ bitsToByteList s := by
+  induction s using bitsToByteList.induct generalizing acc with
+  | case1 b0 b1 b2 b3 b4 b5 b6 b7 rest ih =>
+    rw [bitsToByteListAcc, bitsToByteList,
+      ih (bitsToByte b0 b1 b2 b3 b4 b5 b6 b7 :: acc)]
+    simp
+  | case2 s => cases s <;> simp [bitsToByteListAcc, bitsToByteList]
+
+def bitsToByteListTR (s : BitStream) : List UInt8 :=
+  bitsToByteListAcc [] s
+
+/-- Swap the compiled `bitsToByteList` for the tail form; theorems (and the whole
+    round-trip stack) keep the structural definition via the kernel. -/
+@[csimp] theorem bitsToByteList_eq_bitsToByteListTR :
+    @bitsToByteList = @bitsToByteListTR := by
+  funext s
+  unfold bitsToByteListTR
+  rw [bitsToByteListAcc_eq]
+  simp
+
 def bytesToBits (bs : ByteArray) : BitStream :=
   byteListToBits bs.data.toList
 

@@ -256,21 +256,21 @@ def readChannels (bs b chCode : Nat) (s : BitStream) :
     | some (l, s) =>
       match Subframe.read bs (b + 1) s with
       | none => none
-      | some (sd, s) => some ([l, Stereo.decodeLS l sd], s)
+      | some (sd, s) => some ([l, Stereo.decodeLS b l sd], s)
   else if chCode = 9 then
     match Subframe.read bs (b + 1) s with
     | none => none
     | some (sd, s) =>
       match Subframe.read bs b s with
       | none => none
-      | some (r, s) => some ([Stereo.decodeRS sd r, r], s)
+      | some (r, s) => some ([Stereo.decodeRS b sd r, r], s)
   else if chCode = 10 then
     match Subframe.read bs b s with
     | none => none
     | some (m, s) =>
       match Subframe.read bs (b + 1) s with
       | none => none
-      | some (sd, s) => some ([Stereo.decodeMSL m sd, Stereo.decodeMSR m sd], s)
+      | some (sd, s) => some ([Stereo.decodeMSL b m sd, Stereo.decodeMSR b m sd], s)
   else none                -- 11–15 reserved
 
 def readHeaderChannels (b0 : Nat) (s : BitStream) :

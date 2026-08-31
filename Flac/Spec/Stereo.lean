@@ -27,8 +27,9 @@ theorem msr_point (a b : Int) :
   have h2 := two_mul_sar_one (2 * sar (a + b) 1 + (a - b) % 2 - (a - b))
   omega
 
-theorem decodeLS_side (l r : List Int) (h : l.length = r.length) :
-    decodeLS l (side l r) = r := by
+theorem decodeLS_side (b : Nat) (l r : List Int) (h : l.length = r.length)
+    (hfr : ∀ x ∈ r, FitsSInt b x) :
+    decodeLS b l (side l r) = r := by
   induction l generalizing r with
   | nil =>
     have : r = [] := List.eq_nil_of_length_eq_zero (by simpa using h.symm)
@@ -36,12 +37,16 @@ theorem decodeLS_side (l r : List Int) (h : l.length = r.length) :
   | cons a l ih =>
     match r with
     | [] => simp at h
-    | b :: r =>
+    | y :: r =>
       simp only [side, decodeLS, List.zipWith_cons_cons] at *
-      rw [show a - (a - b) = b by omega, ih r (by simp only [List.length_cons] at h; omega)]
+      rw [show a - (a - y) = y by omega,
+        wrapSInt_eq_of_fits b y (hfr y (List.mem_cons_self ..)),
+        ih r (by simp only [List.length_cons] at h; omega)
+          (fun x hx => hfr x (List.mem_cons_of_mem _ hx))]
 
-theorem decodeRS_side (l r : List Int) (h : l.length = r.length) :
-    decodeRS (side l r) r = l := by
+theorem decodeRS_side (b : Nat) (l r : List Int) (h : l.length = r.length)
+    (hfl : ∀ x ∈ l, FitsSInt b x) :
+    decodeRS b (side l r) r = l := by
   induction l generalizing r with
   | nil =>
     have : r = [] := List.eq_nil_of_length_eq_zero (by simpa using h.symm)
@@ -49,12 +54,16 @@ theorem decodeRS_side (l r : List Int) (h : l.length = r.length) :
   | cons a l ih =>
     match r with
     | [] => simp at h
-    | b :: r =>
+    | y :: r =>
       simp only [side, decodeRS, List.zipWith_cons_cons] at *
-      rw [show b + (a - b) = a by omega, ih r (by simp only [List.length_cons] at h; omega)]
+      rw [show y + (a - y) = a by omega,
+        wrapSInt_eq_of_fits b a (hfl a (List.mem_cons_self ..)),
+        ih r (by simp only [List.length_cons] at h; omega)
+          (fun x hx => hfl x (List.mem_cons_of_mem _ hx))]
 
-theorem decodeMSL_mid_side (l r : List Int) (h : l.length = r.length) :
-    decodeMSL (mid l r) (side l r) = l := by
+theorem decodeMSL_mid_side (b : Nat) (l r : List Int) (h : l.length = r.length)
+    (hfl : ∀ x ∈ l, FitsSInt b x) :
+    decodeMSL b (mid l r) (side l r) = l := by
   induction l generalizing r with
   | nil =>
     have : r = [] := List.eq_nil_of_length_eq_zero (by simpa using h.symm)
@@ -62,12 +71,16 @@ theorem decodeMSL_mid_side (l r : List Int) (h : l.length = r.length) :
   | cons a l ih =>
     match r with
     | [] => simp at h
-    | b :: r =>
+    | y :: r =>
       simp only [side, mid, decodeMSL, List.zipWith_cons_cons] at *
-      rw [msl_point a b, ih r (by simp only [List.length_cons] at h; omega)]
+      rw [msl_point a y,
+        wrapSInt_eq_of_fits b a (hfl a (List.mem_cons_self ..)),
+        ih r (by simp only [List.length_cons] at h; omega)
+          (fun x hx => hfl x (List.mem_cons_of_mem _ hx))]
 
-theorem decodeMSR_mid_side (l r : List Int) (h : l.length = r.length) :
-    decodeMSR (mid l r) (side l r) = r := by
+theorem decodeMSR_mid_side (b : Nat) (l r : List Int) (h : l.length = r.length)
+    (hfr : ∀ x ∈ r, FitsSInt b x) :
+    decodeMSR b (mid l r) (side l r) = r := by
   induction l generalizing r with
   | nil =>
     have : r = [] := List.eq_nil_of_length_eq_zero (by simpa using h.symm)
@@ -75,9 +88,12 @@ theorem decodeMSR_mid_side (l r : List Int) (h : l.length = r.length) :
   | cons a l ih =>
     match r with
     | [] => simp at h
-    | b :: r =>
+    | y :: r =>
       simp only [side, mid, decodeMSR, List.zipWith_cons_cons] at *
-      rw [msr_point a b, ih r (by simp only [List.length_cons] at h; omega)]
+      rw [msr_point a y,
+        wrapSInt_eq_of_fits b y (hfr y (List.mem_cons_self ..)),
+        ih r (by simp only [List.length_cons] at h; omega)
+          (fun x hx => hfr x (List.mem_cons_of_mem _ hx))]
 
 /-! ## Width bookkeeping (the `b+1` side channel) -/
 
@@ -115,20 +131,20 @@ namespace Flac.Stereo
     (midA l r).toList = mid l.toList r.toList := by
   simp [midA, mid]
 
-@[simp] theorem decodeLSA_toList (l s : Array Int) :
-    (decodeLSA l s).toList = decodeLS l.toList s.toList := by
+@[simp] theorem decodeLSA_toList (b : Nat) (l s : Array Int) :
+    (decodeLSA b l s).toList = decodeLS b l.toList s.toList := by
   simp [decodeLSA, decodeLS]
 
-@[simp] theorem decodeRSA_toList (s r : Array Int) :
-    (decodeRSA s r).toList = decodeRS s.toList r.toList := by
+@[simp] theorem decodeRSA_toList (b : Nat) (s r : Array Int) :
+    (decodeRSA b s r).toList = decodeRS b s.toList r.toList := by
   simp [decodeRSA, decodeRS]
 
-@[simp] theorem decodeMSLA_toList (m s : Array Int) :
-    (decodeMSLA m s).toList = decodeMSL m.toList s.toList := by
+@[simp] theorem decodeMSLA_toList (b : Nat) (m s : Array Int) :
+    (decodeMSLA b m s).toList = decodeMSL b m.toList s.toList := by
   simp [decodeMSLA, decodeMSL]
 
-@[simp] theorem decodeMSRA_toList (m s : Array Int) :
-    (decodeMSRA m s).toList = decodeMSR m.toList s.toList := by
+@[simp] theorem decodeMSRA_toList (b : Nat) (m s : Array Int) :
+    (decodeMSRA b m s).toList = decodeMSR b m.toList s.toList := by
   simp [decodeMSRA, decodeMSR]
 
 end Flac.Stereo

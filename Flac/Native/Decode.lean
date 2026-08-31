@@ -437,21 +437,21 @@ def readChannels (bs b chCode : Nat) (br : BitReader) :
     | some (l, br) =>
       match readSubframe bs (b + 1) br with
       | none => none
-      | some (sd, br) => some ([l, Stereo.decodeLSA l sd], br)
+      | some (sd, br) => some ([l, Stereo.decodeLSA b l sd], br)
   else if chCode = 9 then
     match readSubframe bs (b + 1) br with
     | none => none
     | some (sd, br) =>
       match readSubframe bs b br with
       | none => none
-      | some (r, br) => some ([Stereo.decodeRSA sd r, r], br)
+      | some (r, br) => some ([Stereo.decodeRSA b sd r, r], br)
   else if chCode = 10 then
     match readSubframe bs b br with
     | none => none
     | some (m, br) =>
       match readSubframe bs (b + 1) br with
       | none => none
-      | some (sd, br) => some ([Stereo.decodeMSLA m sd, Stereo.decodeMSRA m sd], br)
+      | some (sd, br) => some ([Stereo.decodeMSLA b m sd, Stereo.decodeMSRA b m sd], br)
   else none
 
 def readHeaderChannels (b0 : Nat) (br : BitReader) :
