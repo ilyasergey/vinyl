@@ -1,0 +1,49 @@
+# flac.dict -- libFuzzer/AFL dictionary of FLAC magic values (Phase 3D).
+#
+# FLAC decode is gated on magic-value equality tests (stream marker, frame sync,
+# block-size/sample-rate/bit-depth codes, STREAMINFO length). Coverage feedback
+# has no gradient to guess these; a dictionary + value-profile jumps the gate.
+#
+# Scope: pass this ONLY to FLAC_STREAM targets (-dict= for libFuzzer, -x for AFL).
+# It pollutes RAW parameter-block seeds (fz_float_exact/fz_overlong_utf8/fz_md5,
+# G1 params) and is useless on PACKED_PCM, so it is never applied there.
+#
+# The 14-bit non-byte-aligned sync (\x3f\xfe) is deliberately OMITTED: it is never
+# byte-aligned in the stream, so a literal dictionary token cannot place it.
+
+# ---- stream marker ----
+marker_fLaC="fLaC"
+
+# ---- frame sync codes (14-bit 0x3ffe, byte-aligned high bits) ----
+sync_fixed="\xff\xf8"
+sync_variable="\xff\xf9"
+
+# ---- STREAMINFO metadata block header: type 0 (+last-flag) and length 34 ----
+streaminfo_first="\x80\x00\x00\x22"
+streaminfo_notlast="\x00\x00\x00\x22"
+
+# ---- overlong / non-canonical UTF-8 codings of 0 (coded frame/sample number).
+# FLAC uses extended UTF-8 up to 7 bytes; these exercise the overlong-accept path.
+utf8_overlong_2="\xc0\x80"
+utf8_overlong_3="\xe0\x80\x80"
+utf8_overlong_4="\xf0\x80\x80\x80"
+utf8_overlong_5="\xf8\x80\x80\x80\x80"
+utf8_overlong_6="\xfc\x80\x80\x80\x80\x80"
+utf8_overlong_7="\xfe\x80\x80\x80\x80\x80\x80"
+
+# ---- Rice / Rice2 escape parameter markers (4-bit 0b1111 / 5-bit 0b11111) ----
+rice_escape="\x0f"
+rice2_escape="\x1f"
+rice2_escape_aligned="\x40\x1f"
+
+# ---- ID3v2 / legacy tag prefix sometimes prepended to FLAC ----
+id3_tag="TAG"
+
+# ---- frame-header 2nd byte: block-size + sample-rate code nibbles ----
+# common (blocksize code, samplerate code) nibble bytes the decoder switches on
+bshdr_c9="\xc9"
+bshdr_69="\x69"
+bshdr_aa="\xaa"
+# frame-header 3rd byte: channel-assignment (high nibble) + bit-depth code (bits)
+chbps_10="\x10"
+chbps_srate_bps="\x24"

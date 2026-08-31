@@ -1,0 +1,68 @@
+# Declarative seed sources: how to REGENERATE each corpus. MANIFEST.toml
+# separately records what is committed (sha256 + provenance). corpus_gen.sh
+# consumes this; corpus_verify.sh checks MANIFEST.
+schema       = 1
+size_gate_mb = 4          # committed corpus/ total; corpus_verify.sh enforces
+
+[[source]]
+id = "gen"
+kind = "generated"
+dest = "decode/gen"
+cmd = "build/bin/mut_bench gen corpus/decode/gen 400 0xC0FFEE"
+note = "CRC-correct archetypes: const, verbatim, fixed-rice/escape/order, high partition order, LPC, LS/RS/MS, wasted bits, 8ch"
+
+[[source]]
+id = "wide"
+kind = "generated"
+dest = "decode/wide"
+cmd = "scripts/corpus_gen.sh --wide"
+note = "valid multi-depth (8/12/16/24-bit) encoder-image streams from build/bin/gen_corpus; the only non-16-bit seeds"
+
+[[source]]
+id = "wide16"
+kind = "generated"
+dest = "decode/wide16"
+cmd = "scripts/corpus_gen.sh --wide"
+note = "the 16-bit subset of decode/wide (metaflac-filtered), for the 16-bit-gated decode differentials that DEC_SKIP other depths (F3)"
+
+[[source]]
+id = "gen_params"
+kind = "generated"
+dest = "decode/gen_params"
+cmd = "scripts/corpus_gen.sh --genparams"
+note = "RAW parameter seeds for fz_gen_roundtrip (G1): forces the stereo out-of-range construction across depths + valid streams at 17-32 bit"
+
+[[source]]
+id = "hires"
+kind = "generated"
+dest = "decode/hires"
+cmd = "scripts/corpus_gen.sh --hires"
+note = "non-16-bit + never-decoded regions from EXTERNAL encoders: flac 8/24/32-bit, LPC orders 13-32 (--lax -e -l 32), ffmpeg 24-bit, and the IETF 20-bit predictor-overflow vector; feeds the 3-way any-depth oracle (Vinyl vs libFLAC vs ffmpeg)"
+
+[[source]]
+id = "regress"
+kind = "vendored"
+dest = "decode/regress"
+origin = "audit/reproducers"
+note = "committed regression streams (.flac only). On the fortified codec these must be HANDLED; a re-bomb means a fix regressed."
+
+[[source]]
+id = "encode_gen"
+kind = "generated"
+dest = "encode/gen"
+cmd = "scripts/corpus_gen.sh --encode"
+note = "packed-PCM seeds (pack.h header + s16le), blockSize in the checked [16,4608] envelope"
+
+[[source]]
+id = "encode_edge"
+kind = "generated"
+dest = "encode/edge"
+cmd = "scripts/corpus_gen.sh --encode-edge"
+note = "packed-PCM at the checked-encoder boundaries and beyond (for fz_unchecked_encode)"
+
+[[source]]
+id = "must_reject"
+kind = "generated"
+dest = "decode/must_reject"
+cmd = "scripts/corpus_gen.sh --must-reject"
+note = "RFC-invalid: wasted-bits saturation, sampleRate=0, oversized totalSamples, sync-dense, const-bomb"

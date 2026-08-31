@@ -3,7 +3,9 @@
 lake-manifest.json.lock
 *.olean
 *.ilean
-*.c
+# Lean emits C under .lake/ (ignored above). Keep this pattern scoped to that
+# tree so hand-written C under fuzz/ is not silently dropped by `git add`.
+/.lake/**/*.c
 
 # macOS
 .DS_Store

@@ -2316,3 +2316,38 @@ stage-to-stage comparisons, marked as measured on the M2.
 
 **Next:** unchanged from session 22 — spec-validation adoption path;
 optionally relocate the CLI out of the test package.
+
+---
+
+## 2026-08-29 — Session 24: fuzzing subsystem (`fuzz/`)
+
+**Attempted:** implement fuzzing as a first-class, extensible, dual-engine
+(libFuzzer + AFL++) differential subsystem inside the repo, per the decided plan.
+
+**Landed:** new top-level `fuzz/` package (sibling of `bench/`/`conformance/`).
+Glob-discovered targets + sidecar `targets/<name>.toml` manifests; one
+`libfuzzcommon.{fuzz,afl}.a` archive; runtime `FUZZ_MUTATOR` policy (mutator is a
+variant axis, not a relink); two-phase `lake`+IR build with a generated symbol
+map and a hard `check-symbols` gate. Seven targets × 2 engines build green:
+`fz_decode_diff`, `fz_decode_structured` (CRC mutator, measured 27.1× acceptance),
+`fz_decode_modes` (three proven-equal modes + live-pool determinism repeats — the
+P6 `@[csimp]` surface), `fz_encode_diff`, `fz_roundtrip`, `fz_encode_validity`
+(new: strict `flac -t` / MD5 oracle), `fz_unchecked_encode` (new: the P7
+`Stream.Unchecked.encode` surface — agrees byte-for-byte with the checked encoder
+on its domain, no footgun above 4608). Python stdlib fleet runner (config/launch/
+watchdog/report) with per-job isolation, process-tree RSS watchdog (never
+`RLIMIT_AS`), O_EXCL cross-process reproducer dedup, live status + `SUMMARY.md`/
+`BASELINE.md`. Committed corpus (1.5 MB, MANIFEST-verified, 4 MB gate) with
+vendored regression seeds. `.gitignore` `*.c` scoped to `/.lake/**/*.c` so
+hand-written fuzz C is not dropped. Encode packing retargeted to the fortified
+4608 cap. Proof merge gate (`scripts/check.sh`) untouched; separate
+`fuzz/scripts/ci.sh`. Docs: `fuzz/README.md`, `fuzz/DESIGN.md`, `docs/fuzzing.md`.
+
+`make check` and `make smoke` green; a 30 s fleet smoke catalogued live decode
+divergences and produced clean reports.
+
+**Blocked:** nothing.
+
+**Next:** a ≥24-core campaign (`python3 -m fleet run default 1800`) and triage of
+any divergence through the CLI into `findings/`; fetch+minimize the IETF corpus;
+optionally wire the internal forced-serial/parallel decode symbols.

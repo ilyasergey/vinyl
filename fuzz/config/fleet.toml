@@ -1,0 +1,135 @@
+# Campaign composition -- the ONLY fuzz TOML. Target identity lives in each
+# targets/*.c FUZZ_TARGET(...) macro; per-target run config (corpus, max_len,
+# variants) lives in fleet/config.py TARGETS. This file only assigns cores.
+# The runner charges each job's Lean thread pool and refuses to oversubscribe.
+#   python3 -m fleet run default 1800
+#   python3 -m fleet run modes-deep 3600
+# (make smoke runs every target for 10s; it needs no campaign.)
+
+# ---- default: 31 of 32 cores, the broad campaign --------------------------
+[campaign.default]
+budget_cores    = 31
+default_seconds = 1800
+
+job = [
+  # Decode conformance: the deep-decoder space (CRC mutator). Trimmed from 6/3 to
+  # 4/2 to fund the accept-set + generator arms below -- decode is the well-audited
+  # surface, and these two now run the smaller 16-bit wide16.
+  { target = "fz_decode_structured", workers = 4 },
+  { target = "fz_decode_diff",       workers = 2 },
+  # Accept-set: reject-where-referees-accept on ordinary files (trailing ID3v1 /
+  # frame-boundary truncation).
+  { target = "fz_trailing_data",     workers = 1 },
+  # G1: any-depth round-trip on Vinyl's own proven writer (the encode-side
+  # force-multiplier; reaches depths 17-32 + the out-of-range witness no other path emits).
+  { target = "fz_gen_roundtrip",     workers = 2 },
+  # The P6 @[csimp] flagship: serial baseline + live-pool determinism.
+  { target = "fz_decode_modes", variant = "serial", workers = 3 },
+  { target = "fz_decode_modes", variant = "par",    workers = 1 },  # par = 4 threads
+  # Any-depth + TCB + output-contract + MD5.
+  { target = "fz_samples_diff",     workers = 3 },
+  { target = "fz_proven_pairs",     workers = 1 },
+  { target = "fz_self_consistent",  workers = 1 },
+  { target = "fz_metamorphic",      workers = 1 },
+  { target = "fz_md5",              workers = 1 },
+  # Encode side.
+  { target = "fz_encode_validity",  workers = 2 },
+  { target = "fz_roundtrip",        workers = 2 },
+  { target = "fz_encode_diff",      workers = 2 },
+  # One AFL arm on the structured decoder (its own -o root, -M/-S sync).
+  { target = "fz_decode_structured", variant = "havoc", engine = "afl", instances = 2 },
+]
+
+# ---- official: the full-fleet run. ALL 17 targets, exactly 30 cores, 2h. ---
+# The campaign for an official bug-hunting + coverage run: every target gets at
+# least one worker, the deep/less-audited surfaces (parallel decode modes, the
+# any-depth 3-way diff, the G1 generator, output-contract) get more, and the
+# flagship structured decoder runs on BOTH libFuzzer (CRC mutator) and AFL
+# (havoc) for engine diversity. Catalogue-by-default: aborts mean real findings,
+# not manufactured divergences (FUZZ_STRICT is unset). Each job's grown corpus
+# is preserved under runs/<ts>/<label>/corpus.
+[campaign.official]
+budget_cores    = 31
+default_seconds = 7200
+
+job = [
+  # decode surface (libFuzzer + one AFL arm) -------------------------------- 19
+  { target = "fz_decode_structured", workers = 1 },
+  { target = "fz_decode_structured", variant = "havoc", engine = "afl", instances = 1 },
+  { target = "fz_decode_diff",       workers = 1 },
+  { target = "fz_decode_modes", variant = "serial",     workers = 1 },
+  { target = "fz_decode_modes", variant = "par",        workers = 1 },  # 4 threads
+  { target = "fz_decode_modes", variant = "par-forced", workers = 1 },  # 4 threads, byteStepsPar
+  { target = "fz_samples_diff",      workers = 1 },
+  { target = "fz_self_consistent",   workers = 1 },
+  { target = "fz_proven_pairs",      workers = 1 },
+  { target = "fz_metamorphic",       workers = 1 },
+  { target = "fz_trailing_data",     workers = 1 },
+  { target = "fz_streaminfo_contradict", workers = 1 },
+  { target = "fz_decode_capacity",   workers = 1 },  # 24/32-bit output under-allocation
+  { target = "fz_overlong_utf8",     workers = 1 },  # non-minimal coded numbers accepted
+  # encode / output-contract surface ---------------------------------------- 11
+  { target = "fz_gen_roundtrip",     workers = 1 },
+  { target = "fz_emit_conformance",  workers = 1 },
+  { target = "fz_residual_bound",    workers = 1 },
+  { target = "fz_encode_pair",       workers = 1 },  # emitFast == Unchecked.encode
+  { target = "fz_encode_pcm16_eq",   workers = 1 },  # encodePcm16 == Unchecked.encode(fastChooser 16)
+  { target = "fz_float_exact",       workers = 1 },  # Float LPC search vs exact
+  { target = "fz_encode_validity",   workers = 1 },
+  { target = "fz_encode_diff",       workers = 1 },
+  { target = "fz_roundtrip",         workers = 1 },
+  { target = "fz_unchecked_encode",  workers = 1 },
+  { target = "fz_md5",               workers = 1 },
+]
+
+# ---- modes-deep: 30 cores, all on the parallel decode surface -------------
+[campaign.modes-deep]
+budget_cores    = 30
+default_seconds = 3600
+
+job = [
+  { target = "fz_decode_modes", variant = "serial",     workers = 3 },
+  # 6F: the high-throughput model-code lane (max_len=8192 -> fast<->ref runs every input).
+  { target = "fz_decode_modes", variant = "small",      workers = 3 },
+  { target = "fz_decode_modes", variant = "par",        workers = 3 },  # 3 x 4 threads
+  { target = "fz_decode_modes", variant = "par-forced", workers = 3 },  # real byteStepsPar
+]
+
+# ---- contract: the output-contract / emit-set / generator surface ----------
+# The encode-side + output-contract targets grouped so they run together without
+# cannibalizing the broad default campaign. These are where the codec's
+# less-audited surface (encode / output-contract) is exercised.
+[campaign.contract]
+budget_cores    = 30
+default_seconds = 1800
+
+job = [
+  { target = "fz_gen_roundtrip",         workers = 4 },  # G1 any-depth round-trip + out-of-range/self-decode
+  { target = "fz_streaminfo_contradict", workers = 4 },  # output contract
+  { target = "fz_self_consistent",       workers = 3 },  # clause-3a + fit
+  { target = "fz_emit_conformance",      workers = 4 },  # emit-set
+  { target = "fz_residual_bound",        workers = 4 },  # residual bound
+  { target = "fz_encode_pair",           workers = 2 },  # emitFast == Unchecked.encode, any depth
+  { target = "fz_float_exact",           workers = 2 },  # Float LPC search vs exact recompute
+  { target = "fz_overlong_utf8",         workers = 2 },  # non-minimal coded numbers accepted (accept-set)
+  { target = "fz_trailing_data",         workers = 3 },  # accept-set
+  { target = "fz_metamorphic",           workers = 2 },  # re-encode idempotence
+]
+
+# ---- strict: regression pins. Runs the catalogue-by-default detectors at
+# FUZZ_STRICT=2 over the CURATED regress + must-reject corpora (per-job corpus
+# override), where an abort means a filed finding still fires (a pin) or a
+# regression -- NOT the manufactured divergences the broad mutated corpora
+# produce. Short by design: the corpora are small and the point is the verdict,
+# not throughput. `scripts/regress.sh` is the finer-grained per-witness selftest.
+[campaign.strict]
+budget_cores    = 8
+default_seconds = 120
+env = { FUZZ_STRICT = "2" }
+
+job = [
+  { target = "fz_self_consistent",       workers = 1, corpus = ["decode/regress", "decode/must_reject"] },
+  { target = "fz_streaminfo_contradict", workers = 1, corpus = ["decode/regress"] },
+  { target = "fz_samples_diff",          workers = 1, corpus = ["decode/regress", "decode/must_reject"] },
+  { target = "fz_trailing_data",         workers = 1, corpus = ["decode/regress"] },
+]
