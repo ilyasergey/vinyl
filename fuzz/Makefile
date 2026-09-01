@@ -95,7 +95,7 @@ print-config:
 	@echo "TARGETS     = $(TARGETS)"
 	@echo "IR_SRCS     = $(words $(IR_SRCS)) files"
 
-check: print-config check-symbols validate
+check: print-config check-symbols check-abort validate
 	@test -d "$(LEAN_PREFIX)/include/lean" || { echo "FAIL: no lean headers under LEAN_PREFIX"; exit 1; }
 	@test -f "$(FUZZER_RT)" || { echo "FAIL: libFuzzer runtime not found"; exit 1; }
 	@command -v $(AFL_CC) >/dev/null || { echo "FAIL: $(AFL_CC) not found (apt install afl++, or set AFL_CC)"; exit 1; }
@@ -106,6 +106,14 @@ check: print-config check-symbols validate
 
 validate:
 	@python3 -m fleet validate
+
+# P0.3: a bare abort() in a target/common TU drops the process's bucket witness
+# counters (atexit does not run on abort); FUZZ_ABORT() flushes them first. Keep
+# the tree free of bare abort() so a strict campaign never loses its witnesses.
+check-abort:
+	@bad=$$(grep -rnE '\babort\(\)[[:space:]]*;' targets common --include='*.c' || true); \
+	if [ -n "$$bad" ]; then echo "FAIL: bare abort() found (use FUZZ_ABORT):"; echo "$$bad"; exit 1; fi; \
+	echo "OK: no bare abort() in targets/ or common/ (P0.3)."
 
 list:
 	@python3 -m fleet list

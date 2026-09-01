@@ -99,7 +99,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 "\n[OUTPUT-CONTRACT VIOLATION] sample rate 0 accepted with audio (§9.1.7)\n"
                 "  STREAMINFO sampleRate:=0 but Vinyl decoded %ld samples x %d ch at reported sr=%d\n",
                 w.nsamples, w.nch, w.sr);
-        abort();
+        FUZZ_ABORT();
       }
     }
   }
@@ -121,7 +121,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 "\n[OUTPUT-CONTRACT VIOLATION] decoded channel count != STREAMINFO\n"
                 "  STREAMINFO channels:=%d but Vinyl returned %d channels\n",
                 newch, w.nch);
-        abort();
+        FUZZ_ABORT();
       }
     }
   }
@@ -161,7 +161,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                   "\n[OUTPUT-CONTRACT VIOLATION] reported bps does not bound samples\n"
                   "  STREAMINFO bps:=%d, Vinyl reports bps=%d but a sample escapes FitsSInt(%d)\n",
                   newbps, w.bps, w.bps);
-          abort();
+          FUZZ_ABORT();
         }
       }
     }

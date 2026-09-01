@@ -81,15 +81,17 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
    * established theorem (it may be false for out-of-envelope configs). A
    * self-decode failure here is therefore a CANDIDATE finding -- Vinyl's own
    * writer emitted a stream its decoder rejects -- to catalogue for review, NOT a
-   * proven theorem violation to abort on unconditionally. We restrict to the VALID
-   * population AND assert it is inside the checked encoder's domain (bps 1-32,
+   * proven theorem violation to abort on unconditionally. We restrict to the
+   * IN-RANGE population (gp.in_range: non-adversarial, or the in-envelope
+   * adversarial advkind 0 whose alternating +/- half-scale samples still fit
+   * FitsSInt bps) AND assert it is inside the checked encoder's domain (bps 1-32,
    * ch 1-8, sr>0, blockSize <= 4608, in-range audio -- vinyl_gen guarantees all of
    * these), so the finding is sound: on that domain the checked encoder round-trips
    * by decode_encode, and Unchecked diverging from it is exactly the §2.5 class.
    * Abort only under a validated must-agree run (FUZZ_STRICT). */
   const int in_checked_domain =
       gp.bps >= 1 && gp.bps <= 32 && gp.ch >= 1 && gp.ch <= 8 && gp.sr > 0 && gp.bs <= 4608;
-  if (!gp.adversarial && in_checked_domain && vin.rc != DEC_OK) {
+  if (gp.in_range && in_checked_domain && vin.rc != DEC_OK) {
     g_self_decode_fail++;
     oracle_dump_write("gen_self_decode_fail", flac, flen);
     if (fuzz_env_strict() >= FUZZ_STRICT_ACCEPT) {
@@ -98,18 +100,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
               "  Vinyl will not decode, on in-domain valid audio bps=%d ch=%d bs=%zu nsamples=%zu\n"
               "  -> %zuB FLAC, decodeArrays=none (the checked encoder round-trips on this domain)\n",
               gp.bps, gp.ch, gp.bs, gp.nsamples, flen);
-      abort();
+      FUZZ_ABORT();
     }
   }
 
-  /* Ground truth (no referee): on the VALID in-domain population,
+  /* Ground truth (no referee): on the IN-RANGE in-domain population (gp.in_range:
+   * non-adversarial, or the in-envelope adversarial advkind 0),
    * decode(Unchecked.encode A) = A is theorem-backed (round-trip over the
    * encoder's image), so Vinyl's decoded samples must equal the ones G1
    * generated. This catches a common-mode encoder error all three decoders would
    * agree on (invisible to the 3-way oracle) AND doubles as the FFI-layout
    * selftest -- a wrong Audio/EncoderCfg ctor layout shows here as a systematic
    * mismatch. Catalogue; abort under strict. */
-  if (!gp.adversarial && in_checked_domain && vin.rc == DEC_OK && !vin.overflow &&
+  if (gp.in_range && in_checked_domain && vin.rc == DEC_OK && !vin.overflow &&
       vin.nch == gp.ch && vin.nsamples == (long)gp.nsamples) {
     g_ground_checked++;
     int bad_c = -1;
@@ -135,19 +138,20 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 "  (bps=%d ch=%d nsamples=%zu) -- decode(Unchecked.encode A) != A on the encoder's image\n",
                 bad_c, bad_i, (long long)vin.plane[bad_c][bad_i],
                 (long long)vinyl_gen_expected(bad_c)[bad_i], gp.bps, gp.ch, gp.nsamples);
-        abort();
+        FUZZ_ABORT();
       }
     }
   }
 
   /* MD5 convention check: decode G1's own output with libFLAC MD5 checking on.
    * Vinyl writes a STREAMINFO MD5 (RFC 9639 §9.2.2); its convention has never been
-   * validated above 16-bit. ONLY on the VALID, in-range population: adversarial
-   * audio is out of FitsSInt(bps), so Vinyl's MD5 (over the original samples) and
-   * libFLAC's (over the wrapped-decoded samples) legitimately differ -- that is
-   * not an MD5-convention bug. On in-range audio a mismatch IS a sound finding.
-   * Catalogue; abort under strict. */
-  int md5 = (!gp.adversarial && in_checked_domain) ? flac_md5_verify(flac, flen) : MD5_UNCHECKED;
+   * validated above 16-bit. ONLY on the IN-RANGE population (gp.in_range):
+   * out-of-range adversarial audio (advkind 1-3) is out of FitsSInt(bps), so
+   * Vinyl's MD5 (over the original samples) and libFLAC's (over the wrapped-decoded
+   * samples) legitimately differ -- that is not an MD5-convention bug. On in-range
+   * audio (including the in-envelope adversarial advkind 0) a mismatch IS a sound
+   * finding. Catalogue; abort under strict. */
+  int md5 = (gp.in_range && in_checked_domain) ? flac_md5_verify(flac, flen) : MD5_UNCHECKED;
   if (md5 != MD5_UNCHECKED)
     g_md5_checked++;
   if (md5 == MD5_MISMATCH) {
@@ -158,7 +162,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
               "\n[MD5 CONVENTION] Vinyl's STREAMINFO MD5 does not match libFLAC's MD5 of the\n"
               "  decoded audio -- bps=%d ch=%d nsamples=%zu (RFC 9639 §9.2.2; unvalidated >16-bit)\n",
               gp.bps, gp.ch, gp.nsamples);
-      abort();
+      FUZZ_ABORT();
     }
   }
 

@@ -167,6 +167,15 @@ no theorem, `Flac/` untouched. -/
 @[export vlean_unchecked_encode] def fzUncheckedEncode := Flac.Stream.Unchecked.encode
 @[export vinyl_default_chooser]  def fzDefaultChooser  := Flac.Heuristics.defaultAsgChooser
 @[export vlean_md5]              def fzMd5             := Flac.Md5.md5
+@[export vlean_md5_hex]          def fzMd5Hex          := Flac.Md5.md5Hex
+
+-- CRC primitives (fz_crc): the codec's Flac.Crc.crc8/crc16 over a ByteArray, so the
+-- rig can differential them against the C clone flac_bits_crc8/16 (flac_bits.h). CRC
+-- is the second-largest unproven-on-the-binary component and is shared by both the
+-- encoder and decoder, so a wrong table/poly would silently corrupt the whole
+-- CRC-aware fleet; nothing else checks the Lean CRC directly.
+@[export vinyl_lean_crc8]        def fzCrc8            := Flac.Crc.crc8
+@[export vinyl_lean_crc16]       def fzCrc16           := Flac.Crc.crc16
 
 -- A3e / C5: stable ABI for the emit writer and the pcm16 encode pipeline, so
 -- `fz_encode_pcm16_eq.c` and `vinyl_gen.c` can drop the mangled `lp_vinyl_*`

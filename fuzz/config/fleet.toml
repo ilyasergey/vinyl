@@ -15,7 +15,7 @@ job = [
   # Decode conformance: the deep-decoder space (CRC mutator). Trimmed from 6/3 to
   # 4/2 to fund the accept-set + generator arms below -- decode is the well-audited
   # surface, and these two now run the smaller 16-bit wide16.
-  { target = "fz_decode_structured", workers = 4 },
+  { target = "fz_decode_structured", workers = 6 },  # +2: reclaims the 2 cores freed by par (4->2 threads)
   { target = "fz_decode_diff",       workers = 2 },
   # Accept-set: reject-where-referees-accept on ordinary files (trailing ID3v1 /
   # frame-boundary truncation).
@@ -25,7 +25,7 @@ job = [
   { target = "fz_gen_roundtrip",     workers = 2 },
   # The P6 @[csimp] flagship: serial baseline + live-pool determinism.
   { target = "fz_decode_modes", variant = "serial", workers = 3 },
-  { target = "fz_decode_modes", variant = "par",    workers = 1 },  # par = 4 threads
+  { target = "fz_decode_modes", variant = "par",    workers = 1 },  # par = 2 threads
   # Any-depth + TCB + output-contract + MD5.
   { target = "fz_samples_diff",     workers = 3 },
   { target = "fz_proven_pairs",     workers = 1 },
@@ -40,10 +40,12 @@ job = [
   { target = "fz_decode_structured", variant = "havoc", engine = "afl", instances = 2 },
 ]
 
-# ---- official: the full-fleet run. ALL 17 targets, exactly 30 cores, 2h. ---
-# The campaign for an official bug-hunting + coverage run: every target gets at
-# least one worker, the deep/less-audited surfaces (parallel decode modes, the
-# any-depth 3-way diff, the G1 generator, output-contract) get more, and the
+# ---- official: the full-fleet run. 27 jobs across 24 of the 27 targets, 31 cores, 2h.
+# (fz_md5 / fz_float_exact / fz_overlong_utf8 run in campaign.contract, not here.) ------
+# The campaign for an official bug-hunting + coverage run: nearly every target gets a
+# worker (the quality/regression targets fz_md5 / fz_float_exact / fz_overlong_utf8 run
+# in campaign.contract instead), the deep/less-audited surfaces (parallel decode modes,
+# the any-depth 3-way diff, the G1 generator, output-contract) get more, and the
 # flagship structured decoder runs on BOTH libFuzzer (CRC mutator) and AFL
 # (havoc) for engine diversity. Catalogue-by-default: aborts mean real findings,
 # not manufactured divergences (FUZZ_STRICT is unset). Each job's grown corpus
@@ -54,12 +56,14 @@ default_seconds = 7200
 
 job = [
   # decode surface (libFuzzer + one AFL arm) -------------------------------- 19
-  { target = "fz_decode_structured", workers = 1 },
+  { target = "fz_decode_structured", workers = 1 },  # 2->1: 1 core funds fz_encode_referee (decode is coverage-saturated)
   { target = "fz_decode_structured", variant = "havoc", engine = "afl", instances = 1 },
   { target = "fz_decode_diff",       workers = 1 },
   { target = "fz_decode_modes", variant = "serial",     workers = 1 },
-  { target = "fz_decode_modes", variant = "par",        workers = 1 },  # 4 threads
-  { target = "fz_decode_modes", variant = "par-forced", workers = 1 },  # 4 threads, byteStepsPar
+  { target = "fz_decode_modes", variant = "par",        workers = 1 },  # 2 threads (config.py) -- 2 charged cores; the 31/31 budget depends on this
+  # par-forced (byteStepsPar) moved to modes-deep to fund fz_decode_par_eq.par below;
+  # this campaign keeps modes.par for the parallel decode-modes surface.
+  { target = "fz_decode_par_eq", variant = "par",       workers = 1 },  # 4 threads: the deterministic-but-wrong parallel-stitch oracle
   { target = "fz_samples_diff",      workers = 1 },
   { target = "fz_self_consistent",   workers = 1 },
   { target = "fz_proven_pairs",      workers = 1 },
@@ -67,19 +71,21 @@ job = [
   { target = "fz_trailing_data",     workers = 1 },
   { target = "fz_streaminfo_contradict", workers = 1 },
   { target = "fz_decode_capacity",   workers = 1 },  # 24/32-bit output under-allocation
-  { target = "fz_overlong_utf8",     workers = 1 },  # non-minimal coded numbers accepted
+  { target = "fz_decode_stack",      workers = 1 },  # decode-side stack regression pin (readRiceSeq/SIntSeq now TR)
+  { target = "fz_decode_par_eq", variant = "serial", workers = 1 },  # decodeBytes_spec on the binary
+  { target = "fz_crc",               workers = 1 },  # Flac.Crc.crc8/16 vs the independent C clone
   # encode / output-contract surface ---------------------------------------- 11
   { target = "fz_gen_roundtrip",     workers = 1 },
   { target = "fz_emit_conformance",  workers = 1 },
   { target = "fz_residual_bound",    workers = 1 },
   { target = "fz_encode_pair",       workers = 1 },  # emitFast == Unchecked.encode
   { target = "fz_encode_pcm16_eq",   workers = 1 },  # encodePcm16 == Unchecked.encode(fastChooser 16)
-  { target = "fz_float_exact",       workers = 1 },  # Float LPC search vs exact
   { target = "fz_encode_validity",   workers = 1 },
   { target = "fz_encode_diff",       workers = 1 },
   { target = "fz_roundtrip",         workers = 1 },
   { target = "fz_unchecked_encode",  workers = 1 },
-  { target = "fz_md5",               workers = 1 },
+  { target = "fz_encode_stack",      workers = 1 },  # C04 bounded-stack encode overflow prober
+  { target = "fz_encode_referee",    workers = 1 },  # ffmpeg+libFLAC emit-side referee on the production encoders
 ]
 
 # ---- modes-deep: 30 cores, all on the parallel decode surface -------------
@@ -88,11 +94,11 @@ budget_cores    = 30
 default_seconds = 3600
 
 job = [
-  { target = "fz_decode_modes", variant = "serial",     workers = 3 },
+  { target = "fz_decode_modes", variant = "serial",     workers = 6 },  # +3: reclaims cores freed by par (4->2 threads)
   # 6F: the high-throughput model-code lane (max_len=8192 -> fast<->ref runs every input).
-  { target = "fz_decode_modes", variant = "small",      workers = 3 },
-  { target = "fz_decode_modes", variant = "par",        workers = 3 },  # 3 x 4 threads
-  { target = "fz_decode_modes", variant = "par-forced", workers = 3 },  # real byteStepsPar
+  { target = "fz_decode_modes", variant = "small",      workers = 6 },  # +3: reclaims cores freed by par (4->2 threads)
+  { target = "fz_decode_modes", variant = "par",        workers = 3 },  # 3 x 2 threads
+  { target = "fz_decode_modes", variant = "par-forced", workers = 3 },  # real byteStepsPar (4 threads, bounded max_len)
 ]
 
 # ---- contract: the output-contract / emit-set / generator surface ----------
@@ -114,6 +120,41 @@ job = [
   { target = "fz_overlong_utf8",         workers = 2 },  # non-minimal coded numbers accepted (accept-set)
   { target = "fz_trailing_data",         workers = 3 },  # accept-set
   { target = "fz_metamorphic",           workers = 2 },  # re-encode idempotence
+]
+
+# ---- encode-stack: the C04 bounded-stack encode overflow prober, alone --------
+# fz_encode_stack forks a child per exec with a small RLIMIT_STACK and runs the
+# SLOW encoder until Stream.writeFrames/chunkChannels (un-swapped per-frame
+# recursion) overflow -- rediscovering findings/encoder-stack-overflow-CONFIRMED
+# on its own. It is fork+exec bound (the parent blocks on waitpid; the child does
+# the CPU work), so a handful of workers explores the (samples,channels,blockSize,
+# stackKB) frontier without a large core footprint. Catalogue-by-default; run with
+# FUZZ_STRICT=2 (env below flips to strict via `-e` at launch, or the strict
+# campaign) to turn an overflow into a hard, filed finding.
+[campaign.encode-stack]
+budget_cores    = 8
+default_seconds = 600
+
+job = [
+  { target = "fz_encode_stack", workers = 6 },
+]
+
+# ---- encode-pcm: the sample-aware PCM mutator on the packed-PCM encode set ----
+# P0.1: the four packed-PCM encode targets run with mutator="pcm" (variant, via
+# FUZZ_MUTATOR=pcm), so common/pcm_mutator.c reshapes raw fuzzer bytes into
+# correlated / boundary-shaped audio -- driving choosePlanF into FIXED/LPC search,
+# wastedDetectF, mid/side and the pushRiceRangeF hot loop instead of near-always
+# VERBATIM. libFuzzer-only (the pcm variant restricts engines); the AFL arm needs
+# fleet/launch.py to point AFL_CUSTOM_MUTATOR_LIBRARY at build/lib/pcm_mutator.so.
+[campaign.encode-pcm]
+budget_cores    = 8
+default_seconds = 1800
+
+job = [
+  { target = "fz_encode_diff",      variant = "pcm", workers = 2 },
+  { target = "fz_roundtrip",        variant = "pcm", workers = 2 },
+  { target = "fz_encode_validity",  variant = "pcm", workers = 2 },
+  { target = "fz_encode_pcm16_eq",  variant = "pcm", workers = 2 },
 ]
 
 # ---- strict: regression pins. Runs the catalogue-by-default detectors at

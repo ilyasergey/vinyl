@@ -47,6 +47,8 @@ typedef struct {
   size_t n, pos;
   Wide *w;
   int err, mixed, toomany;
+  int si_sr;        /* STREAMINFO sample rate, captured in fw_meta (0 = not seen) */
+  int sr_mismatch;  /* a frame sample rate contradicted STREAMINFO -- malformed */
 } FlacWideCtx;
 
 static FlacWideCtx fw;
@@ -82,6 +84,16 @@ static FLAC__StreamDecoderWriteStatus fw_write(const FLAC__StreamDecoder *d, con
     fw.toomany = 1;
     return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
   }
+  /* RFC 9639 §9.1: a frame whose sample rate contradicts STREAMINFO is malformed.
+   * The strict libFLAC CLI aborts on it ("sample rate is X in frame but Y in
+   * STREAMINFO"); libFLAC-the-library does not, so without this the wide referee is
+   * MORE lenient than the CLI and would form a false libFLAC+ffmpeg "consensus"
+   * against Vinyl on a malformed stream (see findings/decode-sample-divergence-highbps
+   * repro-min-215B). Match the CLI so a contradiction is a reject, not a consensus. */
+  if (fw.si_sr && (int)f->header.sample_rate != fw.si_sr) {
+    fw.sr_mismatch = 1;
+    return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+  }
   if (fw.w->nsamples == 0) {
     fw.w->bps = (int)bps;
     fw.w->nch = (int)ch;
@@ -105,6 +117,7 @@ static void fw_meta(const FLAC__StreamDecoder *d, const FLAC__StreamMetadata *m,
     fw.w->bps = (int)m->data.stream_info.bits_per_sample;
     fw.w->nch = (int)m->data.stream_info.channels;
     fw.w->sr = (int)m->data.stream_info.sample_rate;
+    fw.si_sr = (int)m->data.stream_info.sample_rate;
   }
 }
 static void fw_err(const FLAC__StreamDecoder *d, FLAC__StreamDecoderErrorStatus s, void *c) {
@@ -123,6 +136,7 @@ static void fw_err(const FLAC__StreamDecoder *d, FLAC__StreamDecoderErrorStatus 
 static const Wide *g_last_vin;
 static const Wide *g_last_flc;
 static int g_ff_skipped;
+static unsigned long g_ff_skip_total; /* cumulative gate skips, for the campaign census */
 #define FF_CENSUS_EVERY 64 /* 1-in-N forced ffmpeg run to keep the referee-split census honest */
 
 int flac_wide_decode(const uint8_t *in, size_t n, Wide *w) {
@@ -148,7 +162,8 @@ int flac_wide_decode(const uint8_t *in, size_t n, Wide *w) {
   /* nsamples==0 is NOT a rejection here: a metadata-only stream is legal FLAC
    * (the oracle skips the empty comparison). Rejecting it would make a
    * metadata-only stream Vinyl accepts read as an accept-divergence. */
-  if (!ok || fw.err || fw.mixed || fw.toomany || st != FLAC__STREAM_DECODER_END_OF_STREAM)
+  if (!ok || fw.err || fw.mixed || fw.toomany || fw.sr_mismatch ||
+      st != FLAC__STREAM_DECODER_END_OF_STREAM)
     return (w->rc = DEC_REJECT);
   return (w->rc = DEC_OK);
 }
@@ -252,18 +267,18 @@ static int ff_read(void *opaque, uint8_t *buf, int size) {
   return (int)k;
 }
 
-/* Phase 6D adjudication predicate: ffmpeg is only a SECOND referee. When Vinyl
- * and libFLAC already agree completely -- both rejected, or both accepted with
- * identical geometry AND identical samples -- ffmpeg cannot change any abort
- * decision (at most it catalogues a ref_disagree), so the ~700us
- * avformat_open_input/find_stream_info/decode/teardown is pure overhead. A Vinyl
- * bignum overflow makes the sample comparison untrustworthy, so force the
- * referee in that case. */
+/* Phase 6D adjudication predicate: ffmpeg is only a SECOND referee, but it can
+ * only be skipped when it genuinely cannot change the verdict: Vinyl and libFLAC
+ * both accepted with identical geometry AND identical samples. In that case
+ * ffmpeg would at most catalogue a ref_disagree, so the ~700us
+ * avformat_open_input/find_stream_info/decode/teardown is pure overhead. The
+ * both-reject case is NOT skippable: that is exactly where the ffmpeg-only-accept
+ * / accept-set signal lives (libFLAC and Vinyl both reject a stream ffmpeg
+ * recovers), so the referee must be consulted. A Vinyl bignum overflow makes the
+ * sample comparison untrustworthy, so force the referee in that case too. */
 static int ffm_adjudication_skippable(const Wide *vin, const Wide *flc) {
   if (vin->overflow)
     return 0;
-  if (vin->rc != DEC_OK && flc->rc != DEC_OK)
-    return 1;
   if (vin->rc != DEC_OK || flc->rc != DEC_OK)
     return 0;
   if (vin->nch != flc->nch || vin->nsamples != flc->nsamples)
@@ -275,26 +290,10 @@ static int ffm_adjudication_skippable(const Wide *vin, const Wide *flc) {
   return 1;
 }
 
-int ffmpeg_wide_decode(const uint8_t *in, size_t n, Wide *w) {
-  /* Phase 6D lazy ffmpeg -- the primary throughput lever. Run the second referee
-   * ONLY when it can matter, i.e. when Vinyl and libFLAC DISAGREE (acceptance,
-   * geometry, or a sample value), plus a cheap 1-in-N census sample so the
-   * referee-split statistics are not silently zeroed. On the overwhelming
-   * majority of inputs the two lead decoders already agree, so this drops the
-   * full open/decode/teardown entirely.
-   * TODO persistent ctx: a file-static AVCodecContext reset with
-   * avcodec_flush_buffers would trim the residual per-call cost when ffmpeg IS
-   * run, but the FLAC demuxer plus per-stream STREAMINFO extradata make a
-   * persistent context invasive to do safely here, so only the dominant gating
-   * win is taken. */
-  static unsigned long gate_counter;
-  const int forced = (++gate_counter % FF_CENSUS_EVERY) == 0;
-  g_ff_skipped = 0;
-  if (!forced && g_last_vin && g_last_flc &&
-      ffm_adjudication_skippable(g_last_vin, g_last_flc)) {
-    g_ff_skipped = 1;
-    return (w->rc = DEC_REJECT);
-  }
+/* The actual ffmpeg open/decode/teardown. Shared verbatim by the gated
+ * ffmpeg_wide_decode and the unconditional ffmpeg_wide_decode_forced so both
+ * entry points run identical decode logic; only the lazy gate differs. */
+static int ffmpeg_wide_decode_body(const uint8_t *in, size_t n, Wide *w) {
   static int quieted;
   if (!quieted) {
     av_log_set_level(AV_LOG_QUIET);
@@ -414,6 +413,43 @@ done:
     avio_context_free(&avio);
   }
   return (w->rc = rc);
+}
+
+int ffmpeg_wide_decode(const uint8_t *in, size_t n, Wide *w) {
+  /* Phase 6D lazy ffmpeg -- the primary throughput lever. Run the second referee
+   * ONLY when it can matter, i.e. when Vinyl and libFLAC DISAGREE (acceptance,
+   * geometry, or a sample value), plus a cheap 1-in-N census sample so the
+   * referee-split statistics are not silently zeroed. On the overwhelming
+   * majority of inputs the two lead decoders already agree, so this drops the
+   * full open/decode/teardown entirely.
+   * TODO persistent ctx: a file-static AVCodecContext reset with
+   * avcodec_flush_buffers would trim the residual per-call cost when ffmpeg IS
+   * run, but the FLAC demuxer plus per-stream STREAMINFO extradata make a
+   * persistent context invasive to do safely here, so only the dominant gating
+   * win is taken. */
+  static unsigned long gate_counter;
+  const int forced = (++gate_counter % FF_CENSUS_EVERY) == 0;
+  g_ff_skipped = 0;
+  if (!forced && g_last_vin && g_last_flc &&
+      ffm_adjudication_skippable(g_last_vin, g_last_flc)) {
+    g_ff_skipped = 1;
+    g_ff_skip_total++;
+    return (w->rc = DEC_REJECT);
+  }
+  return ffmpeg_wide_decode_body(in, n, w);
+}
+
+/* Unconditional ffmpeg decode -- bypasses the lazy gate entirely. For callers
+ * (e.g. base-establishment in fz_trailing_data) that need ffmpeg's verdict
+ * reliably rather than 1-in-FF_CENSUS_EVERY of the time. */
+int ffmpeg_wide_decode_forced(const uint8_t *in, size_t n, Wide *w) {
+  g_ff_skipped = 0;
+  return ffmpeg_wide_decode_body(in, n, w);
+}
+
+/* Cumulative count of executions on which the lazy gate skipped ffmpeg. */
+unsigned long wide_ff_skip_total(void) {
+  return g_ff_skip_total;
 }
 
 /* ---- Vinyl decodeArrays -> planes ------------------------------------ */
@@ -561,7 +597,7 @@ int wide_diff_oracle(const uint8_t *data, size_t size, const Wide *vin, const Wi
     oracle_dump_write("wide_vinyl_only", data, size);
     if (strict >= FUZZ_STRICT_ACCEPT) {
       report("VINYL_ONLY: Vinyl accepts, both references reject (strict)", size, vin, flc, ffm);
-      abort();
+      FUZZ_ABORT();
     }
     return WD_VINYL_ONLY;
   }
@@ -569,7 +605,7 @@ int wide_diff_oracle(const uint8_t *data, size_t size, const Wide *vin, const Wi
     oracle_dump_write("wide_ref_only", data, size);
     if (strict >= FUZZ_STRICT_ACCEPT) {
       report("REF_ONLY: both references accept, Vinyl rejects (strict)", size, vin, flc, ffm);
-      abort();
+      FUZZ_ABORT();
     }
     return WD_REF_ONLY;
   }
@@ -627,7 +663,7 @@ int wide_diff_oracle(const uint8_t *data, size_t size, const Wide *vin, const Wi
               oc, oi, ov, vin->bps - 1, vin->bps - 1, vin->bps);
       oracle_dump_write("wide_output_contract", data, size);
       if (strict >= FUZZ_STRICT_ACCEPT)
-        abort();
+        FUZZ_ABORT();
       return WD_OUT_OF_CONTRACT;
     }
   }
@@ -659,7 +695,7 @@ int wide_diff_oracle(const uint8_t *data, size_t size, const Wide *vin, const Wi
                   i, (long long)vin->plane[c][i], (long long)flc->plane[c][i], vin->bps);
           oracle_dump_write("wide_output_contract", data, size);
           if (strict >= FUZZ_STRICT_ACCEPT)
-            abort();
+            FUZZ_ABORT();
           return WD_OUT_OF_CONTRACT;
         }
         /* Phase 8A wrap-congruence (defensive): Vinyl and the two-reference
@@ -682,12 +718,12 @@ int wide_diff_oracle(const uint8_t *data, size_t size, const Wide *vin, const Wi
         fprintf(stderr, "  channel %d index %ld: vinyl=%lld consensus=%lld (bps=%d)\n", c, i,
                 (long long)vin->plane[c][i], (long long)flc->plane[c][i], vin->bps);
         oracle_dump_write("wide_sample_diff", data, size);
-        abort(); /* two independent decoders agree; Vinyl is the outlier */
+        FUZZ_ABORT(); /* two independent decoders agree; Vinyl is the outlier */
       default:   /* geometry: Vinyl's sample count/channels differ from consensus */
         report("geometry differs -- Vinyl vs a libFLAC+ffmpeg consensus", size, vin, flc, ffm);
         oracle_dump_write("wide_geom_diff", data, size);
         if (strict >= FUZZ_STRICT_LEN)
-          abort();
+          FUZZ_ABORT();
         return WD_GEOM;
     }
   }
@@ -727,7 +763,7 @@ int wide_diff_oracle(const uint8_t *data, size_t size, const Wide *vin, const Wi
                 (long long)vin->plane[c][i], R->name, (long long)R->plane[c][i], vin->bps);
         oracle_dump_write("wide_output_contract", data, size);
         if (strict >= FUZZ_STRICT_ACCEPT)
-          abort();
+          FUZZ_ABORT();
         return WD_OUT_OF_CONTRACT;
       }
       report("decoded SAMPLE differs -- Vinyl vs a single reference (uncorroborated)", size, vin,
@@ -736,12 +772,12 @@ int wide_diff_oracle(const uint8_t *data, size_t size, const Wide *vin, const Wi
               (long long)vin->plane[c][i], R->name, (long long)R->plane[c][i], vin->bps);
       oracle_dump_write("wide_sample_diff_1ref", data, size);
       if (strict >= FUZZ_STRICT_LEN)
-        abort();
+        FUZZ_ABORT();
       return WD_REF_DISAGREE;
     default:
       oracle_dump_write("wide_geom_diff_1ref", data, size);
       if (strict >= FUZZ_STRICT_LEN)
-        abort();
+        FUZZ_ABORT();
       return WD_GEOM;
   }
 }

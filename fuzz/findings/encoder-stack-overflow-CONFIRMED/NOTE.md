@@ -1,5 +1,79 @@
 # Encoder non-tail recursion overflows the stack on ordinary inputs
 
+## Update 2026-08-31 — the PER-FRAME loops fixed; a dedicated prober added
+
+The 2026-08-30 patch below retired the three per-SAMPLE encode loops. The
+per-FRAME loops named in the audit's C04 (`Stream.writeFrames`,
+`Stream.chunkChannels`) still carried no compiled-swap: each recurses once per
+FLAC frame = `ceil(samples/blockSize)`, so a small block size over long audio
+drives the recursion depth with the frame count. This is the class the gate
+could not see — a MISSING swap is invisible to a gate that pins the swaps that
+exist.
+
+**New target `fz_encode_stack`** rediscovers it autonomously. It forks a child
+with a small `RLIMIT_STACK` (set before an `execv`, the mechanism
+`tools/stack_probe.sh` uses via `ulimit -s`; a running thread's mapped stack
+cannot be shrunk, an exec's fresh one can), runs the SLOW encoder
+(`vm_encode_slow` → `Flac.encodePcm16Cfg`) on incompressible PCM, and reads the
+child's `SIGABRT`/`SIGSEGV` as the witness — cataloguing the ok→crash
+`(samples, channels, blockSize, stackKB)` frontier WITHOUT aborting the fuzzer.
+A 10-minute run (`runs/20260831_175244`, 6 workers) recorded **464
+`encode_stack_overflow` occurrences / 327 witness files across 74 worker
+processes, 0 fuzzer crashes / 0 OOM / 0 timeouts** — the overflow is the
+child's, catalogued as a divergence. It is a resource prober, not a codepath
+differential: the work is in the forked child, so it is `engines=("libfuzzer",)`
+and catalogue-by-default (`FUZZ_STRICT>=1` escalates an overflow to a filed
+abort).
+
+**Source fix applied (this session).** `Stream.writeFrames` and
+`Stream.chunkChannels` were made tail-recursive with the repo's established
+`@[csimp]` swap (accumulator form + bridging equation, exactly as
+`bitsToByteListAcc`/`recombineTR`): `writeFramesAcc`/`writeFramesTR`,
+`chunkChannelsAcc`/`chunkChannelsTR`. Every theorem keeps the structural
+definition through the kernel (the swap is compiler-only); `Flac.Spec.Encode`,
+which inducts on `chunkChannels`, is unchanged. `#print axioms` of both swaps is
+`[propext, Quot.sound]` — no `sorry`, no new axiom. `lake build`, `lake exe
+flactest` (155), and `scripts/check.sh` are all green; `make check` mutator
+selftest stays 400/400 byte-identical. After the fix the many-frame probes that
+crashed at 256–512 KB (e.g. `128000` samples `bs=16`, 8000 frames) run to
+completion (they hit only the probe's slow-encode alarm), so the per-frame class
+is retired — `fz_encode_stack` is now the regression guard that catches the next
+un-swapped encode loop.
+
+## Update 2 (2026-08-31) — three MORE non-tail encode loops, found by the prober and FIXED
+
+With the per-frame class retired, `fz_encode_stack` kept flagging a `bs=4096`
+overflow whose depth scaled with samples-PER-frame (not frame count). A gdb
+backtrace under a shrunk stack pinned the actual culprits — **three loops NOT in
+C04's enumerated six**, exactly the "enumerative guarantee" gap the prober exists
+to close (my first guess, `writeRiceSeq`'s `List.flatMap`, was WRONG — core
+`flatMap` is tail-recursive via `@[csimp] flatMap_eq_flatMapTR`):
+
+- **`Heuristics.partitionSearch`** summed each partition's residuals with
+  `List.sum`, which compiles to a non-tail `foldr` (`List_foldr___at___List_sum`
+  in the backtrace) — depth = partition size. This was the dominant one on the
+  checked-encoder path. Fixed by `us.foldl (·+·) 0` / `p.foldl (·+·) 0` (same
+  value, tail-recursive; `Heuristics` is unverified-by-design so no theorem reads
+  the fold shape).
+- **`Fixed.diff1`** (fixed-predictor residual, `(y-x) :: diff1 (y::t)`) and
+  **`Lpc.residualAux`** (LPC residual, `(x - predict …) :: residualAux …`) — both
+  per-sample, depth = block size. Fixed with the `@[csimp]` accumulator swap
+  (`diff1TR`, `residualAuxTR`; `#print axioms` = `[propext, Quot.sound]`).
+
+Depth was bounded by samples-per-subframe = block size. The CHECKED encoder caps
+`blockSize ≤ 4608` (≈288 KB, safe under an 8 MB stack, so the shipped CLI never
+hit it), but **`Stream.Unchecked.encode` with a large block size is unbounded** —
+the same footgun tier as the other unchecked findings. Post-fix the encoder
+survives every `blockSize ≤ 4608` case down to a **128 KB** stack; `lake build` /
+`flactest` (155) / `scripts/check.sh` green. `fz_encode_stack` is now a clean
+regression guard (0 overflows across the checked range).
+
+---
+
+`repro_*` below is the original per-frame witness.
+
+---
+
 **Status: FIXED (2026-08-30) — patch applied and verified.** The three
 per-sample non-tail functions on the slow-encode path were made tail-recursive
 via the P6 `@[csimp]` pattern (kernel-proven equal to the structural forms, which

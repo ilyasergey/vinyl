@@ -6,12 +6,39 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "flac_bits.h" /* flac_si_total_samples -- the shared STREAMINFO accessor (6E) */
+#include "flac_struct.h" /* flac_expected_samples -- honest sample count when total=0 */
 
 
 int vinyl_init(void); /* common/vinyl_api.c */
+
+/* Persist the target's report() line to $FUZZ_DUMP_DIR/report-<pid>.txt, mirroring
+ * buckets.c's per-pid temp+rename mechanism (same env var, same pid-in-the-name,
+ * same SIGKILL-proof atomic write). Under libFuzzer -fork the atexit report runs in
+ * the fork PARENT, which never executes an input, so its stderr line reads execs=0;
+ * the CHILDREN's real counters otherwise vanish with the /tmp/libFuzzerTemp.*.dir
+ * logs libFuzzer deletes on clean exit. Writing each process's own file here makes
+ * every child's counters durable for the fleet to pick the busiest one. No-op when
+ * FUZZ_DUMP_DIR is unset (i.e. outside the fleet) or the target has no report(). */
+static void write_report_file(void) {
+  const char *dir = getenv("FUZZ_DUMP_DIR");
+  if (!dir || !*dir || !fuzz_target_info.report)
+    return;
+  mkdir(dir, 0755);
+  char path[640];
+  snprintf(path, sizeof path, "%s/report-%ld.txt", dir, (long)getpid());
+  char tmp[672];
+  snprintf(tmp, sizeof tmp, "%s.tmp", path);
+  FILE *f = fopen(tmp, "w");
+  if (!f)
+    return;
+  fuzz_target_info.report(f); /* the SAME text rendered to stderr below -- unchanged */
+  fclose(f);
+  rename(tmp, path);
+}
 
 static void run_report(void) {
   if (fuzz_target_info.report)
@@ -22,6 +49,7 @@ static void run_report(void) {
    * stderr scrape kept only the last line). */
   bucket_report(stderr);
   bucket_write_counters();
+  write_report_file();
 }
 
 int fuzz_common_init(int *argc, char ***argv) {
@@ -94,7 +122,24 @@ int fuzz_over_sample_cap(const uint8_t *data, size_t size) {
     return 0;
   if ((data[4] & 0x7f) != 0)
     return 0; /* first block is not STREAMINFO -- offsets would be wrong */
-  return flac_si_total_samples(data) > (uint64_t)g_max_samples;
+  /* The declared STREAMINFO total is untrusted (CRC-mutable) and 0 means
+   * "unknown" (RFC 9639 §9.1.3), so keying off it alone leaks two ways: total=0
+   * reads as "0 samples" and bypasses the cap on an arbitrarily large stream,
+   * and a tiny file can declare a huge total and be dropped even though it can
+   * only decode to a handful of samples. Cap on min(declared, budget) instead,
+   * and when the declared total is the "unknown" sentinel 0, use the frames'
+   * actual summed block sizes (flac_expected_samples) rather than 0. The budget
+   * is the decoder's own decompression-bomb bound: decode_size_le guarantees
+   * 2*Σ|channel| ≤ decodeBudget = 4096*size + 65536 (Flac/Native/Stream.lean:
+   * 471-479), so no stream can yield more than decodeBudget/2 = 2048*size + 32768
+   * inter-channel samples regardless of what STREAMINFO claims (K = decodeAmpl/2
+   * = 2048, floor = decodeFloor/2 = 32768). FUZZ_MAX_SAMPLES=0 still fully
+   * disables the cap via the g_max_samples guard above. */
+  uint64_t budget = (uint64_t)2048 * (uint64_t)size + 32768; /* = decodeBudget/2 */
+  uint64_t declared = flac_si_total_samples(data);
+  uint64_t effective = declared == 0 ? flac_expected_samples(data, size)
+                                     : (declared < budget ? declared : budget);
+  return effective > (uint64_t)g_max_samples;
 }
 
 size_t fuzz_rss_kb(void) {

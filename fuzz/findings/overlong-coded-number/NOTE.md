@@ -1,6 +1,18 @@
 # `readUtf8` accepts non-minimal (overlong) coded frame/sample numbers
 
-**Status: CONFIRMATION of a source-reviewed class (engagement appendix §3.7) — with a
+**Status: FIXED (2026-08-31) — patch applied and verified.** `Utf8Num.contsFloor`
+(the RFC 3629 minimality floor — `write`'s branch cutoffs `2^7,2^11,2^16,2^21,2^26,
+2^31`) now gates `readContsMin`, and both reader twins (`Decode.readUtf8` fast path,
+`Utf8Num.read` reference) reject a decoded value below the floor for its continuation
+count. The change only SHRINKS the accept set, so it threads no hypothesis through the
+capstones: `read_write`, `readUtf8_sim`, `readUtf8_pos8` and the frame round-trip go
+through with the branch cutoff discharging the gate; `#print axioms` unchanged, `lake
+build` / `flactest` (155) / `scripts/check.sh` all green. The detector `fz_overlong_utf8`
+was flipped to a two-way regression pin: a 19 s run reports `minimal_accepted=2.79M`,
+`overlong_rejected=686k`, `overlong_accepted=0 reject_bug=0 value_bug=0` — where a 15 s
+run pre-fix reported ~1M `overlong_accepted`. History below.
+
+**Original status: CONFIRMATION of a source-reviewed class (engagement appendix §3.7) — with a
 new detector.** RFC 9639 §5 makes rejecting invalid data a MAY, so this is an
 ACCEPT-SET / claim finding, not a decode nonconformance.
 

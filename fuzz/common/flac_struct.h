@@ -63,6 +63,19 @@ int flac_frame_channels(const uint8_t *buf, size_t n);
  * disagrees with the bitstream instead of guessing. */
 uint64_t flac_expected_samples(const uint8_t *buf, size_t n);
 
+/* Fill `out_start_bits` (room for `nch` entries) with the START bit offset of
+ * each subframe of the frame at byte `frame_start`, using the same structural
+ * walk the CRC-16 placement relies on. `hlen` is the header length before the
+ * CRC-8 byte, `bps` the base sample depth (also the STREAMINFO fallback when the
+ * frame's bit-depth code is 0). `side_mode` selects the stereo decorrelation so
+ * per-channel depth is correct (0 independent, 1 left/side side@ch1, 2 right/side
+ * side@ch0, 3 mid/side side@ch1 -- the b+1 side channel). Returns 1 only when all
+ * `nch` subframes parse cleanly (offsets fully populated), 0 otherwise. It never
+ * reads past `n`. Added for the residual analyzer; the mutator/generator do not
+ * call it, so their byte output is unchanged. */
+int flac_subframe_bit_offsets(const uint8_t *b, size_t n, size_t frame_start, unsigned hlen,
+                              unsigned nch, unsigned bps, int side_mode, uint64_t *out_start_bits);
+
 /* ---- structure-aware mutator ------------------------------------------- */
 
 /* Mutate `buf` (size `n`, capacity `max`) in place and return the new size.

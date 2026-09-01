@@ -33,18 +33,25 @@ def readConts : (k : Nat) → (acc : Nat) → BitReader → Option (Nat × BitRe
       if 0x80 ≤ c ∧ c < 0xC0 then readConts k (acc * 64 + (c - 0x80)) br
       else none
 
+/-- `readConts` with the RFC 3629 minimality gate (rejects overlong forms);
+    the BitReader twin of `Utf8Num.readContsMin`, sharing its `contsFloor`. -/
+def readContsMin (k : Nat) (acc : Nat) (br : BitReader) : Option (Nat × BitReader) :=
+  match readConts k acc br with
+  | none => none
+  | some (v, br') => if v < Utf8Num.contsFloor k then none else some (v, br')
+
 def readUtf8 (br : BitReader) : Option (Nat × BitReader) :=
   match br.readBits 8 with
   | none => none
   | some (b, br) =>
     if b < 0x80 then some (b, br)
     else if b < 0xC0 then none
-    else if b < 0xE0 then readConts 1 (b - 0xC0) br
-    else if b < 0xF0 then readConts 2 (b - 0xE0) br
-    else if b < 0xF8 then readConts 3 (b - 0xF0) br
-    else if b < 0xFC then readConts 4 (b - 0xF8) br
-    else if b < 0xFE then readConts 5 (b - 0xFC) br
-    else if b = 0xFE then readConts 6 0 br
+    else if b < 0xE0 then readContsMin 1 (b - 0xC0) br
+    else if b < 0xF0 then readContsMin 2 (b - 0xE0) br
+    else if b < 0xF8 then readContsMin 3 (b - 0xF0) br
+    else if b < 0xFC then readContsMin 4 (b - 0xF8) br
+    else if b < 0xFE then readContsMin 5 (b - 0xFC) br
+    else if b = 0xFE then readContsMin 6 0 br
     else none
 
 /-! ## Rice codes -/

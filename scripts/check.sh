@@ -78,7 +78,7 @@ echo "== stack-shape swaps present (P6: csimp-pinned tail forms)"
 # @[csimp] equations (docs/06-recursion-shape.md). Pin them by name so a
 # refactor cannot silently drop a swap and revert a loop to
 # stack-frame-per-frame.
-for thm in "readUnary_eq_readUnaryTR" "readFrames_eq_readFramesTR" "readFramesB_eq_readFramesBTR" "recombine_eq_recombineTR" "readFramesStepsB_eq_readFramesStepsBTR"; do
+for thm in "readUnary_eq_readUnaryTR" "readFrames_eq_readFramesTR" "readFramesB_eq_readFramesBTR" "recombine_eq_recombineTR" "readFramesStepsB_eq_readFramesStepsBTR" "readRiceSeq_eq_readRiceSeqTR" "readSIntSeq_eq_readSIntSeqTR"; do
   if ! grep -rq "@\[csimp\] theorem $thm" Flac/Native/; then
     echo "FAIL: missing csimp stack-shape swap $thm"; fail=1
   fi

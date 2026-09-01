@@ -40,6 +40,49 @@ decreasing_by
     rw [not_or] at _h
     omega
 
+/-- `chunkChannels` accumulating frames in reverse, so the recursive call is in
+    tail position: frame count is attacker-chosen, so the cons-after-return form
+    kept one native stack frame alive per frame (audit finding C04). -/
+def chunkChannelsAcc (n : Nat) (acc : List (List (List Int)))
+    (chs : List (List Int)) : List (List (List Int)) :=
+  if _h : (chs.headD []).length = 0 ∨ n = 0 then acc.reverse
+  else chunkChannelsAcc n (takeAll n chs :: acc) (dropAll n chs)
+termination_by (chs.headD []).length
+decreasing_by
+  rcases chs with _ | ⟨c, t⟩
+  · simp at _h
+  · simp only [dropAll, List.map_cons, List.headD_cons, List.length_drop]
+    simp only [List.headD_cons] at _h
+    rw [not_or] at _h
+    omega
+
+/-- The bridging equation: the accumulator loop prepends the already-collected
+    (reversed) frames onto the structural `chunkChannels`. -/
+theorem chunkChannelsAcc_eq (n : Nat) :
+    ∀ (chs : List (List Int)) (acc : List (List (List Int))),
+      chunkChannelsAcc n acc chs = acc.reverse ++ chunkChannels n chs := by
+  intro chs
+  fun_induction chunkChannels n chs with
+  | case1 chs h =>
+    intro acc
+    rw [chunkChannelsAcc, dif_pos h]
+    simp
+  | case2 chs h ih =>
+    intro acc
+    rw [chunkChannelsAcc, dif_neg h, ih (takeAll n chs :: acc)]
+    simp [List.reverse_cons, List.append_assoc]
+
+def chunkChannelsTR (n : Nat) (chs : List (List Int)) : List (List (List Int)) :=
+  chunkChannelsAcc n [] chs
+
+/-- Swap the compiled `chunkChannels` for the tail form; theorems keep the
+    structural definition via the kernel. -/
+@[csimp] theorem chunkChannels_eq_chunkChannelsTR : @chunkChannels = @chunkChannelsTR := by
+  funext n chs
+  unfold chunkChannelsTR
+  rw [chunkChannelsAcc_eq]
+  simp
+
 /-- Reassemble channels from per-frame channel blocks (`ch` = channel
     count, used when there are zero frames). -/
 def recombine (ch : Nat) : List (List (List Int)) → List (List Int)
@@ -297,6 +340,46 @@ def writeFrames (b : Nat) (varBlk : Bool) (blockSize : Nat)
     Frame.write b varBlk (if varBlk then i * blockSize else i)
       (chooser fr) fr ++
     writeFrames b varBlk blockSize chooser (i + 1) frs
+
+/-- `writeFrames` with the serialized bits collected in an accumulator, so the
+    recursive call is in tail position: frame count is attacker-chosen (a frame
+    can be ~13 bytes), so the append-after-return form kept one native stack
+    frame alive per frame and overflowed on ordinary inputs (audit finding C04,
+    the encode-side analogue of the P6 decode-loop swaps). -/
+def writeFramesAcc (b : Nat) (varBlk : Bool) (blockSize : Nat)
+    (chooser : List (List Int) → Frame.ChannelAsg) (acc : BitStream) :
+    Nat → List (List (List Int)) → BitStream
+  | _, [] => acc
+  | i, fr :: frs =>
+    writeFramesAcc b varBlk blockSize chooser
+      (acc ++ Frame.write b varBlk (if varBlk then i * blockSize else i) (chooser fr) fr)
+      (i + 1) frs
+
+/-- The bridging equation: the accumulator loop computes `writeFrames` with the
+    already-serialized prefix spliced onto the front. -/
+theorem writeFramesAcc_eq (b : Nat) (varBlk : Bool) (blockSize : Nat)
+    (chooser : List (List Int) → Frame.ChannelAsg) (acc : BitStream) (i : Nat)
+    (frs : List (List (List Int))) :
+    writeFramesAcc b varBlk blockSize chooser acc i frs
+      = acc ++ writeFrames b varBlk blockSize chooser i frs := by
+  induction frs generalizing acc i with
+  | nil => simp [writeFramesAcc, writeFrames]
+  | cons fr frs ih =>
+    rw [writeFramesAcc, writeFrames, ih]
+    simp [List.append_assoc]
+
+def writeFramesTR (b : Nat) (varBlk : Bool) (blockSize : Nat)
+    (chooser : List (List Int) → Frame.ChannelAsg) (i : Nat)
+    (frs : List (List (List Int))) : BitStream :=
+  writeFramesAcc b varBlk blockSize chooser [] i frs
+
+/-- Swap the compiled `writeFrames` for the tail form; every theorem keeps the
+    structural definition via the kernel. -/
+@[csimp] theorem writeFrames_eq_writeFramesTR : @writeFrames = @writeFramesTR := by
+  funext b varBlk blockSize chooser i frs
+  unfold writeFramesTR
+  rw [writeFramesAcc_eq]
+  simp
 
 /-- Decode frames until the stream is exhausted. Fuel bounds the loop
     (each frame consumes at least one bit, so `s.length + 1` suffices). -/

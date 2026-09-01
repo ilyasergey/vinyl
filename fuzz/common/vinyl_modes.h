@@ -50,6 +50,12 @@ int vm_encode_slow(const uint8_t *pcm, size_t n, size_t bs, size_t ch, size_t sr
  * finding -- MD5 is always 16 bytes). */
 size_t vinyl_md5(const uint8_t *msg, size_t len, uint8_t out[16]);
 
+/* Runs Flac.Md5.md5Hex(msg) and copies the NUL-terminated lowercase hex digest
+ * (32 chars) into out. Returns the length the codec produced (32 on success;
+ * any other value is itself a finding). Drives the md5Hex + flatMapTR nibble->hex
+ * helper that the raw-digest wrapper above leaves cold. */
+size_t vinyl_md5_hex(const uint8_t *msg, size_t len, char out[33]);
+
 /* --- folded in from vinyl_unchecked_api.h --- */
 /* vinyl_unchecked_api.h — the P7 surface: Flac.Stream.Unchecked.encode.
  *

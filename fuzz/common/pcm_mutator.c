@@ -14,18 +14,16 @@
  * preserving the 6-byte header (or re-rolling it only within pack_decode's
  * accepted envelope). The G1 variant walks the gen_params field boundaries.
  *
- * STATUS: DEFERRED / UNWIRED. These functions are complete and self-contained,
- * but NOT wired into the fuzz build or the FUZZ_MUTATOR / AFL_CUSTOM_MUTATOR
- * dispatch. Activating it is a follow-up: add a `build/lib/pcm_mutator.so` rule
- * (mirroring afl_mutator.so in mk/tools.mk), a `mutator="pcm"` variant in
- * fleet/config.py, and an AFL_CUSTOM_MUTATOR_LIBRARY branch in fleet/launch.py
- * for that kind (libFuzzer side additionally needs a FUZZ_MUT_PCM policy value in
- * engine/mutator_policy.{c,h} and a call in engine/libfuzzer_mutator.c, both of
- * which are outside the B4 file scope -- hence deferred rather than half-wired).
+ * STATUS: WIRED (P0.1, 2026-08-31). libFuzzer path: FUZZ_MUT_PCM in
+ * engine/mutator_policy.{c,h}, dispatch in engine/libfuzzer_mutator.c (which mixes
+ * in libFuzzer havoc 1-in-4 for length growth / fresh entropy). AFL path:
+ * build/lib/pcm_mutator.so (mk/tools.mk) selected via AFL_CUSTOM_MUTATOR_LIBRARY in
+ * fleet/launch.py. Selected with mutator="pcm" (fleet/config.py); the encode-pcm
+ * campaign drives the four PACKED_PCM encode targets.
  *
- * The file exposes AFL++'s afl_custom_* API so that, once a `.so` rule exists, it
- * is a drop-in like engine/afl_mutator.c; it links nothing beyond libc and the
- * two header-only layers, so it never drags a fuzzer/Lean runtime into a run.
+ * The file exposes AFL++'s afl_custom_* API (a drop-in like engine/afl_mutator.c);
+ * it links nothing beyond libc and the two header-only layers, so it never drags a
+ * fuzzer/Lean runtime into a run.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -188,7 +186,7 @@ size_t pcm_mutate_g1_param(uint8_t *buf, size_t n, size_t cap, uint64_t *rng) {
 /* ============================================================== AFL++ shim
  * Present so this becomes a drop-in custom mutator once a .so rule exists.
  * Heuristic split: a short input (<= 32 bytes) is a G1 RAW param block, anything
- * larger is packed PCM. Deliberately conservative -- unwired today. */
+ * larger is packed PCM. Used by the AFL arm via AFL_CUSTOM_MUTATOR_LIBRARY. */
 #define PM_CAP (1u << 20)
 
 typedef struct {

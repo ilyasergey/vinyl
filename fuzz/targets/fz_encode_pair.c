@@ -62,7 +62,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             "  Flac.Emit.emitFast_eq_encode proves these byte-identical -- a compiled divergence\n",
             gp.bps, gp.ch, gp.bs, gp.chooser_kind, ulen, flen);
     oracle_dump_write("encpair_len_diff", data, size);
-    abort();
+    FUZZ_ABORT();
   }
   if (memcmp(uc, fast, ulen) != 0) {
     size_t off = 0;
@@ -77,7 +77,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             "  ships an emitter that is not the reference writer\n",
             off, gp.bps, gp.ch, gp.bs, gp.chooser_kind, off, uc[off], off, fast[off], ulen);
     oracle_dump_write("encpair_byte_diff", data, size);
-    abort();
+    FUZZ_ABORT();
   }
   fuzz_tick();
   return 0;

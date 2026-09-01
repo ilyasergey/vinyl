@@ -21,8 +21,17 @@ This tool:
   3. Records, via `llvm-nm` on build/lib/libvinyl.fuzz.a (if present), which
      compiled symbol each `@[export]` in FlacTest/FuzzGen.lean binds to, so a
      future export cannot silently regress a twin binding.
+  4. Parses the compiled IR (.lake/build/ir/FlacTest/FuzzGen.c) and, for each
+     twin PAIR whose two sides are BOTH exported to C (only pair #13,
+     Unchecked.encode vs emitFast), asserts the two `@[export]` wrappers tail-call
+     DISTINCT `lp_vinyl_*` callees. This is the encode-side TCB oracle guard: if a
+     future `import Flac` (or a csimp moved into a Native module) pulled
+     `@[csimp] Unchecked_encode_eq_emitFast` into FuzzGen's scope, the reference
+     writer would silently alias to emitFast, `fz_encode_pair` would compare
+     emitFast to itself, and every green run would be a false negative.
 
-Exit nonzero (CI-fail) if any side has no driver / no live connector.
+Exit nonzero (CI-fail) if any side has no driver / no live connector, or if a
+must-be-distinct twin pair aliases to a single compiled callee.
 
     python3 cov/twins.py
 """
@@ -39,6 +48,7 @@ FUZZ = C.FUZZ_ROOT
 SPEC = REPO / "Flac" / "Spec"
 NATIVE = REPO / "Flac" / "Native"
 FUZZGEN = REPO / "FlacTest" / "FuzzGen.lean"
+FUZZGEN_IR = REPO / ".lake" / "build" / "ir" / "FlacTest" / "FuzzGen.c"
 ARCHIVES = [FUZZ / "build" / "lib" / "libvinyl.fuzz.a",
             REPO / "build" / "lib" / "libvinyl.fuzz.a"]
 
@@ -87,6 +97,25 @@ BINDING_NOTES = {
         "does not rewrite it. emitFast is driven via vinyl_gen_encode_pair instead.",
 }
 
+# @[export] wrapper PAIRS that MUST compile to DISTINCT lp_vinyl_* callees -- the
+# encode-side TCB oracle guard. Of the csimp twins only pair #13 (Unchecked.encode
+# vs emitFast) has BOTH sides exported to C, so it is the only pair a compiled-IR
+# disjointness check can (and must) police: the proven-pair targets fz_encode_pair /
+# fz_unchecked_encode are meaningful ONLY because the reference writer and emitFast
+# are two DISTINCT compiled programs. FuzzGen imports Flac.Native.* only, so
+# @[csimp] Unchecked_encode_eq_emitFast (Flac/Spec/Emit.lean) is out of scope and the
+# exports do not alias. Should someone `import Flac` FuzzGen -- or move that csimp
+# into a Native module -- both wrappers would tail-call lp_vinyl_Flac_Emit_W_encode,
+# the target would compare emitFast to itself, and every green run would be a silent
+# false negative that no build/nm/routing gate can see. Each entry:
+# (export_a, expected_callee_a, export_b, expected_callee_b, why).
+DISTINCT_EXPORT_PAIRS: list[tuple[str, str, str, str, str]] = [
+    ("vlean_unchecked_encode", "lp_vinyl_Flac_Stream_Unchecked_encode",
+     "vinyl_emit_fast", "lp_vinyl_Flac_Emit_W_encode",
+     "pair #13: reference writer vs emitFast -- both reachable from C; aliasing "
+     "makes fz_encode_pair/fz_unchecked_encode compare emitFast to itself forever."),
+]
+
 
 def csimp_twins() -> list[tuple[str, str, str]]:
     """(lhs_def, rhs_def, file) for every `@[csimp] theorem LHS_eq_RHS`."""
@@ -130,6 +159,38 @@ def target_sources() -> dict[str, str]:
 
 def fuzzgen_exports() -> list[str]:
     return re.findall(r"@\[export\s+([A-Za-z0-9_]+)\]", FUZZGEN.read_text())
+
+
+def fuzzgen_ir_callees() -> dict[str, set[str]]:
+    """{function -> set of lp_vinyl_* callees} from the compiled IR FuzzGen.c.
+
+    Each `@[export]` becomes a `LEAN_EXPORT lean_object* NAME(...){ ... }` DEFINITION
+    (the bare `);` forward declarations at the top of the file carry no body and are
+    skipped) whose tiny body tail-calls the one lp_vinyl_* mangled symbol the export
+    actually binds. The body is delimited by brace matching so the callee set is exact
+    regardless of the wrapper's shape. Returns {} if the IR has not been built.
+    """
+    if not FUZZGEN_IR.exists():
+        return {}
+    text = FUZZGEN_IR.read_text()
+    header = re.compile(r"^LEAN_EXPORT\s+lean_object\*\s+([A-Za-z0-9_]+)\s*\([^;{]*\)\s*\{",
+                        re.M)
+    callee = re.compile(r"\blp_vinyl_[A-Za-z0-9_]+")
+    out: dict[str, set[str]] = {}
+    for m in header.finditer(text):
+        brace = m.end() - 1  # position of the body's opening '{'
+        depth = 0
+        i = brace
+        while i < len(text):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        out[m.group(1)] = set(callee.findall(text[brace + 1:i]))
+    return out
 
 
 def archive_symbols() -> tuple[Path | None, set[str]]:
@@ -193,6 +254,36 @@ def main() -> int:
     for sym, note in BINDING_NOTES.items():
         if sym not in exports and sym not in blob:
             print(f"  note: documented binding symbol {sym} not found -- {note}")
+
+    print("\n## @[export] wrapper callee-disjointness (IR: .lake/.../FuzzGen.c)")
+    callees = fuzzgen_ir_callees()
+    if not callees:
+        print(f"  note: {FUZZGEN_IR.relative_to(REPO)} not built yet -- "
+              "callee-disjointness gate skipped (routing gate above still applies).")
+    else:
+        for exp_a, want_a, exp_b, want_b, why in DISTINCT_EXPORT_PAIRS:
+            ca, cb = callees.get(exp_a), callees.get(exp_b)
+            if ca is None or cb is None:
+                missing = [e for e, c in ((exp_a, ca), (exp_b, cb)) if c is None]
+                status = "FAIL(wrapper absent)"
+                fails.append(f"{exp_a} vs {exp_b}: export wrapper(s) {missing} "
+                             "not defined in FuzzGen.c IR")
+            elif ca & cb:
+                status = "FAIL(ALIASED)"
+                fails.append(f"{exp_a} vs {exp_b}: both wrappers tail-call {sorted(ca & cb)} "
+                             "-- the reference writer has silently aliased to emitFast. "
+                             + why)
+            elif want_a not in ca or want_b not in cb:
+                bad = [f"{e}->{sorted(c)} (want {w})"
+                       for e, c, w in ((exp_a, ca, want_a), (exp_b, cb, want_b))
+                       if w not in c]
+                status = "FAIL(unexpected callee)"
+                fails.append(f"{exp_a} vs {exp_b}: {bad} -- twin binding changed; "
+                             "review before trusting the proven-pair oracle. " + why)
+            else:
+                status = "OK"
+            print(f"  [{status:22s}] {exp_a} -> {sorted(ca or [])}")
+            print(f"       {' ':24s} {exp_b} -> {sorted(cb or [])}")
 
     if fails:
         print("\nTWINS FAIL:")

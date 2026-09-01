@@ -66,7 +66,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   g_decoded++;
 
   /* Cross-decoder agreement (A1): the reference decoder (decodeOption_eq_reference)
-   * and, for 16-bit streams, the byte decoder (decodeBytes_spec + pcmBytesA_eq)
+   * and the byte decoder (decodeBytes_spec + pcmBytesA_eq, checked at any depth)
    * must accept exactly when production does and yield the same audio/bytes. A
    * disagreement is a compiler/runtime/csimp defect on the binary, catalogued by
    * default and escalated to abort under FUZZ_STRICT>=LEN for regression pinning. */
@@ -105,7 +105,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
               "  a stream the decoder accepted returned fewer/more channels than it declared\n"
               "  (recombine truncation: success with silent channel data loss)\n",
               sc.si_ch, sc.frame_ch, sc.ch, sc.bps, sc.sr, sc.samples);
-      abort();
+      FUZZ_ABORT();
     }
   }
 
@@ -118,7 +118,29 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             sc.ch, sc.bps, sc.sr, sc.samples, sc.bad_channels, sc.bad_bps, sc.ragged, sc.bad_rate,
             sc.bad_count);
     oracle_dump_write("selfcon_structural", data, size);
-    abort();
+    FUZZ_ABORT();
+  }
+
+  /* P1.2 budget assertion -- runtime-checks Flac.Stream.decode_size_le on the
+   * shipped binary. The decoder's decompression-bomb bound guarantees
+   * 2*Σ|channel| ≤ decodeBudget(input), with decodeBudget(bytes) = 4096*size +
+   * 65536 (decodeAmpl=4096, decodeFloor=65536, Flac/Native/Stream.lean:471-479).
+   * structural_ok held above, so the output is rectangular and Σ|channel| equals
+   * ch*samples exactly. A violation means the binary decoded more output than the
+   * budget the decoder is proven to enforce. NOTE: the two constants MIRROR the
+   * Lean decodeAmpl/decodeFloor -- there is no stable vinyl_ decodeBudget export
+   * to source them from (see rig report); keep in sync if the codec budget moves. */
+  unsigned long long budget_total = (unsigned long long)sc.ch * (unsigned long long)sc.samples;
+  unsigned long long decode_budget = 4096ULL * (unsigned long long)size + 65536ULL;
+  if (2ULL * budget_total > decode_budget) {
+    fprintf(stderr,
+            "\n[BUDGET VIOLATION — decode_size_le ON THE BINARY] decoder output exceeds the\n"
+            "  decompression-bomb budget (input=%zuB ch=%d samples=%lu): 2*%llu > "
+            "decodeBudget=%llu\n"
+            "  contradicts Flac.Stream.decode_size_le (2*Σ|channel| ≤ 4096*size + 65536)\n",
+            size, sc.ch, sc.samples, budget_total, decode_budget);
+    oracle_dump_write("selfcon_budget_violation", data, size);
+    FUZZ_ABORT();
   }
 
   /* Garbage-tolerated observables: dump for triage, do NOT abort. */
@@ -138,7 +160,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             "  ch=%d bps=%d sr=%d samples=%lu (structural_ok && fit_ok but encode==none)\n",
             sc.ch, sc.bps, sc.sr, sc.samples);
     oracle_dump_write("selfcon_encode_contradiction", data, size);
-    abort();
+    FUZZ_ABORT();
   }
   fuzz_tick();
   return 0;

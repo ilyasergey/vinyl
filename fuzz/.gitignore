@@ -12,6 +12,12 @@ corpus/*/evolved/
 corpus/decode/
 corpus/encode/
 corpus/md5/
+# Per-target libFuzzer working corpora (corpus/fz_*/): the fleet seeds each from the
+# decode/encode/md5 sets above (config.py corpus=...) and grows them in place; the
+# distilled result is carried forward under corpus/fz_*/evolved/ (already ignored).
+# Neither the working files nor their evolved distillate are committed -- regenerable
+# from `make corpus` + a campaign + `scripts/ratchet.sh`.
+corpus/fz_*/
 # Raw per-run divergence dumps (witness-config buckets); curated reproducers live
 # in findings/. Regenerable by re-running a campaign.
 divergences/

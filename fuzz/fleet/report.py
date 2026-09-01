@@ -7,6 +7,7 @@ peak cov, peak RSS per label -- the regression reference: a change that halves
 exec/s becomes visible instead of folklore).
 """
 
+import hashlib
 import json
 import re
 import subprocess
@@ -28,16 +29,35 @@ _RSS = re.compile(r"\brss:\s*(\d+)")
 # on stderr (captured in the job/worker logs); this is what actually needs to
 # reach SUMMARY.md, not just the libFuzzer exec/cov line.
 _TAG = re.compile(r"^\[[a-z0-9_-]+\] .*", re.M)
+# A counter line MUST carry an `execs=` token. This both selects the busiest -fork
+# child (greatest execs) and rejects the startup BANNER (`[tag] ... mutator=...`),
+# which matches _TAG but has no execs= -- printing it as if it were counters is the
+# fz_decode_modes.par vacuous-green bug.
+_EXECS = re.compile(r"\bexecs=(\d+)")
 
 
 def write_build_info(root: Path):
     repo = root.parent.parent.parent  # fuzz/runs/<ts> -> repo
+    fuzz_root = root.parent.parent     # fuzz/runs/<ts> -> fuzz
     info = {}
     try:
         info["git_rev"] = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"],
                                                    text=True).strip()
     except Exception:
         info["git_rev"] = "unknown"
+    # git_rev alone does NOT attribute a run to a tree state: the codec sources are
+    # habitually edited between runs, so two runs hours apart on the same commit but
+    # different edits share an identical rev. Stamp the working-tree state too, so a
+    # witness is attributable to the exact tree that produced it.
+    dirty, status_sha = _git_dirty(repo)
+    info["git_dirty"] = dirty          # True / False, or "nogit" if git is unavailable
+    info["git_status_sha"] = status_sha
+    # And to the exact BINARY that produced the witnesses, independent of the source
+    # tree: the compiled codec the targets link, plus the probe binaries if built.
+    info["libvinyl_sha"] = _sha16(fuzz_root / "build" / "lib" / "libvinyl.fuzz.a")
+    info["probe_sha"] = {name: _sha16(fuzz_root / "build" / "bin" / name)
+                         for name in ("vinyl_encode_probe", "vinyl_decode_probe")
+                         if (fuzz_root / "build" / "bin" / name).exists()}
     tc = repo / "lean-toolchain"
     info["lean_toolchain"] = tc.read_text().strip() if tc.exists() else "unknown"
     # F2: the reference version every differential result came from. The rig LINKS
@@ -50,6 +70,31 @@ def write_build_info(root: Path):
     except Exception:
         info["flac_cli"] = "unknown"
     (root / "build.info").write_text(json.dumps(info, indent=2))
+
+
+def _git_dirty(repo: Path) -> tuple[bool | str, str]:
+    """Working-tree dirtiness digest to record alongside git_rev. Runs
+    `git status --porcelain` in the repo root: its sha256 differs whenever the
+    edited files differ, so two dirty runs on the same commit but different edits
+    get distinct provenance instead of an identical bare rev. Returns
+    (dirty_flag, status_sha16); both "nogit" when git is absent or repo is not a
+    checkout, so the run is stamped rather than crashing."""
+    try:
+        out = subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"],
+                                      text=True, stderr=subprocess.DEVNULL)
+    except Exception:
+        return "nogit", "nogit"
+    return bool(out.strip()), hashlib.sha256(out.encode()).hexdigest()[:16]
+
+
+def _sha16(path: Path) -> str:
+    """First 16 hex of the file's sha256, or "missing" when the artifact was not
+    built. Ties a run to the exact binary that produced its witnesses, so a run
+    over a rebuilt codec is never read as one over the previous binary."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    except OSError:
+        return "missing"
 
 
 def _libflac_src_version(repo: Path) -> str:
@@ -125,18 +170,32 @@ def _parse_afl(afl_dir: Path, instance: str) -> dict:
             "crashes": _finite_int(d.get("saved_crashes", 0))}
 
 
-def _report_line(log: Path, wd: Path) -> str:
-    """The newest `[tag] key=value ...` target-report line across the job log and
-    any -jobs worker logs -- the substantive counters (out_of_contract, analyzed,
-    sr0_with_audio, fused/fallback, ...) that would otherwise never leave the log."""
-    best = ""
-    for lp in [log] + sorted(wd.glob("fuzz-*.log")):
+def _report_line(wd: Path) -> str:
+    """The busiest -fork child's `[tag] ... execs=N ...` counter line for this target.
+    Under libFuzzer -fork the atexit report runs in the fork PARENT, which runs
+    LLVMFuzzerInitialize but never LLVMFuzzerTestOneInput -- so its stderr line reads
+    execs=0, and the children's real logs (/tmp/libFuzzerTemp.*.dir/*.log) are DELETED
+    on clean shutdown. So the job log yields only execs=0 counters or the startup
+    BANNER. Instead each process persists its own report() text to
+    $FUZZ_DUMP_DIR/report-<pid>.txt (fuzz_main.c, temp+rename, SIGKILL-proof); pick the
+    child with the GREATEST execs. MAX, not SUM: these strings are free-form (ratio
+    mean=, max|r|=, min/max) so textual summation would corrupt rates and extrema --
+    the single busiest child is the representative. An `execs=` token is REQUIRED, so a
+    target with no counters yields "" rather than the banner masquerading as counters.
+
+    (The old `[log] + wd.glob("fuzz-*.log")` scan is gone: the fuzz-*.log branch was
+    dead -- `-jobs` is unused, the rig runs -fork -- and the job log carries only the
+    parent's execs=0 line / banner. divergences/ is $FUZZ_DUMP_DIR, per launch.py.)"""
+    best, best_execs = "", -1
+    for rp in sorted((wd / "divergences").glob("report-*.txt")):
         try:
-            hits = _TAG.findall(lp.read_text(errors="replace"))
+            txt = rp.read_text(errors="replace")
         except OSError:
             continue
-        if hits:
-            best = hits[-1].strip()
+        for line in _TAG.findall(txt):
+            m = _EXECS.search(line)
+            if m and int(m.group(1)) > best_execs:
+                best, best_execs = line.strip(), int(m.group(1))
     return best
 
 
@@ -196,7 +255,7 @@ def _row(job, label, log, root, elapsed: float) -> dict:
     # should report the instance count.
     s.update({"label": label, "engine": job.engine,
               "workers": job.instances if job.engine == "afl" else job.workers,
-              "report_line": _report_line(log, root / label)})
+              "report_line": _report_line(root / label)})
     s.update(_dump_counts(root / label))
     return s
 

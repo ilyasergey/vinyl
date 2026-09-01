@@ -7,6 +7,14 @@ $(BUILD)/lib/afl_mutator.so: engine/afl_mutator.c common/flac_struct.c common/fl
 	@mkdir -p $(@D)
 	$(CLANG) $(CFLAGS_PLAIN) -I$(FUZZ_ROOT)/common -fPIC -shared -o $@ $^
 
+# PCM AFL custom mutator: the encode-side (packed-PCM / G1 param) sibling of
+# afl_mutator.so. Its own afl_custom_* API lives in common/pcm_mutator.c, which
+# links only libc + the header-only pack.h -- no flac_struct, no Lean, no libFuzzer.
+# Loaded on the AFL arm of a mutator="pcm" job via AFL_CUSTOM_MUTATOR_LIBRARY.
+$(BUILD)/lib/pcm_mutator.so: common/pcm_mutator.c
+	@mkdir -p $(@D)
+	$(CLANG) $(CFLAGS_PLAIN) -I$(FUZZ_ROOT)/common -fPIC -shared -o $@ $^
+
 # mut_bench: uninstrumented libFLAC archive, NOT system -lFLAC.
 $(BUILD)/bin/mut_bench: tools/mut_bench.c common/flac_struct.c common/flac_bits.c \
     $(BUILD)/lib/libflac.plain.a
@@ -74,6 +82,31 @@ $(BUILD)/bin/gen_g1_flac: $(BUILD)/obj/fuzz/tools/gen_g1_flac.o \
 	@mkdir -p $(@D)
 	$(call LINK_TOOL,$(filter %.o,$^))
 
+# vinyl_encode_probe (C04): the single-shot bounded-stack encode fz_encode_stack
+# forks + execs. Runs the SLOW encode (vm_encode_slow, in vinyl_modes.o) so its
+# writeFrames/chunkChannels per-frame recursion overflows a small RLIMIT_STACK.
+# Links like sweep_md5 (vinyl_api.o for init + vinyl_modes.o for the encoder, no
+# fuzzer main).
+$(BUILD)/bin/vinyl_encode_probe: $(BUILD)/obj/fuzz/tools/vinyl_encode_probe.o \
+    $(BUILD)/obj/fuzz/common/vinyl_api.o $(BUILD)/obj/fuzz/common/vinyl_modes.o \
+    $(BUILD)/lib/libvinyl.fuzz.a $(BUILD)/lib/libflac.fuzz.a
+	@mkdir -p $(@D)
+	$(call LINK_TOOL,$(filter %.o,$^))
+
+# vinyl_decode_probe: the decode-side mirror of vinyl_encode_probe, the single-shot
+# bounded-stack DECODE fz_decode_stack forks + execs. Builds a deep stream with either
+# the checked Lean encoder (vm_encode_slow, bs<=4608) or libFLAC (flac_encode, bs up to
+# 65535, in flac_api.o) -- both off the decoder's attribution -- then decodes it with the
+# shipped Flac.decodePcm16A (vm_decode_pcm16, in vinyl_modes.o), whose per-frame array
+# readers are tail-swapped and expected to survive a small RLIMIT_STACK. Links like
+# vinyl_encode_probe plus flac_api.o (the libFLAC emitter lane) and libflac.
+$(BUILD)/bin/vinyl_decode_probe: $(BUILD)/obj/fuzz/tools/vinyl_decode_probe.o \
+    $(BUILD)/obj/fuzz/common/vinyl_api.o $(BUILD)/obj/fuzz/common/vinyl_modes.o \
+    $(BUILD)/obj/fuzz/common/flac_api.o \
+    $(BUILD)/lib/libvinyl.fuzz.a $(BUILD)/lib/libflac.fuzz.a
+	@mkdir -p $(@D)
+	$(call LINK_TOOL,$(filter %.o,$^))
+
 # mk_reject (B5): emits the single-field rejection-microseed corpus. Pure C over
 # the header-only common/flac_bits.h primitives -- no Lean, no libFLAC -- so it
 # builds plainly like flac_repair (a single translation unit).
@@ -85,4 +118,5 @@ $(BUILD)/bin/mk_reject: tools/mk_reject.c
 # mk/build.mk (included first); these prerequisite-only lines extend its
 # dependency list without redefining the recipe, so `make all` builds them after
 # lean-ir, exactly like the sweep_* tools alongside them.
-build-all: $(BUILD)/bin/gen_g1_flac $(BUILD)/bin/mk_reject
+build-all: $(BUILD)/bin/gen_g1_flac $(BUILD)/bin/mk_reject $(BUILD)/bin/vinyl_encode_probe \
+           $(BUILD)/bin/vinyl_decode_probe $(BUILD)/lib/pcm_mutator.so

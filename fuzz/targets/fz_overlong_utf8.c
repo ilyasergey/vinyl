@@ -1,14 +1,14 @@
-/* fz_overlong_utf8 -- the decoder accepts NON-MINIMAL (overlong) coded numbers.
+/* fz_overlong_utf8 -- the decoder REJECTS non-minimal (overlong) coded numbers.
  *
- * Frame/sample numbers are coded numbers (a UTF-8-like scheme). `Flac.Decode.readUtf8`
- * (Native/Decode.lean:36-49) dispatches on the leading byte's class and accumulates
- * `acc*64 + (c-0x80)` per continuation byte in `readConts` (:27-34) with **no
- * minimality check**. So a value V has MANY accepted encodings -- 0 is accepted as
- * `00`, `C0 80`, `E0 80 80`, ... up to the 7-byte form. RFC 9639 §9.1.5 defers to
- * RFC 3629, under which overlong sequences are ill-formed; this is the classic
- * UTF-8 overlong-encoding class with a known-bad security precedent (overlong
- * bypasses). RFC §5 makes rejection a MAY, so it is an ACCEPT-SET / claim finding
- * (COVERAGE's "reserved codes ... rejected" is wrong), not a decode nonconformance.
+ * Regression pin for the 2026-08-31 fix. Frame/sample numbers are coded numbers (a
+ * UTF-8-like scheme). `Flac.Decode.readUtf8` dispatches on the leading byte's class
+ * and `readContsMin` now gates the decoded value against `Utf8Num.contsFloor` (the
+ * RFC 3629 minimality floor), so an overlong form -- V encoded with more
+ * continuations than its minimal one -- is rejected. Previously readConts had no
+ * minimality check, so 0 was accepted as `00`, `C0 80`, `E0 80 80`, ... up to the
+ * 7-byte form (the classic UTF-8 overlong class, a known-bad security precedent).
+ * This target pins the fix in BOTH directions: minimal forms still decode exactly,
+ * overlong forms are now rejected, and an overlong ACCEPT is a hard regression.
  *
  * This is a CONSTRUCTIVE unit-differential, not a stream mutator: from the input we
  * derive a value V (<2^36) and a continuation count k (0..6), build the k-continuation
@@ -18,14 +18,14 @@
  *   W(k) =   7   11   16   21   26   31   36
  * so minimal_k(V) is the smallest k with V < 2^W(k); k > minimal_k(V) is overlong.
  *
- *   ABORT (robust readUtf8 guarantees -- a real defect, garbage-independent):
- *     - a well-formed constructed sequence REJECTED (readUtf8 = none), or
- *     - decoded to the WRONG value, or the WRONG consumed length.
- *   MEASURE (the §3.7 accept-set observation):
- *     - overlong_accepted: readUtf8 accepted a non-minimal encoding (k > minimal_k).
- *       Catalogued + counted; escalates to abort only under FUZZ_STRICT>=ACCEPT, to
- *       pin the finding. A minimality guard would drop this to 0 while the minimal
- *       control keeps passing -- the regression signal in both directions.
+ *   ABORT (regressions -- all must stay 0):
+ *     - reject_bug: the MINIMAL (k == minimal_k) encoding was rejected, or
+ *     - value_bug: an accepted minimal form decoded to the WRONG value/length, or
+ *     - overlong_accepted: a non-minimal (k > minimal_k) encoding was ACCEPTED --
+ *       the minimality guard regressed.
+ *   COUNT (the fix working):
+ *     - minimal_accepted: minimal forms decode exactly (the control), and
+ *     - overlong_rejected: non-minimal forms are rejected (the guard).
  * Input: RAW (plain mutator). */
 #include <stdint.h>
 #include <stdio.h>
@@ -41,13 +41,15 @@
 /* readUtf8 : BitReader -> Option (Nat x BitReader). BitReader = <ByteArray, pos:Nat>. */
 extern lean_object *lp_vinyl_Flac_Decode_readUtf8(lean_object *br);
 
-static unsigned long g_execs, g_built, g_minimal, g_overlong, g_reject_bug, g_value_bug;
+static unsigned long g_execs, g_built, g_minimal, g_overlong, g_overlong_rejected,
+    g_reject_bug, g_value_bug;
 
 static void report(FILE *o) {
   fprintf(o,
-          "[overlong] execs=%lu built=%lu | minimal_accepted=%lu overlong_accepted=%lu "
-          "(readConts has no minimality check) | reject_bug=%lu value_bug=%lu (MUST be 0)\n",
-          g_execs, g_built, g_minimal, g_overlong, g_reject_bug, g_value_bug);
+          "[overlong] execs=%lu built=%lu | minimal_accepted=%lu overlong_rejected=%lu "
+          "(RFC 3629 minimality guard) | overlong_accepted=%lu reject_bug=%lu value_bug=%lu "
+          "(all MUST be 0)\n",
+          g_execs, g_built, g_minimal, g_overlong_rejected, g_overlong, g_reject_bug, g_value_bug);
 }
 
 /* total payload width for a k-continuation encoding; W(k)=7 at k=0 then 11,16,21,... */
@@ -76,7 +78,7 @@ static size_t encode_k(uint64_t v, unsigned k, uint8_t *out) {
 }
 
 FUZZ_TARGET(.name = "fz_overlong_utf8",
-            .summary = "readUtf8 accepts non-minimal (overlong) coded frame numbers (RFC 3629 class)",
+            .summary = "readUtf8 rejects non-minimal (overlong) coded frame numbers (RFC 3629 guard, regression pin)",
             .input_kind = FUZZ_INPUT_RAW, .default_mutator = FUZZ_MUT_PLAIN, .needs_vinyl = 1,
             .report = report)
 
@@ -104,14 +106,24 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   lean_ctor_set(br, 1, lean_box(0)); /* pos = 0 */
   lean_object *r = lp_vinyl_Flac_Decode_readUtf8(br);
 
-  if (lean_obj_tag(r) == 0) { /* none: a well-formed sequence we built was rejected */
+  if (lean_obj_tag(r) == 0) { /* none: readUtf8 rejected the constructed sequence */
     lean_dec(r);
+    if (k > kmin) {
+      /* An overlong (non-minimal) form correctly rejected -- the RFC 3629
+       * minimality guard (Native/Utf8Num.contsFloor, the 2026-08-31 fix). This is
+       * the intended behaviour: count it, do not abort. */
+      g_overlong_rejected++;
+      fuzz_tick();
+      return 0;
+    }
+    /* The MINIMAL encoding was rejected -- a real defect (the guard must never
+     * reject a well-formed minimal coded number). */
     g_reject_bug++;
     fprintf(stderr,
-            "\n[readUtf8 BUG] rejected a well-formed %zu-byte coded number for value %llu (k=%u)\n",
+            "\n[readUtf8 BUG] rejected the MINIMAL %zu-byte coded number for value %llu (k=%u)\n",
             seqlen, (unsigned long long)v, k);
     oracle_dump_write("overlong_reject_bug", data, size);
-    abort();
+    FUZZ_ABORT();
   }
 
   lean_object *pair = lean_ctor_get(r, 0); /* Nat x BitReader */
@@ -129,23 +141,23 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             "  returned value=%llu consumed=%zu bits (expected %zu)\n",
             (unsigned long long)v, seqlen, (unsigned long long)got, consumed, 8u * seqlen);
     oracle_dump_write("overlong_value_bug", data, size);
-    abort();
+    FUZZ_ABORT();
   }
 
   if (k > kmin) {
-    /* readUtf8 accepted a non-minimal encoding: value V fits in kmin continuations
-     * but was decoded from k > kmin -- the RFC 3629 overlong-acceptance class. */
+    /* readUtf8 accepted a non-minimal encoding. Post-fix (Utf8Num.contsFloor) this
+     * MUST NOT happen -- an overlong accept is now a REGRESSION of the minimality
+     * guard, not a catalogued behaviour. Abort so the campaign surfaces it (the
+     * two-way regression pin: overlong_rejected should climb, overlong_accepted
+     * stay 0). */
     g_overlong++;
     oracle_dump_write("overlong_accepted", data, size);
-    if (fuzz_env_strict() >= FUZZ_STRICT_ACCEPT) {
-      fprintf(stderr,
-              "\n[OVERLONG CODED NUMBER ACCEPTED] readUtf8 decoded value %llu from a %zu-byte\n"
-              "  (k=%u continuation) encoding; the minimal form needs only k=%u (%u byte(s)).\n"
-              "  readConts has no minimality guard (Native/Decode.lean:27-34); RFC 9639 §9.1.5\n"
-              "  defers to RFC 3629, under which overlong sequences are ill-formed.\n",
-              (unsigned long long)v, seqlen, k, kmin, kmin + 1u);
-      abort();
-    }
+    fprintf(stderr,
+            "\n[OVERLONG CODED NUMBER ACCEPTED -- REGRESSION] readUtf8 decoded value %llu from a\n"
+            "  %zu-byte (k=%u continuation) encoding; the minimal form needs only k=%u (%u byte(s)).\n"
+            "  The RFC 3629 minimality guard (Native/Utf8Num.contsFloor) should have rejected it.\n",
+            (unsigned long long)v, seqlen, k, kmin, kmin + 1u);
+    FUZZ_ABORT();
   } else {
     g_minimal++; /* the minimal encoding -- the control that must keep passing */
   }

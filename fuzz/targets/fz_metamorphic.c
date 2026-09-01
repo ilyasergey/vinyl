@@ -43,7 +43,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
               "  recover it -- contradicts Flac.decode_encode; a compiler/runtime/csimp defect\n",
               size);
       oracle_dump_write("metamorphic_reencode", data, size);
-      abort();
+      FUZZ_ABORT();
   }
   fuzz_tick();
   return 0;

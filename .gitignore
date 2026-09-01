@@ -25,5 +25,15 @@ bench/real_out/
 /*.flac
 /*.pcm
 
+# Fuzzer artifacts if a target is run with the repo root as CWD (e.g. an agent
+# invoking fuzz/build/bin/* from here). Their real home + .gitignore is fuzz/;
+# these guard the root so an ad-hoc run cannot leave a committable artifact.
+/divergences/
+/crash-*
+/leak-*
+/oom-*
+/timeout-*
+/slow-unit-*
+
 # Python bytecode from the bench scripts
 __pycache__/

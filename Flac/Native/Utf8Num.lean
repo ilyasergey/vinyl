@@ -43,20 +43,43 @@ def readConts : (k : Nat) → (acc : Nat) → BitStream → Option (Nat × BitSt
       if 0x80 ≤ c ∧ c < 0xC0 then readConts k (acc * 64 + (c - 0x80)) s'
       else none
 
-/-- Decode a coded number. Overlong (non-minimal) encodings are accepted;
-    only the byte-level grammar is enforced. -/
+/-- Smallest value that legitimately needs `k` continuation bytes — the branch
+    cutoffs of `write`. A decoded value below this floor has a shorter encoding,
+    so the `k`-continuation form is overlong (non-minimal). RFC 9639 §9.1.5
+    defers coded numbers to RFC 3629, under which overlong sequences are
+    ill-formed (the classic UTF-8 overlong class). -/
+def contsFloor : Nat → Nat
+  | 1 => 2 ^ 7
+  | 2 => 2 ^ 11
+  | 3 => 2 ^ 16
+  | 4 => 2 ^ 21
+  | 5 => 2 ^ 26
+  | 6 => 2 ^ 31
+  | _ => 0
+
+/-- `readConts` with a minimality gate: reject a value that fits a shorter form.
+    Only shrinks the accept set (overlong inputs move from accepted to rejected),
+    so it threads no hypothesis through the round-trip — `write` emits minimal
+    forms, whose value meets the floor by construction. -/
+def readContsMin (k : Nat) (acc : Nat) (s : BitStream) : Option (Nat × BitStream) :=
+  match readConts k acc s with
+  | none => none
+  | some (v, s') => if v < contsFloor k then none else some (v, s')
+
+/-- Decode a coded number, rejecting overlong (non-minimal) encodings
+    (RFC 3629 minimality). -/
 def read (s : BitStream) : Option (Nat × BitStream) :=
   match readBits 8 s with
   | none => none
   | some (b, s') =>
     if b < 0x80 then some (b, s')
     else if b < 0xC0 then none          -- bare continuation byte
-    else if b < 0xE0 then readConts 1 (b - 0xC0) s'
-    else if b < 0xF0 then readConts 2 (b - 0xE0) s'
-    else if b < 0xF8 then readConts 3 (b - 0xF0) s'
-    else if b < 0xFC then readConts 4 (b - 0xF8) s'
-    else if b < 0xFE then readConts 5 (b - 0xFC) s'
-    else if b = 0xFE then readConts 6 0 s'
+    else if b < 0xE0 then readContsMin 1 (b - 0xC0) s'
+    else if b < 0xF0 then readContsMin 2 (b - 0xE0) s'
+    else if b < 0xF8 then readContsMin 3 (b - 0xF0) s'
+    else if b < 0xFC then readContsMin 4 (b - 0xF8) s'
+    else if b < 0xFE then readContsMin 5 (b - 0xFC) s'
+    else if b = 0xFE then readContsMin 6 0 s'
     else none                           -- 0xFF is invalid
 
 end Flac.Utf8Num

@@ -61,7 +61,15 @@ enum {
 void wide_reset(Wide *w, const char *name);
 int flac_wide_decode(const uint8_t *in, size_t n, Wide *w);   /* libFLAC, native planes */
 int vinyl_wide_decode(const uint8_t *in, size_t n, Wide *w);  /* Vinyl decodeArrays */
-int ffmpeg_wide_decode(const uint8_t *in, size_t n, Wide *w); /* libavcodec, normalized planes */
+int ffmpeg_wide_decode(const uint8_t *in, size_t n, Wide *w); /* libavcodec, normalized; lazily gated */
+/* Same decode as ffmpeg_wide_decode but bypassing the lazy adjudication gate, so
+ * ffmpeg's verdict is always produced. Use when a caller needs ffmpeg reliably
+ * (e.g. establishing a corroborated base) rather than the 1-in-N census sample. */
+int ffmpeg_wide_decode_forced(const uint8_t *in, size_t n, Wide *w);
+
+/* Cumulative number of executions on which the lazy gate skipped ffmpeg, so a
+ * campaign can see how often the second referee was gated out. */
+unsigned long wide_ff_skip_total(void);
 
 /* Decode `in` with libFLAC MD5 CHECKING on and compare Vinyl's STREAMINFO MD5 to
  * libFLAC's MD5 of the decoded audio. MD5_MISMATCH is a sound finding (a non-zero

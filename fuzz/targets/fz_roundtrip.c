@@ -90,7 +90,7 @@ static void demand_roundtrip(const char *enc, const char *mode, const char *theo
   if (rc == DEC_OK && off < plen && off < dl)
     fprintf(stderr, "  in[%zu]=%02x out[%zu]=%02x\n", off, pcm[off], off, dp[off]);
   fprintf(stderr, "  contradicts %s\n", theorems);
-  abort();
+  FUZZ_ABORT();
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
@@ -119,7 +119,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             "fast=%s slow=%s\n",
             okf ? "accept" : "reject", oks ? "accept" : "reject");
     dump_params(bs, ch, sr, plen);
-    abort();
+    FUZZ_ABORT();
   }
 
   if (okf) {

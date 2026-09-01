@@ -116,8 +116,9 @@ def _afl_cmd(job: Job, wd: Path, afl_out: Path, instance: str, seconds: int) -> 
     env["AFL_AUTORESUME"] = "1"
     env["AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES"] = "1"
     env["FUZZ_DUMP_DIR"] = str(wd / "divergences")
-    if job.mutator == "crc":
-        env["AFL_CUSTOM_MUTATOR_LIBRARY"] = str(FUZZ_ROOT / "build" / "lib" / "afl_mutator.so")
+    _afl_mut = {"crc": "afl_mutator.so", "pcm": "pcm_mutator.so"}.get(job.mutator)
+    if _afl_mut:
+        env["AFL_CUSTOM_MUTATOR_LIBRARY"] = str(FUZZ_ROOT / "build" / "lib" / _afl_mut)
     return args, env
 
 

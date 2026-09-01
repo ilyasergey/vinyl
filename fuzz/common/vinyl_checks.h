@@ -10,22 +10,34 @@
  *    csimp defect, not a spec gap.
  *  - metamorphic: decode(encode(decode x)) == decode(x) (Flac.decode_encode).
  *
- * The encode-based checks skip audio above VINYL_ENCODE_SAMPLE_CAP samples:
- * Flac.encode's per-chunk recursion overflows the Lean stack on a decode bomb
- * (a P3/P4-shape DoS on garbage-in, not the property under test). */
+ * The encode-based checks skip audio above VINYL_ENCODE_SAMPLE_CAP samples. This
+ * WAS a stack-overflow workaround (Flac.encode's per-chunk / bitsToByteList
+ * per-output-byte recursion). Those loops now carry @[csimp] tail swaps
+ * (writeFramesTR/chunkChannelsTR/bitsToByteListTR/diff1TR/residualAuxTR, 2026-08),
+ * and a re-baseline (tools/vinyl_encode_probe) confirms no overflow down to a
+ * 128 KB stack. The cap is now a THROUGHPUT bound: a tiny-blockSize decode bomb
+ * re-encodes slowly (compute, not stack), so keep a moderate ceiling. Raised
+ * 8192->32768 after the re-baseline (P0.2). */
 #ifndef VINYL_CHECKS_H
 #define VINYL_CHECKS_H
 
 #include <stddef.h>
 #include <stdint.h>
 
-#define VINYL_ENCODE_SAMPLE_CAP 8192
-/* The re-encode stack cost is bitsToByteList's per-OUTPUT-byte recursion, so the
- * sample cap alone is insufficient: a decoded 8192-sample audio at 32-bit x 8ch is
- * ~256 KB of output and overflows (findings/encoder-stack-overflow-CONFIRMED). Also
- * bound the ESTIMATED output bytes (bps*ch*samples/8). 16 KB is verified
- * overflow-free and re-encodes 16-bit stereo up to 4096 samples. */
-#define VINYL_ENCODE_BYTE_CAP 16384
+#define VINYL_ENCODE_SAMPLE_CAP 32768
+/* Also bound the ESTIMATED output bytes (bps*ch*samples/8) so a wide/multichannel
+ * decode doesn't re-encode a huge buffer. 64 KB stays in the fast encode regime
+ * (16k samples/ch was fast in the re-baseline, 64k was alarm-slow at bs=16) while
+ * unlocking multi-frame + wide-depth re-encode assertions. Raised 16384->65536. */
+#define VINYL_ENCODE_BYTE_CAP 65536
+
+/* Input-byte cap for the decodeReference (List-Bool) reference lane. This is the
+ * NON-TAIL decode model (skipBits quadratic, recurses O(input)); it overflows the
+ * stack on large inputs regardless of the ENCODER fix, so it must stay small --
+ * exactly like fz_proven_pairs' VM_PAIR_MAX and fz_decode_modes' VM_REF_MAX_INPUT.
+ * Decoupled from VINYL_ENCODE_SAMPLE_CAP in P0.2: the encode caps were raised after
+ * the encoder stack re-baseline, but this decode-model cap must NOT be. */
+#define VINYL_REF_MAX_BYTES 8192
 
 /* ---- self-consistency ---- */
 typedef struct {
@@ -46,9 +58,10 @@ typedef struct {
   int si_ch, frame_ch, channel_incoherent;
   /* Cross-decoder lanes (guarded by VINYL_ENCODE_SAMPLE_CAP for throughput): a
    * REFERENCE lane (decodeOption == decodeReference, decodeOption_eq_reference) and
-   * a 16-bit-only BYTE lane (decodeBytes' (bytes,bps) == pcmBytes of the decoded
-   * Audio, decodeBytes_spec + pcmBytesA_eq). Either set on an accept-decision or
-   * output mismatch -- a compiler/runtime/csimp defect, not garbage-in tolerance. */
+   * an ANY-DEPTH BYTE lane (decodeBytes' (bytes,bps) == pcmBytes of the decoded
+   * Audio, decodeBytes_spec + pcmBytesA_eq -- the bps==16 gate was removed in P1.1,
+   * so 8/12/20/24/32-bit pcmBytes serialization is now checked). Either set on an
+   * accept-decision or output mismatch -- a compiler/runtime/csimp defect. */
   int reference_disagreed, byte_disagreed;
 } SelfConsistency;
 

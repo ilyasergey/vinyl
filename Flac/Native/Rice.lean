@@ -79,6 +79,87 @@ def readSIntSeq (bits : Nat) : (count : Nat) → BitStream → Option (List Int 
       | none => none
       | some (xs, s) => some (x :: xs, s)
 
+/-! ### Tail-recursive compiled twins for the residual readers
+
+`readRiceSeq` / `readSIntSeq` build their list with a non-tail `x :: rec …`, one native
+stack frame per residual sample. These readers are on the REFERENCE decoder path only:
+`Rice.readResidual → readParts → readPart` is reached via `Subframe.read →
+Frame.readChannels → Stream.readFrames → Stream.decodeReference` (the `List Bool` model,
+the CLI `--decode` path). The SHIPPED array decoder (`decodeArrays`, hence `decodeBytes`
+/ `decodePcm16A`) does NOT use them: its residual layer is `Flac.Decode.readRiceSeqScan`
+/ `readSIntSeqGo` (`Native/Decode.lean`), which is already tail — verified in the
+generated IR, where `Flac/Native/Decode.c` calls no `Flac.Rice.readRiceSeq*`.
+
+The `*Acc` forms accumulate in reverse and are tail-recursive; the `@[csimp]` swaps make
+the compiler emit them while the kernel checks value-equality, so every theorem over
+`readRiceSeq` / `readSIntSeq` is untouched (they compute the same value). This is a sound
+hardening of the reference decoder's two residual loops. It does not by itself make the
+reference decoder stack-flat (it still has other non-tail `List Bool` loops, which is why
+the fuzz rig bounds `decodeReference`'s input by its own cap), and it changes the shipped
+array decoder not at all. -/
+
+def readRiceSeqAcc (k : Nat) (acc : List Int) : (count : Nat) → BitStream → Option (List Int × BitStream)
+  | 0, s => some (acc.reverse, s)
+  | count+1, s =>
+    match readRice k s with
+    | none => none
+    | some (x, s) => readRiceSeqAcc k (x :: acc) count s
+
+def readRiceSeqTR (k : Nat) (count : Nat) (s : BitStream) : Option (List Int × BitStream) :=
+  readRiceSeqAcc k [] count s
+
+theorem readRiceSeqAcc_eq (k : Nat) (acc : List Int) (count : Nat) (s : BitStream) :
+    readRiceSeqAcc k acc count s
+      = (readRiceSeq k count s).map (fun p => (acc.reverse ++ p.1, p.2)) := by
+  induction count generalizing acc s with
+  | zero => simp [readRiceSeqAcc, readRiceSeq]
+  | succ n ih =>
+    simp only [readRiceSeqAcc, readRiceSeq]
+    cases hr : readRice k s with
+    | none => simp
+    | some p =>
+      obtain ⟨x, s'⟩ := p
+      dsimp only
+      rw [ih (x :: acc) s']
+      cases readRiceSeq k n s' with
+      | none => simp
+      | some q => obtain ⟨xs, s''⟩ := q; simp [List.reverse_cons]
+
+@[csimp] theorem readRiceSeq_eq_readRiceSeqTR : @readRiceSeq = @readRiceSeqTR := by
+  funext k count s
+  rw [readRiceSeqTR, readRiceSeqAcc_eq]; simp
+
+def readSIntSeqAcc (bits : Nat) (acc : List Int) : (count : Nat) → BitStream → Option (List Int × BitStream)
+  | 0, s => some (acc.reverse, s)
+  | count+1, s =>
+    match readSInt bits s with
+    | none => none
+    | some (x, s) => readSIntSeqAcc bits (x :: acc) count s
+
+def readSIntSeqTR (bits : Nat) (count : Nat) (s : BitStream) : Option (List Int × BitStream) :=
+  readSIntSeqAcc bits [] count s
+
+theorem readSIntSeqAcc_eq (bits : Nat) (acc : List Int) (count : Nat) (s : BitStream) :
+    readSIntSeqAcc bits acc count s
+      = (readSIntSeq bits count s).map (fun p => (acc.reverse ++ p.1, p.2)) := by
+  induction count generalizing acc s with
+  | zero => simp [readSIntSeqAcc, readSIntSeq]
+  | succ n ih =>
+    simp only [readSIntSeqAcc, readSIntSeq]
+    cases hr : readSInt bits s with
+    | none => simp
+    | some p =>
+      obtain ⟨x, s'⟩ := p
+      dsimp only
+      rw [ih (x :: acc) s']
+      cases readSIntSeq bits n s' with
+      | none => simp
+      | some q => obtain ⟨xs, s''⟩ := q; simp [List.reverse_cons]
+
+@[csimp] theorem readSIntSeq_eq_readSIntSeqTR : @readSIntSeq = @readSIntSeqTR := by
+  funext bits count s
+  rw [readSIntSeqTR, readSIntSeqAcc_eq]; simp
+
 /-! ## Partitions -/
 
 /-- Coding method: 4-bit (RICE) or 5-bit (RICE2) parameters. -/

@@ -51,7 +51,21 @@ static void demand_equal(const uint8_t *msg, size_t n) {
             "  a broken MD5 in a verified codec: flac -t rejects Vinyl's output, no theorem "
             "violated\n",
             n, dn, a, b);
-    abort();
+    FUZZ_ABORT();
+  }
+  /* Hex path: drives Flac.Md5.md5Hex + its flatMapTR nibble->hex helper (cold
+   * when only the raw digest is copied). Oracle = the reference digest, lowercase
+   * hex-encoded; a mismatch is the same broken-primitive finding as above. */
+  char vh[33], rh[33];
+  size_t hn = vinyl_md5_hex(msg, n, vh);
+  hexcat(rh, vb);
+  if (hn != 32 || memcmp(vh, rh, 32) != 0) {
+    fprintf(stderr,
+            "\n[MD5 HEX DIVERGENCE] len=%zu vinyl_hex_len=%zu\n"
+            "  vinyl=%s\n  ref  =%s\n"
+            "  Flac.Md5.md5Hex disagrees with the reference digest's hex encoding\n",
+            n, hn, vh, rh);
+    FUZZ_ABORT();
   }
 }
 

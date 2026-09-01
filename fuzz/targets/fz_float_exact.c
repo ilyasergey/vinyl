@@ -41,6 +41,14 @@
 #include "../common/fuzz_target.h"
 #include "../common/oracle.h" /* oracle_dump_write */
 
+/* The windowed lane's faithfulness rests on a BIT-EXACT double comparison of a C model
+ * of welchF+autocorr against Vinyl's compiled result. FMA contraction (clang's default
+ * -ffp-contract=on emits an fma once the target has the instruction, e.g. under
+ * -march=native) would fuse `a*b + c` in the model but not in Vinyl's separately-rounded
+ * IR, turning the self-test into a permanent spurious [DETECTOR BUG] abort. Pin it off
+ * for this TU so a future -march tweak cannot self-inflict a fuzzer crash. */
+#pragma STDC FP_CONTRACT OFF
+
 /* Vinyl's compiled Float LPC-search primitives. Ownership (from the generated IR
  * + its ___boxed wrappers): autocorrF/levinson BORROW their array arg (the boxed
  * wrapper does the dec, so the caller keeps ownership); quantizeCoefs CONSUMES its
@@ -52,18 +60,27 @@
 extern lean_object *lp_vinyl_Flac_Heuristics_autocorrF(lean_object *w, lean_object *maxLag);
 extern lean_object *lp_vinyl_Flac_Heuristics_levinson(lean_object *r, lean_object *ord);
 extern lean_object *lp_vinyl_Flac_Heuristics_quantizeCoefs(lean_object *cf, lean_object *prec);
+/* welchF (Heuristics.lean:228): Array Int -> FloatArray, the Welch window the
+ * production search applies BEFORE autocorrF (Heuristics.lean:387). BORROWS its
+ * arg (verified in the IR: the ___boxed wrapper decs xs, the unboxed body does not),
+ * exactly like autocorrF/levinson. */
+extern lean_object *lp_vinyl_Flac_Heuristics_welchF(lean_object *xs);
 
 #define MAX_N 4608
 #define MAX_ORD 32
 #define TWO53 ((__int128)1 << 53)
 
 static unsigned long g_execs, g_analyzed, g_autocorr_inexact, g_float_div, g_div16;
+/* Windowed (production-path) lane counters. */
+static unsigned long g_win_analyzed, g_win_div;
 
 static void report(FILE *o) {
   fprintf(o,
           "[float_exact] execs=%lu analyzed=%lu | autocorr_inexact(>=2^53)=%lu | "
-          "float_exact_divergence=%lu | bps<=16_divergences=%lu (MUST be 0)\n",
-          g_execs, g_analyzed, g_autocorr_inexact, g_float_div, g_div16);
+          "float_exact_divergence=%lu | bps<=16_divergences=%lu (MUST be 0)\n"
+          "  [windowed(welchF)] analyzed=%lu | float_win_divergence=%lu\n",
+          g_execs, g_analyzed, g_autocorr_inexact, g_float_div, g_div16,
+          g_win_analyzed, g_win_div);
 }
 
 FUZZ_TARGET(.name = "fz_float_exact",
@@ -162,6 +179,164 @@ static int read_int_list(lean_object *l, int n, long long *out) {
 
 static inline __int128 i128abs(__int128 x) { return x < 0 ? -x : x; }
 
+/* Build a Lean `Array Int` from n int64 samples (all inside scalar range at these
+ * bit depths, so lean_int64_to_int boxes them without heap allocation). */
+static lean_object *mk_int_array(const int64_t *s, int n) {
+  lean_object *a = lean_alloc_array((size_t)n, (size_t)n);
+  for (int i = 0; i < n; i++)
+    lean_array_set_core(a, (size_t)i, lean_int64_to_int(s[i]));
+  return a;
+}
+
+/* WINDOWED (production-path) lane. Heuristics.lean:387 feeds autocorrF the WELCH-WINDOWED
+ * samples (`autocorrF (welchF blk.toArray)`); the main lane above validates the unwindowed
+ * autocorr in isolation (with an integer-exact anchor). This lane validates the actual
+ * composition autocorrF(welchF(s)) against a long-double recompute.
+ *
+ * Soundness. The window multiply makes the samples non-integer doubles, so there is no
+ * integer-exact anchor here. Instead the anchor is STRONGER and direct: a C-`double`
+ * replication of welchF (bit-identical constants: floatOfNat n = (double)(uint64)n,
+ * f1=1.0, f2=2.0) MUST reproduce Vinyl's welchF output bit-for-bit, and the C-double
+ * autocorr of it MUST reproduce Vinyl's autocorrF bit-for-bit (same ascending order the
+ * acorr3 fusion preserves). A mismatch is a [DETECTOR BUG] abort, never a finding -- so a
+ * wrong model cannot manufacture a false divergence. The long-double (80-bit) replay of
+ * the SAME window+autocorr is then the trusted higher-precision reference, and the
+ * `attributable` control (long-double levinson/quantize on Vinyl's OWN windowed autocorr)
+ * makes a finding attributable to the double windowing/autocorr precision loss rather than
+ * to double-vs-long-double levinson/quantize. Unlike the unwindowed lane, bps<=16 is NOT a
+ * required-0 anchor: the window products exceed 2^53 of mantissa, so double loses precision
+ * (and can legitimately flip a coefficient) at every depth -- the bit-exact model self-test
+ * is the faithfulness guarantee in its place. */
+static void run_windowed_lane(const int64_t *s, int n, int bps, int ord, int prec,
+                              const uint8_t *data, size_t size) {
+  /* The caller guarantees n >= ord+1 >= 2, so half = (n-1)/2 >= 0.5 > 0 and the window's
+   * `t = (i-half)/half` never divides by zero. Guard anyway: at n < 2, half = 0 makes
+   * `0/0 = NaN`, and `NaN != NaN` in the bit-exact self-test would be a spurious
+   * [DETECTOR BUG] abort -- so refuse the degenerate size rather than trust the invariant. */
+  if (n < 2)
+    return;
+  /* Vinyl: w_v = welchF(s) (double). */
+  lean_object *xs = mk_int_array(s, n);
+  lean_object *wv = lp_vinyl_Flac_Heuristics_welchF(xs); /* borrows xs */
+  lean_dec(xs);
+  int wn = (int)lean_sarray_size(wv);
+  const double *wvc = (const double *)lean_sarray_cptr(wv);
+
+  /* C-double model of welchF + long-double reference window, both in Vinyl's op order. */
+  static double wc[MAX_N];
+  static long double wl[MAX_N];
+  double half = (double)(uint64_t)(n - 1) / 2.0;
+  long double half_ld = (long double)(uint64_t)(n - 1) / 2.0L;
+  for (int i = 0; i < n; i++) {
+    double t = ((double)(uint64_t)i - half) / half;
+    wc[i] = (double)(int64_t)s[i] * (1.0 - t * t);
+    long double tl = ((long double)(uint64_t)i - half_ld) / half_ld;
+    wl[i] = (long double)(int64_t)s[i] * (1.0L - tl * tl);
+  }
+  for (int i = 0; i < n && i < wn; i++) {
+    if (wc[i] != wvc[i]) {
+      fprintf(stderr, "\n[DETECTOR BUG] welchF model mismatch at i=%d: model=%.20g vinyl=%.20g "
+                      "(n=%d bps=%d)\n", i, wc[i], wvc[i], n, bps);
+      oracle_dump_write("float_win_detector_bug", data, size);
+      FUZZ_ABORT();
+    }
+  }
+
+  lean_object *rarr = lp_vinyl_Flac_Heuristics_autocorrF(wv, lean_box((size_t)ord)); /* borrows wv */
+  lean_dec(wv);
+  double rv[MAX_ORD + 1];
+  size_t rsz = lean_array_size(rarr);
+  for (int lag = 0; lag <= ord; lag++)
+    rv[lag] = (lag < (int)rsz) ? lean_unbox_float(lean_array_get_core(rarr, lag)) : 0.0;
+
+  /* Second half of the self-test + the long-double reference autocorr. Both ascend in i
+   * from 0 -- the order acorr1/acorr3 preserve -- so the C-double sum is bit-identical. */
+  long double r_ld_win[MAX_ORD + 1];
+  int diverged = 0;
+  for (int lag = 0; lag <= ord; lag++) {
+    double d = 0.0;
+    long double dl = 0.0L;
+    for (int i = lag; i < n; i++) {
+      d += wc[i] * wc[i - lag];
+      dl += wl[i] * wl[i - lag];
+    }
+    if (d != rv[lag]) {
+      fprintf(stderr, "\n[DETECTOR BUG] windowed autocorr model mismatch lag=%d: model=%.20g "
+                      "vinyl=%.20g (n=%d bps=%d ord=%d)\n", lag, d, rv[lag], n, bps, ord);
+      oracle_dump_write("float_win_detector_bug", data, size);
+      FUZZ_ABORT();
+    }
+    r_ld_win[lag] = dl;
+    if ((double)dl != rv[lag])
+      diverged = 1; /* double windowed autocorr lost precision vs long double */
+  }
+  if (rv[0] == 0.0) { /* degenerate window (n<=2) or zero signal: nothing to select */
+    lean_dec(rarr);
+    return;
+  }
+
+  /* Vinyl levinson+quantize on the windowed autocorr (double). */
+  lean_object *cf_arr = lp_vinyl_Flac_Heuristics_levinson(rarr, lean_box((size_t)ord)); /* borrows rarr */
+  lean_dec(rarr);
+  double cvf[MAX_ORD];
+  size_t csz = lean_array_size(cf_arr);
+  for (int i = 0; i < ord; i++)
+    cvf[i] = (i < (int)csz) ? lean_unbox_float(lean_array_get_core(cf_arr, i)) : 0.0;
+  lean_object *cf_list = mk_float_list(cvf, ord);
+  lean_dec(cf_arr);
+  lean_object *qc = lp_vinyl_Flac_Heuristics_quantizeCoefs(cf_list, lean_box((size_t)prec)); /* consumes cf_list */
+  long long coefs_v[MAX_ORD];
+  int nv = read_int_list(lean_ctor_get(qc, 0), ord, coefs_v);
+  lean_object *shf = lean_ctor_get(qc, 1);
+  int shift_v = lean_is_scalar(shf) ? (int)lean_unbox(shf) : -1;
+  lean_dec(qc);
+
+  /* long-double reference (from the long-double windowed autocorr) + attributability
+   * control (long-double levinson/quantize on Vinyl's OWN windowed autocorr rv). */
+  long double r_ctrl[MAX_ORD + 1];
+  for (int lag = 0; lag <= ord; lag++)
+    r_ctrl[lag] = (long double)rv[lag];
+  long double cf_tmp[MAX_ORD];
+  long long coefs_ld[MAX_ORD], coefs_ctrl[MAX_ORD];
+  int shift_ld, shift_ctrl;
+  levinson_ld(r_ld_win, ord, cf_tmp);
+  quantize_ld(cf_tmp, ord, prec, coefs_ld, &shift_ld);
+  levinson_ld(r_ctrl, ord, cf_tmp);
+  quantize_ld(cf_tmp, ord, prec, coefs_ctrl, &shift_ctrl);
+
+  g_win_analyzed++;
+  int differs = (nv != ord) || (shift_v != shift_ld);
+  for (int i = 0; i < ord && !differs; i++)
+    if (coefs_v[i] != coefs_ld[i])
+      differs = 1;
+  int attributable = (nv == ord) && (shift_v == shift_ctrl);
+  for (int i = 0; i < ord && attributable; i++)
+    if (coefs_v[i] != coefs_ctrl[i])
+      attributable = 0;
+
+  if (differs && attributable && diverged) {
+    g_win_div++;
+    oracle_dump_write("float_win_divergence", data, size);
+    if (fuzz_env_strict() >= FUZZ_STRICT_LEN || g_win_div == 1) {
+      fprintf(stderr,
+              "\n[FLOAT-WIN DIVERGENCE] Vinyl's WINDOWED (welchF) Float LPC search selected a\n"
+              "  different quantized coefficient vector than a long-double windowed recompute\n"
+              "  (the production autocorrF(welchF(s)) path; round-trip still holds).\n"
+              "  bps=%d order=%d prec=%d | shift vinyl=%d ld=%d\n",
+              bps, ord, prec, shift_v, shift_ld);
+      fprintf(stderr, "  coefs vinyl =");
+      for (int i = 0; i < ord; i++)
+        fprintf(stderr, " %lld", coefs_v[i]);
+      fprintf(stderr, "\n  coefs ld    =");
+      for (int i = 0; i < ord; i++)
+        fprintf(stderr, " %lld", coefs_ld[i]);
+      fprintf(stderr, "\n");
+    }
+    if (fuzz_env_strict() >= FUZZ_STRICT_LEN)
+      FUZZ_ABORT();
+  }
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   g_execs++;
   if (size < 3 + 4 * 2)
@@ -248,7 +423,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 "  -- the exact model disagrees with Vinyl's own exact double result\n",
                 lag, rf[lag], r_dbl[lag], (double)r_exact[lag], n, bps, ord);
         oracle_dump_write("float_detector_bug", data, size);
-        abort();
+        FUZZ_ABORT();
       }
     } else if ((double)r_exact[lag] != rf[lag]) {
       /* a value exceeded 2^53 AND the double result differs from exact */
@@ -339,9 +514,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         fprintf(stderr, "\n");
       }
       if (fuzz_env_strict() >= FUZZ_STRICT_LEN)
-        abort();
+        FUZZ_ABORT();
     }
   }
+
+  /* Second lane: the actual production search input, autocorrF(welchF(s)). */
+  run_windowed_lane(s, n, bps, ord, prec, data, size);
 
   fuzz_tick();
   return 0;

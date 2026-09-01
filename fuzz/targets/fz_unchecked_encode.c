@@ -81,7 +81,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 "\n[CLAIM VIOLATION — P7] checked encoder disagrees with Unchecked.encode\n"
                 "  ch=%d blockSize=%u sampleRate=%u pcm=%zuB checked=%zuB unchecked=%zuB\n",
                 ch, bs, sr, pn, sl, ulen);
-        abort();
+        FUZZ_ABORT();
       }
       g_agree++;
     } else {
@@ -109,7 +109,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 "\n[ROUND-TRIP FAILURE] Unchecked.encode(bs>%u) output does not decode to input\n"
                 "  ch=%d blockSize=%u sampleRate=%u pcm=%zuB decoded=%zuB\n",
                 PACK_BS_MAX, ch, bs, sr, pn, dl);
-        abort();
+        FUZZ_ABORT();
       }
       g_wide_rt++;
     } else {

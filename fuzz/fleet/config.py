@@ -20,7 +20,7 @@ CORPUS_DIR = FUZZ_ROOT / "corpus"
 FLEET_TOML = FUZZ_ROOT / "config" / "fleet.toml"
 
 _KIND = {"FLAC_STREAM": "flac_stream", "PACKED_PCM": "packed_pcm", "RAW": "raw"}
-_MUT = {"CRC": "crc", "PLAIN": "plain"}
+_MUT = {"CRC": "crc", "PLAIN": "plain", "PCM": "pcm"}
 
 # Fleet-side run config per target. Identity comes from the .c macro; this adds
 # only knobs the fleet needs. Omitted keys take the DEFAULTS. `variants` are
@@ -33,21 +33,28 @@ _ENGINE_SUFFIX = {"libfuzzer": "fuzz", "afl": "afl"}
 # seeds carrying header block-size codes 1-15, channel-assignment codes 2-7, and
 # every metadata block type -- structurally unreachable from Vinyl's own writer
 # (which only emits block-size code 7 / sample-rate code 0 / <=2ch decorrelation).
-# All <=24 KB so they also feed fz_decode_modes' reference lane (VM_REF_MAX_INPUT=24576).
+# These are 8-15 KB, so they feed the FAST decode lane only. decode/ref_small is
+# the <=8 KB (1-2 frame) subset of the same shapes, so it ALSO reaches the
+# fz_decode_modes REFERENCE lane (VM_REF_MAX_INPUT=8192, a stack-safety bound) --
+# driving decodeReference / Frame.readChannels / resolveBlockSize / Stereo.c on the
+# non-canonical block sizes and 3-8 channel geometries.
 _DECODE = ("decode/gen", "decode/wide", "decode/regress",
-           "decode/blocksizes", "decode/multichan", "decode/metablocks")
+           "decode/blocksizes", "decode/multichan", "decode/metablocks", "decode/ref_small")
 # The 16-bit-GATED decode differentials (fz_decode_diff/structured/modes) DEC_SKIP
 # every non-16-bit stream after a full readMeta + whole-input alloc, so they get
 # the 16-bit SUBSET of wide (decode/wide16) instead of the full multi-depth bundle
 # -- ~3/4 of wide is non-16-bit, wasted on them (F3). corpus_gen.sh --wide carves
 # wide16 from wide, so it never drifts.
 _DECODE16 = ("decode/gen", "decode/wide16", "decode/regress",
-             "decode/blocksizes", "decode/multichan", "decode/metablocks")
+             "decode/blocksizes", "decode/multichan", "decode/metablocks", "decode/ref_small")
 # The any-depth oracles (3-way samples diff, self-consistency, metamorphic) also
 # get the external non-16-bit / LPC-13-32 seeds; the 16-bit-gated targets would
 # only SKIP them, and the small-max_len proven-pairs target does not want the
 # 157 KB IETF seed, so hires is scoped to the targets that exercise it.
-_DECODE_ANY = (*_DECODE, "decode/hires")
+# decode/multichan_hi adds 24-bit 3-8ch + explicit-sample-rate seeds (gen_multichan
+# is 16-bit only), so the any-depth oracles get high-depth channel-assignment /
+# explicit-SR coverage the 16-bit-gated targets would only SKIP.
+_DECODE_ANY = (*_DECODE, "decode/hires", "decode/multichan_hi")
 # 6C: the IETF flac-test-files conformance corpus (deps_fetch.sh --ietf). subset +
 # uncommon are libFLAC/ffmpeg-produced streams across depths/rates Vinyl's own
 # encoder never emits -- the 12/20-bit files close COVERAGE.md's unverified "decoded
@@ -56,12 +63,43 @@ _DECODE_ANY = (*_DECODE, "decode/hires")
 _IETF = ("external/flac-test-files/subset", "external/flac-test-files/uncommon")
 _DECODE_ANY_IETF = (*_DECODE_ANY, *_IETF)
 _PAR = {"LEAN_NUM_THREADS": "4"}
+# P0.1: the sample-aware PCM mutator (common/pcm_mutator.c) reshapes the raw
+# fuzzer bytes of a packed-PCM encode input into correlated/boundary-shaped audio,
+# so choosePlanF reaches FIXED/LPC/wasted/mid-side instead of near-always VERBATIM.
+# libFuzzer-only: the AFL arm selects its mutator .so via AFL_CUSTOM_MUTATOR_LIBRARY
+# (fleet/launch.py), which only wires the crc mutator today.
+_PCM_VARIANT = {"pcm": dict(mutator="pcm", engines=("libfuzzer",))}
 TARGETS: dict[str, dict] = {
+    # RAW G1 targets: the "pcm" variant selects the G1-param field mutator
+    # (pcm_mutate_g1_param) so the gen_params header is walked field-aware instead of
+    # by plain byte havoc -- drives chooser/depth/blocking transitions deliberately.
     "fz_gen_roundtrip":     dict(bug_class="V", max_len=64,
-                                 corpus=("decode/gen_params",)),
+                                 corpus=("decode/gen_params",), variants=dict(_PCM_VARIANT)),
     "fz_emit_conformance":  dict(bug_class="C", max_len=64,
                                  corpus=("decode/gen_params",)),
-    "fz_residual_bound":    dict(bug_class="C", max_len=64, corpus=("decode/gen_params",)),
+    "fz_residual_bound":    dict(bug_class="C", max_len=64, corpus=("decode/gen_params",),
+                                 variants=dict(_PCM_VARIANT)),
+    # CRC primitive differential: Flac.Crc.crc8/crc16 vs the independent C clone.
+    # Any bytes exercise it; reuse the md5 arbitrary-byte seeds.
+    "fz_crc":               dict(bug_class="V", max_len=8192, corpus=("md5",)),
+    # Decode-side stack prober (regression pin, expected green): forks a bounded-stack
+    # child that builds a deep stream with libFLAC (flac_encode, subset off, bs up to the
+    # legal max 65535) and decodes it via the shipped decodePcm16A (tail array forms
+    # readRiceSeqScan/readSIntSeqGo/readPartsA). A witness = a future non-tail regression
+    # in the shipped decode path. RAW 4-byte geometry; work is in the forked child -> libFuzzer only.
+    "fz_decode_stack":      dict(bug_class="C", engines=("libfuzzer",), max_len=64,
+                                 timeout=30, corpus=("encode/stack_seeds",)),
+    # decodeBytes_spec ON THE BINARY in the PARALLEL region (>= parThreshold=65536):
+    # fused decodeBytes == pcmBytesRange(decodeArrays), byte-for-byte. The byte lane in
+    # fz_self_consistent is coupled to the reference lane's 8 KB stack cap so it never
+    # runs above parThreshold; this drops the reference lane and runs uncapped. serial
+    # (1 thread) and par (N threads) run the SAME oracle -> a deterministic-but-wrong
+    # parallel stitch is caught.
+    "fz_decode_par_eq":     dict(bug_class="L", max_len=262144,
+                                 corpus=(*_DECODE_ANY, "decode/parallel16",
+                                         "decode/large16", "decode/large24_32"),
+                                 variants={"serial": {},
+                                           "par": dict(env={"LEAN_NUM_THREADS": "4"})}),
     # Encoder proven pair Emit.emitFast == Stream.Unchecked.encode at ARBITRARY depth
     # -- the encode-side analogue of fz_proven_pairs, over the non-16-bit region.
     "fz_encode_pair":       dict(bug_class="L", max_len=64,
@@ -76,25 +114,25 @@ TARGETS: dict[str, dict] = {
     # Float LPC search vs exact/long-double recompute: at 24/32-bit the autocorr
     # exceeds 2^53 and the quantized coefficients can diverge (PHASE2 F5b). max_len
     # admits a full 4608-sample 32-bit input (3 header + 4 bytes/sample).
-    "fz_float_exact":       dict(bug_class="C", max_len=18448, corpus=("decode/gen_params",)),
+    "fz_float_exact":       dict(bug_class="C", max_len=18448, corpus=("decode/float_seeds",)),
     # readUtf8 accepts non-minimal (overlong) coded frame numbers -- a constructive
     # unit-differential over value x continuation-count; RAW seeds just diversify (V,k).
     "fz_overlong_utf8":     dict(bug_class="C", max_len=64, corpus=("decode/gen_params",)),
     "fz_decode_diff":       dict(bug_class="V",
-                                 corpus=(*_DECODE16, "decode/g1_hostile", "decode/must_reject"),
+                                 corpus=(*_DECODE16, "decode/g1_hostile16", "decode/must_reject"),
                                  variants={"large": dict(max_len=131072,
-                                     corpus=(*_DECODE16, "decode/g1_hostile", "decode/must_reject",
+                                     corpus=(*_DECODE16, "decode/g1_hostile16", "decode/must_reject",
                                              "decode/large16")),
                                            "par-window": dict(max_len=1572864,
                                      corpus=("decode/large16",))}),
     "fz_decode_structured": dict(bug_class="V",
-                                 corpus=(*_DECODE16, "decode/g1_hostile", "decode/must_reject"),
+                                 corpus=(*_DECODE16, "decode/g1_hostile16", "decode/must_reject"),
                                  variants={"havoc": dict(mutator="plain"),
                                            "large": dict(max_len=131072,
-                                     corpus=(*_DECODE16, "decode/g1_hostile", "decode/must_reject",
+                                     corpus=(*_DECODE16, "decode/g1_hostile16", "decode/must_reject",
                                              "decode/large16"))}),
     "fz_decode_modes":      dict(bug_class="L", max_len=131072,
-                                 corpus=(*_DECODE16, "decode/parallel16", "decode/g1_hostile",
+                                 corpus=(*_DECODE16, "decode/parallel16", "decode/g1_hostile16",
                                          "decode/must_reject"),
                                  variants={"serial": {},
                                            # 6F: max_len=8192 keeps every input at/under
@@ -105,15 +143,28 @@ TARGETS: dict[str, dict] = {
                                            # input (9/s). serial/par/par-forced still exceed
                                            # parThreshold=65536 to reach the parallel branch.
                                            "small": dict(max_len=8192),
-                                           "par": dict(env={**_PAR, "VM_REPEAT": "3"}),
+                                           # par exercises byteStepsPar determinism. A hostile
+                                           # ~64-131 KB input drives the parallel scanner into
+                                           # atomic-refcount contention that is SUPER-LINEAR in thread
+                                           # count (~66 CPU-s / 17 s at 4 threads x VM_REPEAT=3), so it
+                                           # timed out under full-fleet load and burned the worker.
+                                           # It is content- not size-driven, so a max_len cap does not
+                                           # help; the lever is thread count. 2 threads still runs the
+                                           # parallel branch (Task.spawn / byteStepsPar) and its
+                                           # determinism check, at ~7 s for the worst witness -- no
+                                           # timeout. par-forced keeps the 4-thread coverage (bounded
+                                           # max_len=65600). Eliminates the timeout waste.
+                                           "par": dict(env={"LEAN_NUM_THREADS": "2", "VM_REPEAT": "2"}),
                                            # VM_REPEAT 5->3 and an explicit >=60s timeout so the
                                            # benign par-forced timeouts are not swallowed by
                                            # -ignore_timeouts (independent of the fork decision).
                                            "par-forced": dict(max_len=65600, timeout=60,
                                                env={**_PAR, "VM_FORCE_PAR": "1", "VM_REPEAT": "3"})}),
-    "fz_encode_diff":       dict(bug_class="V", max_len=65544, corpus=("encode/gen", "encode/shapes")),
+    "fz_encode_diff":       dict(bug_class="V", max_len=65544, corpus=("encode/gen", "encode/shapes"),
+                                 variants=dict(_PCM_VARIANT)),
     "fz_encode_validity":   dict(bug_class="V", max_len=65544, corpus=("encode/gen", "encode/shapes"),
-                                 variants={"edge": dict(corpus=("encode/gen", "encode/edge"))}),
+                                 variants={"edge": dict(corpus=("encode/gen", "encode/edge")),
+                                           **_PCM_VARIANT}),
     # md5 is ~100x faster than the other targets (~21k exec/s), so it is the only
     # one that reaches the Lean-runtime allocator's RSS high-water (~850 B/exec
     # retained, NOT a harness leak -- vinyl_md5 is lean_dec-correct) within a run:
@@ -135,15 +186,27 @@ TARGETS: dict[str, dict] = {
                                  corpus=(*_DECODE, "decode/g1_hostile", "decode/must_reject"),
                                  variants={"small": dict(max_len=2048,
                                                          corpus=("decode/pairs_small",))}),
-    # max_len at the 16384 default (not 65536): encoding ~32k samples overflows the
-    # Lean stack in bitsToByteList (findings/encoder-stack-overflow-CONFIRMED), which
-    # would crash-loop this round-trip target on the KNOWN bug. 16 KB PCM is verified
-    # overflow-free and still exercises the full round-trip; large-audio encode is
-    # untestable here anyway (that IS the overflow).
-    "fz_roundtrip":         dict(bug_class="L", corpus=("encode/gen", "encode/shapes")),
+    # C04 FIXED (2026-08-31): the per-sample AND per-frame encode loops
+    # (bitsToByteList/pcm16OfByteList/deinterleaveN, then writeFrames/chunkChannels)
+    # are now tail-recursive via @[csimp], so encoding large audio no longer
+    # overflows the default 8 MB stack (the only residual is a sub-512 KB
+    # writeRiceSeq case, bounded by partition size <=4608, unreachable at 8 MB).
+    # The 16 KB cap that existed to avoid crash-looping on the KNOWN overflow is
+    # lifted to 65 KB so the round-trip is exercised on large audio too.
+    "fz_roundtrip":         dict(bug_class="L", max_len=65536, corpus=("encode/gen", "encode/shapes"),
+                                 variants=dict(_PCM_VARIANT)),
+    # ffmpeg+libFLAC EMIT-side referee: Vinyl's production-encoder (fast + checked) bytes
+    # run through the 3-way decode consensus (wide_diff). Catches an encoder that emits a
+    # stream the independent references decode differently. Shares the checked-encode corpus.
+    # max_len is capped below fz_roundtrip's 65536: each exec runs two Vinyl encodes (the
+    # checked one is a full heuristic search) plus libFLAC/ffmpeg decodes, so smaller inputs
+    # buy throughput -- multi-frame shapes are still well within 16 KB.
+    "fz_encode_referee":    dict(bug_class="V", max_len=16384, corpus=("encode/gen", "encode/shapes"),
+                                 variants=dict(_PCM_VARIANT)),
     # 6G: the encodePcm16_eq proven pair (Encode.encodePcm16 == Unchecked.encode with
-    # fastChooser 16). 16 KB max_len keeps PCM overflow-free (like fz_roundtrip).
-    "fz_encode_pcm16_eq":   dict(bug_class="L", corpus=("encode/gen", "encode/edge", "encode/shapes")),
+    # fastChooser 16). Cap lifted with C04 fixed (see fz_roundtrip).
+    "fz_encode_pcm16_eq":   dict(bug_class="L", max_len=65536, corpus=("encode/gen", "encode/edge", "encode/shapes"),
+                                 variants=dict(_PCM_VARIANT)),
     "fz_samples_diff":      dict(bug_class="V",
                                  corpus=(*_DECODE_ANY_IETF, "decode/g1_hostile", "decode/must_reject"),
                                  variants={"large": dict(max_len=131072,
@@ -162,18 +225,32 @@ TARGETS: dict[str, dict] = {
                                  variants={"large": dict(max_len=131072,
                                      corpus=(*_DECODE, "decode/hires", "decode/g1_hostile",
                                              "decode/must_reject", "decode/large16"))}),
+    # + the noncanonical-grammar decode dirs (block-size codes 1-15, channel codes
+    # 2-7 / stereo 8-10, sample-rate codes 12-14, every metadata block type): all
+    # already committed, ~180 direct Decode.resolveBlockSize/skipSampleRate/readFields/
+    # readChannels regions this decode-only target otherwise never sees.
     "fz_trailing_data":     dict(bug_class="V",
                                  corpus=("decode/gen", "decode/hires", "decode/g1_hostile",
-                                         "decode/must_reject"),
+                                         "decode/must_reject", "decode/blocksizes", "decode/multichan",
+                                         "decode/metablocks", "decode/ref_small"),
                                  variants={"large": dict(max_len=131072,
                                      corpus=("decode/gen", "decode/hires", "decode/g1_hostile",
-                                             "decode/must_reject", "decode/large16"))}),
-    # max_len at the 16384 default (not 65536): Unchecked.encode of ~32k samples
-    # overflows the Lean stack in bitsToByteList (findings/encoder-stack-overflow-
-    # CONFIRMED). 16 KB PCM is verified overflow-free; the >4608 block-size region
-    # this target targets comes from the header bytes, not the PCM length, so the
-    # out-of-envelope path is still fully reached.
-    "fz_unchecked_encode":  dict(bug_class="C", corpus=("encode/gen", "encode/edge")),
+                                             "decode/must_reject", "decode/blocksizes", "decode/multichan",
+                                             "decode/metablocks", "decode/ref_small", "decode/large16"))}),
+    # C04 FIXED (2026-08-31): the encode non-tail recursion is retired, so the
+    # 16 KB cap that avoided crash-looping on the overflow is lifted to 65 KB;
+    # Unchecked.encode of large audio is now overflow-free at the default stack.
+    "fz_unchecked_encode":  dict(bug_class="C", max_len=65536, corpus=("encode/gen", "encode/edge", "encode/shapes")),
+    # C04: autonomous rediscovery of the encoder non-tail-recursion stack overflow
+    # (findings/encoder-stack-overflow-CONFIRMED). Forks a bounded-stack child that
+    # runs the SLOW encoder until Stream.writeFrames/chunkChannels (still un-swapped
+    # per-frame recursion) overflow. RAW 5-byte geometry selectors (channels,
+    # blockSize, samples, stackKB); the real work is in the forked child, so AFL's
+    # persistent coverage adds nothing -- libFuzzer only. Catalogue-by-default;
+    # FUZZ_STRICT>=1 escalates an overflow to a hard abort. timeout=30 covers the
+    # child's fork+exec + 8 s watchdog alarm.
+    "fz_encode_stack":      dict(bug_class="C", engines=("libfuzzer",), max_len=64,
+                                 timeout=30, corpus=("encode/stack_seeds",)),
 }
 
 

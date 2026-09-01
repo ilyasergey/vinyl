@@ -62,13 +62,23 @@ FUZZ_TARGET(.name = "fz_trailing_data",
 static uint8_t *g_buf;
 static size_t g_cap;
 
-static void decode3(const uint8_t *d, size_t n, Wide *v, Wide *f, Wide *g) {
+/* force_ffm bypasses the lazy ffmpeg gate. The base-establishment decode uses it
+ * so ffm_base is reliably determined instead of being gated out (and forced
+ * false) whenever Vinyl and libFLAC already agree on the clean base -- which is
+ * the overwhelmingly common case and silently disabled the ffmpeg-corroborated
+ * findings. The per-probe decodes keep the gated variant: after appending trailing
+ * garbage Vinyl and libFLAC both reject, and that both-reject case now consults
+ * ffmpeg through the ordinary gate, so forcing there buys no signal, only cost. */
+static void decode3(const uint8_t *d, size_t n, Wide *v, Wide *f, Wide *g, int force_ffm) {
   wide_reset(v, "vinyl");
   wide_reset(f, "libflac");
   wide_reset(g, "ffmpeg");
   vinyl_wide_decode(d, n, v);
   flac_wide_decode(d, n, f);
-  ffmpeg_wide_decode(d, n, g);
+  if (force_ffm)
+    ffmpeg_wide_decode_forced(d, n, g);
+  else
+    ffmpeg_wide_decode(d, n, g);
 }
 
 /* base ++ suffix: Vinyl loses the whole file where a reference still recovers
@@ -80,7 +90,7 @@ static void probe_trailing(const uint8_t *base, size_t bn, long base_ns, int flc
   memcpy(b, base, bn);
   memcpy(b + bn, suf, suflen);
   static Wide dv, df, dg;
-  decode3(b, n, &dv, &df, &dg);
+  decode3(b, n, &dv, &df, &dg, 0);
   int vin_lost = (dv.rc != DEC_OK || dv.nsamples < base_ns);
   int flc_full = flc_base && df.rc == DEC_OK && df.nsamples == base_ns;
   int ffm_full = ffm_base && dg.rc == DEC_OK && dg.nsamples == base_ns;
@@ -96,7 +106,7 @@ static void probe_trailing(const uint8_t *base, size_t bn, long base_ns, int flc
               "libFLAC=%s ffmpeg=%s recover the full audio\n"
               "  ordinary real-world files carry ID3v1 tags; `cat a.flac tag.bin` reproduces\n",
               bn, base_ns, dv.rc, dv.nsamples, flc_full ? "OK" : "-", ffm_full ? "OK" : "-");
-      abort();
+      FUZZ_ABORT();
     }
   }
 }
@@ -113,7 +123,7 @@ static void probe_prefix(const uint8_t *base, size_t bn, long base_ns, int flc_b
   memcpy(b, pre, prelen);
   memcpy(b + prelen, base, bn);
   static Wide dv, df, dg;
-  decode3(b, n, &dv, &df, &dg);
+  decode3(b, n, &dv, &df, &dg, 0);
   int vin_lost = (dv.rc != DEC_OK || dv.nsamples < base_ns);
   int flc_full = flc_base && df.rc == DEC_OK && df.nsamples == base_ns;
   int ffm_full = ffm_base && dg.rc == DEC_OK && dg.nsamples == base_ns;
@@ -127,7 +137,7 @@ static void probe_prefix(const uint8_t *base, size_t bn, long base_ns, int flc_b
               "recover the full audio\n"
               "  Vinyl requires `fLaC` at byte 0; ID3v2 taggers write the tag BEFORE the stream\n",
               prelen, bn, base_ns, dv.rc, dv.nsamples, flc_full ? "OK" : "-", ffm_full ? "OK" : "-");
-      abort();
+      FUZZ_ABORT();
     }
   }
 }
@@ -141,7 +151,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
   /* Establish a base Vinyl accepts, corroborated by >=1 reference on sample count. */
   static Wide bv, bf, bg;
-  decode3(data, size, &bv, &bf, &bg);
+  decode3(data, size, &bv, &bf, &bg, 1);
   if (bv.rc != DEC_OK || bv.nsamples <= 0) {
     fuzz_tick();
     return 0;
@@ -203,7 +213,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (cut == 0 || cut >= size)
       continue;
     static Wide dv, df, dg;
-    decode3(data, cut, &dv, &df, &dg);
+    decode3(data, cut, &dv, &df, &dg, 0);
     int vin_none = (dv.rc != DEC_OK || dv.nsamples <= 0);
     int flc_prefix = flc_base && df.rc == DEC_OK && df.nsamples > 0 && df.nsamples < base_ns;
     int ffm_prefix = ffm_base && dg.rc == DEC_OK && dg.nsamples > 0 && dg.nsamples < base_ns;

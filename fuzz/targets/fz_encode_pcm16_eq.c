@@ -66,10 +66,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   size_t plen = in.pcm_len - (in.pcm_len % frame);
   if (plen < frame)
     return 0;
-  /* Bound PCM so bitsToByteList cannot overflow the Lean stack (the known encoder
-   * overflow) -- keep whole frames under ~16 KB. */
-  if (plen > 16384u)
-    plen = 16384u - (16384u % frame);
+  /* Bound PCM for throughput. This WAS a bitsToByteList stack-overflow workaround;
+   * that recursion now has an @[csimp] tail swap (re-baselined overflow-free, P0.2),
+   * so the bound is raised 16 KB -> 64 KB to reach deeper frame counts (concatFrames,
+   * multi-task encode workers, frame-boundary chunking). */
+  if (plen > 65536u)
+    plen = 65536u - (65536u % frame);
 
   /* LHS: encodePcm16 bs ch sr bytes (consumes its ByteArray). */
   lean_object *lhs = vinyl_encode_pcm16(

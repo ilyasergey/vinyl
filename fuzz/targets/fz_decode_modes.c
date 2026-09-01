@@ -126,7 +126,7 @@ static void demand_agreement(size_t insz, const char *theorems, const mode_resul
           what, insz, off, a->name, rc_name(a->rc), a->len, a->bps, a->ch, a->sr, b->name,
           rc_name(b->rc), b->len, b->bps, b->ch, b->sr);
   fprintf(stderr, "  contradicts %s\n", theorems);
-  abort();
+  FUZZ_ABORT();
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
@@ -147,7 +147,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             "  output across repeats of the same input (input=%zuB, LEAN_NUM_THREADS live pool)\n"
             "  contradicts the @[csimp] proven-equal parallel decode (docs/06-recursion-shape.md)\n",
             size);
-    abort();
+    FUZZ_ABORT();
   }
 
   /* VM_FORCE_PAR: exercise byteStepsPar DIRECTLY (bypassing parThreshold and the
@@ -172,7 +172,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
               "  frame bytes across repeats of the same input (input=%zuB, live task pool)\n"
               "  a Task-parallelism / Lean-runtime defect in the forced parallel decode path\n",
               size);
-      abort();
+      FUZZ_ABORT();
     }
   }
 

@@ -9,7 +9,13 @@
  *
  * Without AFL_CUSTOM_MUTATOR_ONLY, AFL++ interleaves its own havoc stages with
  * this one, which is usually what you want: havoc explores malformed headers
- * while this stage keeps producing streams that survive the CRC gate. */
+ * while this stage keeps producing streams that survive the CRC gate.
+ *
+ * PCM policy: the encode-side (packed-PCM / G1) mutator is the SEPARATE .so
+ * build/lib/pcm_mutator.so (common/pcm_mutator.c, its own afl_custom_* API), not
+ * a branch here -- AFL selects a custom mutator per-library via
+ * AFL_CUSTOM_MUTATOR_LIBRARY, and both translation units export the same
+ * afl_custom_* symbols, so they cannot share one .so. See mk/tools.mk. */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>

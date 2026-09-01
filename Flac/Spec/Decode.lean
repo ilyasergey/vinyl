@@ -43,6 +43,15 @@ theorem readConts_sim (k : Nat) :
       · rw [if_neg hc, if_neg hc]
         rfl
 
+theorem readContsMin_sim (k acc : Nat) (br : BitReader) :
+    Utf8Num.readContsMin k acc (toStream br)
+      = (readContsMin k acc br).map (fun p => (p.1, toStream p.2)) := by
+  unfold Utf8Num.readContsMin readContsMin
+  rw [readConts_sim k]
+  cases readConts k acc br with
+  | none => rfl
+  | some p => by_cases hv : p.1 < Utf8Num.contsFloor k <;> simp [hv]
+
 theorem readUtf8_sim (br : BitReader) :
     Utf8Num.read (toStream br)
       = (readUtf8 br).map (fun p => (p.1, toStream p.2)) := by
@@ -59,22 +68,22 @@ theorem readUtf8_sim (br : BitReader) :
     · rw [if_pos h2, if_pos h2]; rfl
     rw [if_neg h2, if_neg h2]
     by_cases h3 : p.1 < 0xE0
-    · rw [if_pos h3, if_pos h3]; exact readConts_sim 1 _ _
+    · rw [if_pos h3, if_pos h3]; exact readContsMin_sim 1 _ _
     rw [if_neg h3, if_neg h3]
     by_cases h4 : p.1 < 0xF0
-    · rw [if_pos h4, if_pos h4]; exact readConts_sim 2 _ _
+    · rw [if_pos h4, if_pos h4]; exact readContsMin_sim 2 _ _
     rw [if_neg h4, if_neg h4]
     by_cases h5 : p.1 < 0xF8
-    · rw [if_pos h5, if_pos h5]; exact readConts_sim 3 _ _
+    · rw [if_pos h5, if_pos h5]; exact readContsMin_sim 3 _ _
     rw [if_neg h5, if_neg h5]
     by_cases h6 : p.1 < 0xFC
-    · rw [if_pos h6, if_pos h6]; exact readConts_sim 4 _ _
+    · rw [if_pos h6, if_pos h6]; exact readContsMin_sim 4 _ _
     rw [if_neg h6, if_neg h6]
     by_cases h7 : p.1 < 0xFE
-    · rw [if_pos h7, if_pos h7]; exact readConts_sim 5 _ _
+    · rw [if_pos h7, if_pos h7]; exact readContsMin_sim 5 _ _
     rw [if_neg h7, if_neg h7]
     by_cases h8 : p.1 = 0xFE
-    · rw [if_pos h8, if_pos h8]; exact readConts_sim 6 _ _
+    · rw [if_pos h8, if_pos h8]; exact readContsMin_sim 6 _ _
     · rw [if_neg h8, if_neg h8]; rfl
 
 /-! ## Rice codes -/
@@ -1031,6 +1040,18 @@ theorem readConts_pos8 (k : Nat) :
           fun hw => b2 (by have := b1 hw; omega)⟩
       · simp at h
 
+/-- The minimality gate is a post-filter: when `readContsMin` succeeds, the
+    underlying `readConts` succeeded with the same value and reader. -/
+theorem readContsMin_some {k acc : Nat} {br br' : BitReader} {n : Nat}
+    (h : readContsMin k acc br = some (n, br')) : readConts k acc br = some (n, br') := by
+  unfold readContsMin at h
+  split at h
+  · simp at h
+  · rename_i v s' heq
+    split at h
+    · simp at h
+    · rw [heq]; exact h
+
 theorem readUtf8_pos8 {br br' : BitReader} {n : Nat}
     (h : readUtf8 br = some (n, br')) :
     br'.data = br.data ∧ (∃ j, br'.pos = br.pos + 8 * j)
@@ -1057,17 +1078,17 @@ theorem readUtf8_pos8 {br br' : BitReader} {n : Nat}
     split at h
     · simp at h
     split at h
-    · exact step h
+    · exact step (readContsMin_some h)
     split at h
-    · exact step h
+    · exact step (readContsMin_some h)
     split at h
-    · exact step h
+    · exact step (readContsMin_some h)
     split at h
-    · exact step h
+    · exact step (readContsMin_some h)
     split at h
-    · exact step h
+    · exact step (readContsMin_some h)
     split at h
-    · exact step h
+    · exact step (readContsMin_some h)
     · simp at h
 
 theorem resolveBlockSize_pos {code : Nat} {br br' : BitReader} {bs : Nat}

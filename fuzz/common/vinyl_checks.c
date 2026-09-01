@@ -209,15 +209,15 @@ void vinyl_self_consistency(const uint8_t *in, size_t n, SelfConsistency *sc) {
   }
 
   /* Cross-decoder lanes, gated on INPUT SIZE for throughput: vinyl_decode_reference
-   * is the List-Bool reader whose skipBits is quadratic in input bytes (fz_decode_
-   * modes caps it at VM_REF_MAX_INPUT=8192B for the same reason), so the byte bound
-   * -- reusing VINYL_ENCODE_SAMPLE_CAP as an 8192-byte cap, which the A1
-   * `reference-small` variant's max_len matches -- keeps the reader off large
-   * inputs. Both decoders re-parse the ORIGINAL input; a disagreement with the
-   * production decoder's decision or output is a compiler/runtime/csimp defect
-   * (decodeOption_eq_reference, decodeBytes_spec + pcmBytesA_eq), not garbage-in
-   * tolerance. */
-  if (n <= VINYL_ENCODE_SAMPLE_CAP) {
+   * is the List-Bool reader whose skipBits is quadratic in input bytes AND is
+   * NON-TAIL (it stack-overflows on large inputs -- fz_decode_modes caps it at
+   * VM_REF_MAX_INPUT=8192B for the same reason), so it is bounded by its OWN cap
+   * VINYL_REF_MAX_BYTES=8192 (decoupled from the raised encode caps in P0.2, which
+   * must not apply here). Both decoders re-parse the ORIGINAL input; a disagreement
+   * with the production decoder's decision or output is a compiler/runtime/csimp
+   * defect (decodeOption_eq_reference, decodeBytes_spec + pcmBytesA_eq), not
+   * garbage-in tolerance. */
+  if (n <= VINYL_REF_MAX_BYTES) {
     /* REFERENCE lane: decodeOption == decodeReference on the binary. */
     lean_object *ref = vinyl_decode_reference(mk_ba(in, n));
     if (lean_obj_tag(ref) != 1) {
@@ -227,29 +227,32 @@ void vinyl_self_consistency(const uint8_t *in, size_t n, SelfConsistency *sc) {
     }
     lean_dec(ref);
 
-    /* BYTE lane (16-bit only): decodeBytes' (bytes,bps) must equal pcmBytes of the
-     * Audio the production decoder just returned (decodeBytes_spec). decodeBytes
-     * returning NONE is the legitimate fused->sample fallback (vinyl_decode_fast),
-     * NOT a divergence -- the spec only constrains the SOME case, so only then do
-     * we compare. */
-    if (bps == 16) {
-      lean_object *db = vinyl_decode_bytes(mk_ba(in, n));
-      if (lean_obj_tag(db) == 1) {
-        lean_object *p = lean_ctor_get(db, 0); /* ByteArray × Nat (borrowed) */
-        lean_object *bytes = lean_ctor_get(p, 0);
-        long db_bps = nat_ll(lean_ctor_get(p, 1));
-        lean_object *bnat = lean_ctor_get(audio, 1);
-        lean_inc(bnat);
-        lean_inc(chs);
-        lean_object *exp = vinyl_pcm_bytes(bnat, chs); /* consumes bnat + chs */
-        size_t esz = lean_sarray_size(exp), dsz = lean_sarray_size(bytes);
-        if (db_bps != 16 || esz != dsz ||
-            (esz && memcmp(lean_sarray_cptr(exp), lean_sarray_cptr(bytes), esz) != 0))
-          sc->byte_disagreed = 1;
-        lean_dec(exp);
-      }
-      lean_dec(db);
+    /* BYTE lane (ANY depth): decodeBytes' (bytes,bps) must equal pcmBytes of the
+     * Audio the production decoder just returned (decodeBytes_spec + pcmBytesA_eq).
+     * Both sides are depth-parameterised: decodeBytes returns (out, si.bps) with
+     * out = pcmBytesRange bps chs ... (PcmBytes.lean:778, holds at any bps), and
+     * pcmBytes/pcmRowsGo serialize ⌈bps/8⌉ bytes/sample at any depth
+     * (Stream.lean:178-233). The Audio carries that same si.bps, so the expected
+     * bytes are pcmBytes bps chs at 8/12/16/20/24/32-bit alike -- so db_bps must
+     * equal the decoded bps (`bps`), not the constant 16. decodeBytes returning
+     * NONE is the legitimate fused->sample fallback (vinyl_decode_fast), NOT a
+     * divergence -- the spec only constrains the SOME case, so only then compare. */
+    lean_object *db = vinyl_decode_bytes(mk_ba(in, n));
+    if (lean_obj_tag(db) == 1) {
+      lean_object *p = lean_ctor_get(db, 0); /* ByteArray × Nat (borrowed) */
+      lean_object *bytes = lean_ctor_get(p, 0);
+      long db_bps = nat_ll(lean_ctor_get(p, 1));
+      lean_object *bnat = lean_ctor_get(audio, 1);
+      lean_inc(bnat);
+      lean_inc(chs);
+      lean_object *exp = vinyl_pcm_bytes(bnat, chs); /* consumes bnat + chs */
+      size_t esz = lean_sarray_size(exp), dsz = lean_sarray_size(bytes);
+      if (db_bps != bps || esz != dsz ||
+          (esz && memcmp(lean_sarray_cptr(exp), lean_sarray_cptr(bytes), esz) != 0))
+        sc->byte_disagreed = 1;
+      lean_dec(exp);
     }
+    lean_dec(db);
   }
   lean_dec(r);
 }

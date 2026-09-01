@@ -43,7 +43,10 @@ theorem readConts_writeConts (k acc n : Nat) (rest : BitStream) :
     have hd : 0x80 + n / 64 ^ k % 64 - 0x80 = n / 64 ^ k % 64 := by omega
     rw [if_pos hcond, hd, ih, mod_pow_succ n 64 k, Nat.pow_succ, digit_step]
 
-/-- **Coded-number round-trip**. -/
+/-- Discharge the minimality gate over `write`'s output: `write` only reaches the
+    `k`-continuation form for values at/above `contsFloor k`, so the decoded value
+    clears the floor and reads back exactly. Inlined per branch below (the concrete
+    `k`/`acc` let `omega` evaluate `contsFloor k` and the positional identity). -/
 theorem read_write (n : Nat) (h : n < 2 ^ 36) (rest : BitStream) :
     read (write n ++ rest) = some (n, rest) := by
   unfold write read
@@ -56,8 +59,11 @@ theorem read_write (n : Nat) (h : n < 2 ^ 36) (rest : BitStream) :
     · rw [if_pos h2, List.append_assoc,
         readBits_writeBits _ _ _ (by omega : 0xC0 + n / 2 ^ 6 < 2 ^ 8)]
       simp only []
-      rw [if_neg (by omega), if_neg (by omega), if_pos (by omega),
-        readConts_writeConts]
+      rw [if_neg (by omega), if_neg (by omega), if_pos (by omega)]
+      unfold readContsMin
+      rw [readConts_writeConts]
+      simp only [contsFloor]
+      rw [if_neg (by omega)]
       congr 2
       omega
     · rw [if_neg h2]
@@ -65,8 +71,11 @@ theorem read_write (n : Nat) (h : n < 2 ^ 36) (rest : BitStream) :
       · rw [if_pos h3, List.append_assoc,
           readBits_writeBits _ _ _ (by omega : 0xE0 + n / 2 ^ 12 < 2 ^ 8)]
         simp only []
-        rw [if_neg (by omega), if_neg (by omega), if_neg (by omega),
-          if_pos (by omega), readConts_writeConts]
+        rw [if_neg (by omega), if_neg (by omega), if_neg (by omega), if_pos (by omega)]
+        unfold readContsMin
+        rw [readConts_writeConts]
+        simp only [contsFloor]
+        rw [if_neg (by omega)]
         congr 2
         omega
       · rw [if_neg h3]
@@ -75,7 +84,11 @@ theorem read_write (n : Nat) (h : n < 2 ^ 36) (rest : BitStream) :
             readBits_writeBits _ _ _ (by omega : 0xF0 + n / 2 ^ 18 < 2 ^ 8)]
           simp only []
           rw [if_neg (by omega), if_neg (by omega), if_neg (by omega),
-            if_neg (by omega), if_pos (by omega), readConts_writeConts]
+            if_neg (by omega), if_pos (by omega)]
+          unfold readContsMin
+          rw [readConts_writeConts]
+          simp only [contsFloor]
+          rw [if_neg (by omega)]
           congr 2
           omega
         · rw [if_neg h4]
@@ -84,8 +97,11 @@ theorem read_write (n : Nat) (h : n < 2 ^ 36) (rest : BitStream) :
               readBits_writeBits _ _ _ (by omega : 0xF8 + n / 2 ^ 24 < 2 ^ 8)]
             simp only []
             rw [if_neg (by omega), if_neg (by omega), if_neg (by omega),
-              if_neg (by omega), if_neg (by omega), if_pos (by omega),
-              readConts_writeConts]
+              if_neg (by omega), if_neg (by omega), if_pos (by omega)]
+            unfold readContsMin
+            rw [readConts_writeConts]
+            simp only [contsFloor]
+            rw [if_neg (by omega)]
             congr 2
             omega
           · rw [if_neg h5]
@@ -94,15 +110,21 @@ theorem read_write (n : Nat) (h : n < 2 ^ 36) (rest : BitStream) :
                 readBits_writeBits _ _ _ (by omega : 0xFC + n / 2 ^ 30 < 2 ^ 8)]
               simp only []
               rw [if_neg (by omega), if_neg (by omega), if_neg (by omega),
-                if_neg (by omega), if_neg (by omega), if_neg (by omega),
-                if_pos (by omega), readConts_writeConts]
+                if_neg (by omega), if_neg (by omega), if_neg (by omega), if_pos (by omega)]
+              unfold readContsMin
+              rw [readConts_writeConts]
+              simp only [contsFloor]
+              rw [if_neg (by omega)]
               congr 2
               omega
             · rw [if_neg h6, List.append_assoc,
                 readBits_writeBits _ _ _ (by omega : 0xFE < 2 ^ 8)]
               -- all guards are literal here (`b = 0xFE`); simp collapses them
               simp only [Nat.lt_irrefl, reduceIte, Nat.reduceLT]
+              unfold readContsMin
               rw [readConts_writeConts]
+              simp only [contsFloor]
+              rw [if_neg (by omega)]
               congr 2
               omega
 

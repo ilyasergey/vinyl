@@ -140,7 +140,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   }
 
   if (fatal)
-    abort();
+    FUZZ_ABORT();
   fuzz_tick();
   return 0;
 }

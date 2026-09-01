@@ -24,12 +24,15 @@ static unsigned long g_execs, g_all_ok, g_both_rej, g_vinyl_only, g_ref_only, g_
 
 static void report(FILE *o) {
   double clash_pct = g_execs ? 100.0 * (double)g_hdr_clash / (double)g_execs : 0.0;
+  unsigned long ffsk = wide_ff_skip_total();
+  double ffsk_pct = g_execs ? 100.0 * (double)ffsk / (double)g_execs : 0.0;
   fprintf(o,
           "[wide3] execs=%lu all_ok=%lu both_rej=%lu vinyl_only=%lu ref_only=%lu skip=%lu "
           "geom=%lu ref_disagree=%lu bignum=%lu out_of_contract=%lu resource=%lu | flac_ok=%lu "
-          "ffmpeg_ok=%lu | hdr_clash=%lu (%.1f%% suppressed, F5)\n",
+          "ffmpeg_ok=%lu | hdr_clash=%lu (%.1f%% suppressed, F5) | ff_skipped=%lu (%.1f%%, P0.4)\n",
           g_execs, g_all_ok, g_both_rej, g_vinyl_only, g_ref_only, g_skip, g_geom, g_ref_disagree,
-          g_bignum, g_out_of_contract, g_resource, g_flac_ok, g_ffmpeg_ok, g_hdr_clash, clash_pct);
+          g_bignum, g_out_of_contract, g_resource, g_flac_ok, g_ffmpeg_ok, g_hdr_clash, clash_pct,
+          ffsk, ffsk_pct);
 }
 
 FUZZ_TARGET(.name = "fz_samples_diff",

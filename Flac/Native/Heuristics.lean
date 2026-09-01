@@ -127,14 +127,19 @@ def lpcCandidates (est : Nat) : List Nat :=
     best parameters, estimated total bit cost from partition sums.
     Returns `(po, ks, cost)`. -/
 def partitionSearch (bs ord : Nat) (us : List Nat) : Nat × List Nat × Nat := Id.run do
-  let (k0, c0) := bestParamSum us.sum us.length
+  -- `List.sum` compiles to a non-tail `foldr`, so summing a whole partition
+  -- (length = block size, unbounded via the unchecked encoder) recursed one
+  -- native stack frame per sample and overflowed (audit finding C04, the encode
+  -- heuristic analogue). `foldl` is tail-recursive with the same value; this is
+  -- unverified heuristic code, so no theorem reads the fold shape.
+  let (k0, c0) := bestParamSum (us.foldl (· + ·) 0) us.length
   let mut best : Nat × List Nat × Nat := (0, [k0], 6 + 4 + c0)
   for po in [1, 2, 3, 4, 5, 6] do
     if bs % Flac.Bits.p2 po = 0 ∧ ord < bs / Flac.Bits.p2 po then
       let c := bs / Flac.Bits.p2 po
       let sizes := (c - ord) :: List.replicate (Flac.Bits.p2 po - 1) c
       let parts := Rice.chunkBySizes sizes us
-      let picks := parts.map fun p => bestParamSum p.sum p.length
+      let picks := parts.map fun p => bestParamSum (p.foldl (· + ·) 0) p.length
       let cost := 6 + picks.foldl (fun a p => a + 4 + p.2) 0
       if cost < best.2.2 then
         best := (po, picks.map Prod.fst, cost)

@@ -66,9 +66,14 @@ static const Chooser k_choosers[] = {
     {7, 66, "stereomode2"}, {7, 67, "stereomode3"}, {7, 128, "invalid"},
 };
 
-/* bps span from CONTRACT/plan; sample-rate index 4 = 44100 (k_sr in vinyl_gen.c). */
-static const int k_bps[] = {8, 12, 16, 24, 32};
-static const int k_ch[] = {1, 2};
+/* bps span from CONTRACT/plan; sample-rate index 4 = 44100 (k_sr in vinyl_gen.c).
+ * The RAW block supports bps 1..32 and ch 1..8 (vinyl_gen.c gen_build): 17/20/31
+ * are odd depths no other materialized path emits, and ch 3..8 gives any-depth
+ * multichannel (readChannels chCode 2..7) seeds the decode targets otherwise
+ * only see 16-bit. gen_build keeps the OOM-safe chooser bounds (RICE2 k~=bps,
+ * bounded PO/order) so every cell stays well under 16 KiB. */
+static const int k_bps[] = {8, 12, 16, 17, 20, 24, 31, 32};
+static const int k_ch[] = {1, 2, 3, 4, 6, 8};
 
 static int write_file(const char *dir, const char *name, const uint8_t *buf, size_t len) {
   char path[1024];
@@ -110,8 +115,17 @@ int main(int argc, char **argv) {
          * valid: a 16-sample frame makes any PO>0 degenerate and safeChooser
          * falls back to VERBATIM. bs index 7 = 1024 samples, ns = 1024 (a full
          * frame): 1024 % 2^po == 0 for po<=8 with samples/partition > fixed order.
-         * Other cells (LPC/RICE2/fixed) keep the tiny 16-sample block. */
-        int big = (ch->kind == 6);
+         * Other cells (LPC/RICE2/fixed) keep the tiny 16-sample block.
+         *
+         * The escape residuals here are a FIXED 31 bits regardless of bps, so
+         * gen_build's bps-based max_ns clamp does NOT bound this cell's output:
+         * it is ~ns*ch*31/8 bytes. At ch<=3 a full 1024-sample block stays under
+         * ~12 KiB; at ch>=4 it would exceed the 16 KiB seed budget, so the big
+         * block is only used up to 3 channels. Higher-channel partition cells
+         * fall back to the tiny 16-sample block (degenerate PO -> bounded
+         * VERBATIM) -- still a valid any-depth multichannel seed, just without the
+         * high-PO structure that cannot fit at those channel counts. */
+        int big = (ch->kind == 6 && k_ch[ci] <= 3);
         uint8_t bs_idx = big ? 7u : 0u;         /* 7 -> 1024 samples, 0 -> 16 */
         unsigned ns_x = big ? 1008u : 0u;       /* gen_build: ns = 16 + ns_x%2032 -> 1024 or 16 */
         data[3] = (uint8_t)(bs_idx | (ch->kind << 3)); /* bs index | chooser_kind */

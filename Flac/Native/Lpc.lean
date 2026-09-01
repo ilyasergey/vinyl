@@ -39,6 +39,37 @@ def residualAux (cs : List Int) (shift : Nat) (hist : List Int) :
   | [] => []
   | x :: ys => (x - predict cs shift hist) :: residualAux cs shift (x :: hist) ys
 
+/-- `residualAux` with the residuals accumulated, so the recursive call is in
+    tail position: the residual length is the block size (unbounded via the
+    unchecked encoder), so the cons-after-return form kept one native stack frame
+    per sample (audit finding C04, the LPC residual analogue). -/
+def residualAuxAcc (cs : List Int) (shift : Nat) (acc : List Int) :
+    (hist : List Int) → List Int → List Int
+  | _, [] => acc.reverse
+  | hist, x :: ys =>
+    residualAuxAcc cs shift ((x - predict cs shift hist) :: acc) (x :: hist) ys
+
+theorem residualAuxAcc_eq (cs : List Int) (shift : Nat) (acc hist : List Int)
+    (ys : List Int) :
+    residualAuxAcc cs shift acc hist ys = acc.reverse ++ residualAux cs shift hist ys := by
+  induction ys generalizing acc hist with
+  | nil => simp [residualAuxAcc, residualAux]
+  | cons x ys ih =>
+    rw [residualAuxAcc, residualAux, ih ((x - predict cs shift hist) :: acc) (x :: hist)]
+    simp
+
+def residualAuxTR (cs : List Int) (shift : Nat) (hist : List Int)
+    (ys : List Int) : List Int :=
+  residualAuxAcc cs shift [] hist ys
+
+/-- Swap the compiled `residualAux` for the tail form; theorems keep the
+    structural definition via the kernel. -/
+@[csimp] theorem residualAux_eq_residualAuxTR : @residualAux = @residualAuxTR := by
+  funext cs shift hist ys
+  unfold residualAuxTR
+  rw [residualAuxAcc_eq]
+  simp
+
 /-- LPC residual: the first `cs.length` samples are warmup, the rest are
     prediction residuals. -/
 def residual (cs : List Int) (shift : Nat) (xs : List Int) : List Int :=

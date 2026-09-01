@@ -18,6 +18,31 @@ def diff1 : List Int → List Int
   | x :: y :: t => (y - x) :: diff1 (y :: t)
   | _ => []
 
+/-- `diff1` with the differences accumulated, so the recursive call is in tail
+    position: the residual length is the block size, which the unchecked encoder
+    lets grow without bound, so the cons-after-return form kept one native stack
+    frame per sample (audit finding C04, the encode-side residual analogue of the
+    per-frame `writeFrames`/`chunkChannels` swaps). -/
+def diff1Acc (acc : List Int) : List Int → List Int
+  | x :: y :: t => diff1Acc ((y - x) :: acc) (y :: t)
+  | _ => acc.reverse
+
+theorem diff1Acc_eq (acc : List Int) (xs : List Int) :
+    diff1Acc acc xs = acc.reverse ++ diff1 xs := by
+  induction xs using diff1.induct generalizing acc with
+  | case1 x y t ih => rw [diff1Acc, diff1, ih ((y - x) :: acc)]; simp
+  | case2 xs => cases xs <;> simp [diff1Acc, diff1]
+
+def diff1TR (xs : List Int) : List Int := diff1Acc [] xs
+
+/-- Swap the compiled `diff1` for the tail form; every theorem keeps the
+    structural definition via the kernel. -/
+@[csimp] theorem diff1_eq_diff1TR : @diff1 = @diff1TR := by
+  funext xs
+  unfold diff1TR
+  rw [diff1Acc_eq]
+  simp
+
 /-- `n`-th differences. -/
 def diffN : Nat → List Int → List Int
   | 0, xs => xs

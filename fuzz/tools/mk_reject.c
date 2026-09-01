@@ -83,6 +83,65 @@ static int emit_hdr_field(const char *dir, const char *name, size_t off, uint8_t
   return emit(dir, name, b, sizeof b);
 }
 
+/* Subframe-body reject: keep the valid marker + STREAMINFO + frame header, repair
+ * the header CRC-8 so parsing reaches the subframe body, then splice a
+ * hand-packed malformed subframe over bytes 50+. No frame CRC-16 is appended --
+ * every seed here trips a structural reject inside readSubframe/readContent/
+ * readPartA before the CRC-16 gate. `w` holds the MSB-first body bits; it is
+ * byte-aligned (zero-padded) before splicing. */
+static int emit_body(const char *dir, const char *name, FlacBitWriter *w) {
+  fbw_align(w);
+  if (w->of) {
+    fprintf(stderr, "mk_reject: body overflow %s\n", name);
+    return 1;
+  }
+  uint8_t b[700];
+  memcpy(b, k_base, 50); /* fLaC + STREAMINFO + 7-byte frame header + CRC-8 slot */
+  repair_hdr_crc(b);
+  memcpy(b + 50, w->buf, w->len);
+  return emit(dir, name, b, 50 + w->len);
+}
+
+/* Subframe header byte: top padding bit 0, 6-bit type, wasted-flag LSB. */
+static uint8_t subframe_hdr(unsigned type, unsigned wasted_flag) {
+  return (uint8_t)(((type & 0x3f) << 1) | (wasted_flag & 1));
+}
+
+/* RICE2 residual truncated either inside the unary quotient (no stop bit) or
+ * inside the k-bit remainder (a lone stop bit, then EOF before k bits). FIXED
+ * order 0 so the body reaches the residual immediately (no warm-up / coeffs). */
+static int emit_rice2_trunc(const char *dir, const char *name, unsigned k, int in_remainder) {
+  uint8_t buf[64];
+  FlacBitWriter w;
+  fbw_init(&w, buf, sizeof buf);
+  fbw_bits(&w, subframe_hdr(8, 0), 8); /* FIXED order 0 */
+  fbw_bits(&w, 1, 2);                  /* residual method 1 = RICE2 (5-bit params) */
+  fbw_bits(&w, 0, 4);                  /* partition order 0 -> one partition */
+  fbw_bits(&w, k, 5);                  /* Rice2 parameter k */
+  if (in_remainder)
+    fbw_bits(&w, 1, 1); /* quotient 0 stop bit; the k remainder bits never arrive */
+  else
+    fbw_bits(&w, 0, 3); /* start of an unterminated unary run (all zeros to EOF) */
+  return emit_body(dir, name, &w);
+}
+
+/* RICE escape (param 0b1111) with a 5-bit raw sample width, then `sampledatabits`
+ * of the raw partition samples -- fewer than the full 16*width, so width 31 runs
+ * off the end; width 0 leaves an incomplete frame (no CRC-16). */
+static int emit_escape_trunc(const char *dir, const char *name, unsigned width, unsigned sampledatabits) {
+  uint8_t buf[64];
+  FlacBitWriter w;
+  fbw_init(&w, buf, sizeof buf);
+  fbw_bits(&w, subframe_hdr(8, 0), 8); /* FIXED order 0 */
+  fbw_bits(&w, 0, 2);                  /* residual method 0 = RICE (4-bit params) */
+  fbw_bits(&w, 0, 4);                  /* partition order 0 */
+  fbw_bits(&w, 15, 4);                 /* escape parameter 0b1111 */
+  fbw_bits(&w, width, 5);              /* raw sample width */
+  if (sampledatabits)
+    fbw_bits(&w, 0, sampledatabits);
+  return emit_body(dir, name, &w);
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr, "usage: %s <output-dir>\n", argv[0]);
@@ -169,6 +228,118 @@ int main(int argc, char **argv) {
   rc |= emit(dir, "20_trunc_after_frame_header.flac", k_base, 50); /* header+CRC, no body */
   rc |= emit(dir, "21_trunc_mid_frame_header.flac", k_base, 47);   /* inside the header    */
   rc |= emit(dir, "22_trunc_streaminfo.flac", k_base, 20);         /* STREAMINFO cut short */
+
+  /* ---- subframe-body reject frontier (header CRC-8 valid, body malformed) --- */
+  /* LPC (type >= 32) with forbidden predictor precision code 0b1111 (V2/§9.2.4). */
+  {
+    uint8_t buf[64];
+    FlacBitWriter w;
+    fbw_init(&w, buf, sizeof buf);
+    fbw_bits(&w, subframe_hdr(32, 0), 8); /* LPC order 1 */
+    fbw_bits(&w, 0, 16);                  /* one 16-bit warm-up sample */
+    fbw_bits(&w, 15, 4);                  /* precision code 15 -> invalid */
+    rc |= emit_body(dir, "50_lpc_precision_15.flac", &w);
+  }
+  /* LPC with a negative quantization shift (5-bit signed field, top bit set). */
+  {
+    uint8_t buf[64];
+    FlacBitWriter w;
+    fbw_init(&w, buf, sizeof buf);
+    fbw_bits(&w, subframe_hdr(32, 0), 8); /* LPC order 1 */
+    fbw_bits(&w, 0, 16);                  /* warm-up sample */
+    fbw_bits(&w, 11, 4);                  /* precision code 11 -> precision 12 (valid) */
+    fbw_bits(&w, 0x10, 5);                /* shift = -16 (top bit set) -> reject */
+    rc |= emit_body(dir, "51_lpc_negative_shift.flac", &w);
+  }
+  /* Reserved residual coding methods 2 and 3 (only 0/1 are defined). */
+  for (unsigned m = 2; m <= 3; m++) {
+    uint8_t buf[16];
+    FlacBitWriter w;
+    fbw_init(&w, buf, sizeof buf);
+    fbw_bits(&w, subframe_hdr(8, 0), 8); /* FIXED order 0 */
+    fbw_bits(&w, m, 2);                  /* reserved residual method */
+    char name[64];
+    snprintf(name, sizeof name, "52_residual_method_%u.flac", m);
+    rc |= emit_body(dir, name, &w);
+  }
+  /* Partition order that does not divide the block size (16 % 2^5 != 0). */
+  {
+    uint8_t buf[16];
+    FlacBitWriter w;
+    fbw_init(&w, buf, sizeof buf);
+    fbw_bits(&w, subframe_hdr(8, 0), 8); /* FIXED order 0 */
+    fbw_bits(&w, 0, 2);                  /* RICE */
+    fbw_bits(&w, 5, 4);                  /* partition order 5 -> 16 not divisible by 32 */
+    rc |= emit_body(dir, "53_partition_indivisible.flac", &w);
+  }
+  /* Partition order too high for the predictor order (ord 4 >= bs>>po = 2). */
+  {
+    uint8_t buf[32];
+    FlacBitWriter w;
+    fbw_init(&w, buf, sizeof buf);
+    fbw_bits(&w, subframe_hdr(12, 0), 8); /* FIXED order 4 */
+    for (int i = 0; i < 4; i++)
+      fbw_bits(&w, 0, 16); /* four 16-bit warm-up samples */
+    fbw_bits(&w, 0, 2);    /* RICE */
+    fbw_bits(&w, 3, 4);    /* partition order 3 -> bs>>3 = 2 < order 4 -> reject */
+    rc |= emit_body(dir, "53_partition_order_too_large.flac", &w);
+  }
+  /* RICE2 large k truncated inside the unary run and inside the remainder. */
+  {
+    static const unsigned ks[] = {18, 24, 28, 30};
+    for (size_t i = 0; i < sizeof ks / sizeof ks[0]; i++) {
+      char name[64];
+      snprintf(name, sizeof name, "54_rice2_k%u_unary.flac", ks[i]);
+      rc |= emit_rice2_trunc(dir, name, ks[i], 0);
+      snprintf(name, sizeof name, "54_rice2_k%u_remainder.flac", ks[i]);
+      rc |= emit_rice2_trunc(dir, name, ks[i], 1);
+    }
+  }
+  /* RICE escape sample widths 0 and 31 truncated in the raw sample data. */
+  rc |= emit_escape_trunc(dir, "55_escape_width_0.flac", 0, 0);
+  rc |= emit_escape_trunc(dir, "55_escape_width_31.flac", 31, 8);
+  /* Wasted-bits count equal to the bit depth (exhausts the sample). CONSTANT
+   * subframe, wasted flag set; unary 0^15 1 encodes 16 wasted bits (bps = 16). */
+  {
+    uint8_t buf[16];
+    FlacBitWriter w;
+    fbw_init(&w, buf, sizeof buf);
+    fbw_bits(&w, subframe_hdr(0, 1), 8); /* CONSTANT, wasted flag set */
+    fbw_bits(&w, 0, 15);                 /* 15 leading zeros ... */
+    fbw_bits(&w, 1, 1);                  /* ... stop bit -> 16 wasted bits == bps */
+    rc |= emit_body(dir, "56_wasted_equals_depth.flac", &w);
+  }
+  /* Unterminated wasted-bits unary run (all zeros to EOF, no stop bit). */
+  {
+    uint8_t buf[16];
+    FlacBitWriter w;
+    fbw_init(&w, buf, sizeof buf);
+    fbw_bits(&w, subframe_hdr(0, 1), 8); /* CONSTANT, wasted flag set */
+    fbw_bits(&w, 0, 7);                  /* zeros only; the unary never terminates */
+    rc |= emit_body(dir, "56_wasted_unterminated.flac", &w);
+  }
+
+  /* ---- staged STREAMINFO truncation ladder (prefixes of the valid base) ----
+   * Each length stops one field short: 8 before minBlock, 10 before maxBlock,
+   * 12 before minFrame, 15 before maxFrame, 18 before sampleRate, 21/22 around
+   * bps, 26 before MD5, 41 one byte short of the MD5 end. */
+  {
+    static const size_t si_stops[] = {8, 10, 12, 15, 18, 21, 22, 26, 41};
+    for (size_t i = 0; i < sizeof si_stops / sizeof si_stops[0]; i++) {
+      char name[64];
+      snprintf(name, sizeof name, "60_trunc_streaminfo_%zu.flac", si_stops[i]);
+      rc |= emit(dir, name, k_base, si_stops[i]);
+    }
+  }
+
+  /* ---- staged frame truncation ladder: complete STREAMINFO, partial frame ----
+   * N = 43..54 walks the sync/header/UTF number/explicit block size/CRC-8/
+   * subframe-header/sample/CRC-16 stages (frame starts at byte 42). */
+  for (size_t n = 43; n <= 54; n++) {
+    char name[64];
+    snprintf(name, sizeof name, "70_trunc_frame_%zu.flac", n);
+    rc |= emit(dir, name, k_base, n);
+  }
 
   printf("mk_reject: wrote %lu rejection seeds to %s\n", g_written, dir);
   return rc ? 1 : 0;

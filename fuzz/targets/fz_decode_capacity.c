@@ -103,7 +103,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
               "  24/32-bit fast decode reallocs its output buffer\n",
               bps, (unsigned)((sbps + 7) / 8), ch, (unsigned long long)total, size,
               (unsigned long long)capacity, actual, shortfall);
-      abort();
+      FUZZ_ABORT();
     }
   } else if (total == 0) {
     g_total0++; /* RFC-legal streaming length-unknown case (separately known) */

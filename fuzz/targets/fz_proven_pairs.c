@@ -60,5 +60,5 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
           "  NOT a spec gap -- both programs are the SAME kernel-checked function\n",
           r.why ? r.why : "(unknown)", r.prod_some, r.ref_some, r.bad_ch, r.bad_idx);
   oracle_dump_write("proven_pair_decode", data, size);
-  abort();
+  FUZZ_ABORT();
 }

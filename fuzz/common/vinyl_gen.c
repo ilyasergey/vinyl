@@ -41,7 +41,11 @@ static const uint32_t k_bs[8] = {16, 192, 576, 1152, 2048, 4096, 4608, 1024};
 /* Keep the output bounded: Unchecked.encode's bitsToByteList recurses once per
  * output byte, so an unbounded sample count is a stack-overflow DoS on the
  * generator itself, not a useful seed. */
-#define GEN_MAX_SAMPLES 2048u
+/* Raised 2048->16384 after the encoder stack-overflow re-baseline (P0.2): the
+ * per-frame/per-output-byte recursions now carry @[csimp] tail swaps, so G1 can
+ * emit multi-frame streams (unlocking wide UTF-8 coded frame numbers, concatFrames
+ * fan-out, pcm16FastPar). The output-byte budget below is the real limiter. */
+#define GEN_MAX_SAMPLES 16384u
 
 static uint32_t xs32(uint32_t *s) {
   uint32_t x = *s ? *s : 0x9E3779B9u;
@@ -202,14 +206,14 @@ static int gen_build(const uint8_t *data, size_t size, GenParams *gp, lean_objec
   for (size_t i = 8; i < size && i < 64; i++)
     seed = seed * 1000003u + data[i];
   size_t ns = 16u + (((size_t)data[4] | ((size_t)data[5] << 8)) % (GEN_MAX_SAMPLES - 16u));
-  /* Unchecked.encode's bitsToByteList recurses once per OUTPUT byte, so the stack
-   * cost is bps*ch*nsamples/8, NOT nsamples: at 32-bit x 8ch a 2048-sample block
-   * is ~64 KB of output and overflows the (small, worker-thread) Lean stack -- the
-   * known encoder-stack-overflow (findings/encoder-stack-overflow-CONFIRMED),
-   * which otherwise crash-loops the encode targets on a KNOWN bug instead of
-   * exploring. Bound the ESTIMATED output to ~8 KB (verbatim worst case) so every
-   * depth/channel combo stays well under the overflow threshold. */
-  size_t max_ns = (size_t)(8192u * 8u) / ((size_t)gp->bps * (size_t)gp->ch);
+  /* Bound the ESTIMATED output bytes (bps*ch*nsamples/8), not the sample count,
+   * because output size drives both encode cost and (historically) the
+   * bitsToByteList per-output-byte recursion. That recursion now has an @[csimp]
+   * tail swap (re-baselined overflow-free to a 128 KB stack, P0.2), so this is now
+   * a THROUGHPUT bound. Raised 8 KB -> 32 KB: unlocks multi-frame at the common
+   * depths (16-bit stereo -> up to 16384 samples = several frames) while staying in
+   * the fast encode regime (64 KB output at bs=16 was alarm-slow in the probe). */
+  size_t max_ns = (size_t)(32768u * 8u) / ((size_t)gp->bps * (size_t)gp->ch);
   if (max_ns < 16u)
     max_ns = 16u;
   if (ns > max_ns)

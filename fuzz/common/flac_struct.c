@@ -471,6 +471,46 @@ int flac_frame_channels(const uint8_t *buf, size_t n) {
   return 0;
 }
 
+/* Record the START bit offset of every subframe of the frame at byte
+ * `frame_start`. This is the same structural walk `frame_end_bit` performs (init
+ * a BR at the body -- byte `frame_start + hlen + 1`, one CRC-8 byte past the
+ * header -- and skip each subframe with `subframe_bits`), except it captures each
+ * subframe's start bit BEFORE advancing past it. It exists so the residual
+ * analyzer can seek to subframe c (c >= 1, whose offset depends on the full Rice
+ * length of the earlier subframes) without re-implementing the Rice grammar.
+ *
+ * `side_mode` names the decorrelation so the per-channel depth matches what the
+ * encoder wrote (the side channel carries `bps + 1` bits, RFC 9639 L5):
+ *   0 = independent (no side)
+ *   1 = left/side   (side at channel 1)
+ *   2 = right/side  (side at channel 0)
+ *   3 = mid/side    (side at channel 1)
+ * -- identical to `FrameHdr.side` in `frame_end_bit`: side_mode 2 <-> side==1
+ * (ch0 side), side_mode 1/3 <-> side==2 (ch1 side). `out_start_bits` must hold
+ * `nch` entries. Returns 1 on a clean full walk (all `nch` subframes parsed), 0
+ * otherwise. Bounds-checked against `n` throughout. */
+int flac_subframe_bit_offsets(const uint8_t *b, size_t n, size_t frame_start, unsigned hlen,
+                              unsigned nch, unsigned bps, int side_mode, uint64_t *out_start_bits) {
+  if (nch == 0 || bps < 1 || bps > 32 || out_start_bits == NULL)
+    return 0;
+  g_budget = WORK_BUDGET(n);
+  /* Re-parse the header solely to recover the block size the subframe walk needs
+   * (residual partition sizing, VERBATIM/CONSTANT run lengths). `bps` doubles as
+   * the STREAMINFO fallback for a frame whose bit-depth code is 0. */
+  FrameHdr h;
+  if (!hdr_parse(b, n, frame_start, bps, &h) || h.hlen != hlen)
+    return 0;
+  BR r = {b, (uint64_t)n * 8, (uint64_t)(frame_start + hlen + 1) * 8, 0};
+  for (unsigned c = 0; c < nch; c++) {
+    int is_side = (side_mode == 1 && c == 1) || (side_mode == 2 && c == 0) ||
+                  (side_mode == 3 && c == 1);
+    out_start_bits[c] = r.bit;
+    if (!subframe_bits(&r, h.bs, bps + (is_side ? 1u : 0u)))
+      return 0;
+  }
+  return r.err ? 0 : 1;
+}
+
 /* ======================================================== generator (port of
  * crcfuzz.py: streaminfo / header_bits / subframe / residual writers). */
 /* PRNG (xorshift64, a=13/b=7/c=17) and the bit-depth code table are the shared

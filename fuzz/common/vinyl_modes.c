@@ -190,6 +190,21 @@ size_t vinyl_md5(const uint8_t *msg, size_t len, uint8_t out[16]) {
   return dn;
 }
 
+/* Flac.Md5.md5Hex : ByteArray -> String (the 32-char lowercase digest, via the
+ * flatMapTR nibble->hex helper). Default calling convention consumes the arg. */
+extern lean_object *vlean_md5_hex(lean_object *msg);
+
+size_t vinyl_md5_hex(const uint8_t *msg, size_t len, char out[33]) {
+  lean_object *s = vlean_md5_hex(mk_ba(msg, len));
+  const char *cs = lean_string_cstr(s);
+  size_t n = strlen(cs);
+  size_t cpy = n < 32 ? n : 32;
+  memcpy(out, cs, cpy);
+  out[cpy] = '\0';
+  lean_dec(s);
+  return n;
+}
+
 /* ================= folded in from vinyl_unchecked_api.c ================= */
 /* Stream.Unchecked.encode : EncoderCfg -> Audio -> ByteArray.
  * EncoderCfg <blockSize, variableBlocking, chooser> and

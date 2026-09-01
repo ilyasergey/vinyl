@@ -47,7 +47,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     flac_validate_report(stderr, &v, out, outlen);
     fprintf(stderr, "  params: ch=%d blockSize=%u sampleRate=%u pcm=%zuB\n", in.ch, in.bs, in.sr,
             in.pcm_len);
-    abort(); /* class (b): corrupted output the reference rejects */
+    FUZZ_ABORT(); /* class (b): corrupted output the reference rejects */
   }
   fuzz_tick();
   return 0;
