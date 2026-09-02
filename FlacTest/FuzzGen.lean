@@ -157,6 +157,13 @@ no theorem, `Flac/` untouched. -/
 @[export vinyl_decode_option]    def fzDecodeOption    := Flac.Decode.decodeOption
 @[export vinyl_decode_pcm16a]    def fzDecodePcm16A    := Flac.decodePcm16A
 @[export vinyl_decode_reference] def fzDecodeReference := Flac.Stream.decodeReference
+-- The SHIPPED public decode entrypoint (CLI `--decode`): the Except-wrapped
+-- `Flac.decode` and the STREAMINFO-only `peekInfo`, previously driven by no
+-- fuzzer. fz_proven_pairs runs `decode` alongside `decodeOption` (it wraps it,
+-- so .ok iff decodeOption is some -- a TCB pin on the public wrapper) and
+-- executes `peekInfo` for header-parse consistency.
+@[export vinyl_decode]           def fzDecode          := Flac.decode
+@[export vinyl_peek_info]        def fzPeekInfo        := Flac.Stream.peekInfo
 @[export vinyl_pcm_bytes]        def fzPcmBytes        := Flac.Stream.pcmBytes
 @[export vinyl_pcm_bytes_range]  def fzPcmBytesRange   := Flac.Stream.pcmBytesRange
 @[export vinyl_encode]           def fzEncode          := Flac.encode

@@ -76,6 +76,20 @@ typedef struct {
 
 int vinyl_pair_decode(const uint8_t *in, size_t n, PairResult *r); /* 1 = agree */
 
+/* ---- shipped public entrypoint: Flac.decode + Stream.peekInfo ----
+ * Drives the two undriven CLI-facing entrypoints. `decode` is the Except-wrapped
+ * `decodeOption` (Decode.lean: .ok iff decodeOption is some), so `decode_ok`
+ * MUST equal decodeOption's some-ness -- a mismatch is a compiler/runtime defect
+ * on the public wrapper, exactly the fz_proven_pairs TCB class. `peekInfo` parses
+ * marker+STREAMINFO only; `peek_some` is measured against decodeOption for
+ * header-parse coherence (a full decode implies a parseable header). */
+typedef struct {
+  int decode_ok;  /* Flac.decode returned .ok        */
+  int peek_some;  /* Stream.peekInfo returned some    */
+} PeekProbe;
+
+void vinyl_decode_peek(const uint8_t *in, size_t n, PeekProbe *p);
+
 /* How many times an encode-based check skipped the re-encode because the decoded
  * audio exceeded VINYL_ENCODE_SAMPLE_CAP. That cap works around Flac.encode's
  * per-chunk non-tail recursion overflowing the Lean stack on a decode bomb (D7,

@@ -21,11 +21,12 @@
 #include "../common/oracle.h"
 #include "../common/vinyl_checks.h"
 
-static unsigned long g_execs, g_both_some, g_both_none;
+static unsigned long g_execs, g_both_some, g_both_none, g_peek_incoherent;
 
 static void report(FILE *o) {
-  fprintf(o, "[pairs] execs=%lu decodeOption==decodeReference: both_some=%lu both_none=%lu\n",
-          g_execs, g_both_some, g_both_none);
+  fprintf(o, "[pairs] execs=%lu decodeOption==decodeReference: both_some=%lu both_none=%lu"
+             " | shipped: peek_incoherent=%lu (decoded but header not peekable)\n",
+          g_execs, g_both_some, g_both_none, g_peek_incoherent);
 }
 
 FUZZ_TARGET(.name = "fz_proven_pairs",
@@ -50,6 +51,26 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       g_both_some++;
     else
       g_both_none++;
+    /* Drive the shipped public entrypoints. Flac.decode WRAPS decodeOption
+     * (.ok iff some), so a decode_ok != prod_some is a compiler/runtime defect
+     * on the public wrapper -- the same TCB class as the proven pair, so it
+     * aborts. peekInfo parses only marker+STREAMINFO; a full decode implies a
+     * peekable header, but production/peek use distinct meta scanners, so a
+     * "decoded yet not peekable" is MEASURED, not fatal. */
+    PeekProbe pp;
+    vinyl_decode_peek(data, size, &pp);
+    if (pp.decode_ok != r.prod_some) {
+      fprintf(stderr,
+              "\n[SHIPPED-ENTRYPOINT DIVERGENCE — TCB VIOLATION ON THE BINARY]\n"
+              "  Flac.decode(.ok=%d) vs Flac.Decode.decodeOption(some=%d)\n"
+              "  Flac.decode is literally `match decodeOption with some => .ok | none => .error`;\n"
+              "  a disagreement is a compiler/runtime defect, NOT a spec gap\n",
+              pp.decode_ok, r.prod_some);
+      oracle_dump_write("shipped_decode_wrapper", data, size);
+      FUZZ_ABORT();
+    }
+    if (r.prod_some && !pp.peek_some)
+      g_peek_incoherent++;
     fuzz_tick();
     return 0;
   }

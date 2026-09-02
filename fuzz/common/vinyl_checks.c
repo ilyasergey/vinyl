@@ -11,6 +11,10 @@
  * Audio = { channels : List (List Int), bps : Nat, sampleRate : Nat }. */
 extern lean_object *vinyl_decode_option(lean_object *bytes);
 extern lean_object *vinyl_decode_reference(lean_object *bytes);
+/* Shipped public entrypoints: Flac.decode : ByteArray -> Except String Audio
+ * (Except.ok = ctor tag 1); Flac.Stream.peekInfo : ByteArray -> Option Info. */
+extern lean_object *vinyl_decode(lean_object *bytes);
+extern lean_object *vinyl_peek_info(lean_object *bytes);
 extern lean_object *vinyl_encode(lean_object *audio); /* some iff Audio.WellFormed */
 extern lean_object *vinyl_read_meta(lean_object *fuel, lean_object *br);
 /* 16-bit byte pipeline: ByteArray -> Option (ByteArray × Nat). */
@@ -275,6 +279,17 @@ int vinyl_pair_decode(const uint8_t *in, size_t n, PairResult *r) {
   lean_dec(prod);
   lean_dec(ref);
   return ok;
+}
+
+/* ---- shipped public entrypoint: Flac.decode + Stream.peekInfo ------- */
+void vinyl_decode_peek(const uint8_t *in, size_t n, PeekProbe *p) {
+  memset(p, 0, sizeof *p);
+  lean_object *d = vinyl_decode(mk_ba(in, n));
+  p->decode_ok = (lean_obj_tag(d) == 1); /* Except.ok */
+  lean_dec(d);
+  lean_object *pi = vinyl_peek_info(mk_ba(in, n));
+  p->peek_some = (lean_obj_tag(pi) == 1); /* Option.some */
+  lean_dec(pi);
 }
 
 /* ---- metamorphic: decode(encode(decode x)) == decode(x) ------------- */

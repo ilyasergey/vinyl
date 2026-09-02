@@ -131,5 +131,24 @@ gate once a fix lands):**
   analyzed inputs while surfacing `float_win_divergence` findings the unwindowed lane
   misses. The original unwindowed lane (integer-exact anchor) still runs as a component
   test.
+- **Shipped-entrypoint lane — DONE (2026-09-01).** `fz_proven_pairs` now also drives
+  `Flac.decode` (the CLI `--decode` `Except` wrapper) and `Stream.peekInfo`, previously
+  reached by no target. `@[export vinyl_decode]` / `@[export vinyl_peek_info]`
+  (`FlacTest/FuzzGen.lean`), a `vinyl_decode_peek` probe (`common/vinyl_checks.c`), and a
+  tautology-safe TCB check + measured `peek_incoherent` counter in the target. +28 regions
+  on `fz_proven_pairs` (3031→3059), all new to the fleet union. Validated clean over a 30 min
+  fleet run (0 crash/oom, `peek_incoherent=0`, no false abort).
+- **10h coverage frontier — analyzed (2026-09-01), no further corpus-reachable gain.**
+  A per-cluster gpt-5.6-sol audit against the Lean source established that the uncovered
+  ~41% is overwhelmingly dead-by-design generated C, NOT a corpus weakness: `@[inline]`-elided
+  standalone bodies (e.g. the 8 `Lpc.dotN` bodies = 203/330 missed Lpc.c regions, compiled
+  into `Emit.lpcResGoN`), `@[csimp]` pre-swap originals, the List-Bool reference lanes, and
+  derived-instance/`repr`/`Format`/boxed/splitter noise. The reachable encoder LPC orders 1–6
+  and all four stereo modes are already covered by `encode/shapes`. Chasing the standalone
+  `dotN`/CRC-range/`decodePcm16`/MD5/Rice-PO bodies would test dead out-of-line copies and
+  dishonestly inflate coverage — deliberately NOT done. Classifier nit (unfixed, cosmetic):
+  `structural_zero.py`'s namespace-blind suffix match tags `Bits.BitReader.readUnary` as
+  `csimp-superseded` off `Bits.readUnary_eq_readUnaryTR`; it is an unused predecessor, not a
+  csimp victim. No coverage-number impact (both are structural-zero categories).
 - Re-run variant-merged coverage after each campaign (`make coverage`,
   `cov/per_target.py`) and confirm the new seeds' payoff.
