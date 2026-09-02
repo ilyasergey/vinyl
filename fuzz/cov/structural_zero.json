@@ -3,12 +3,524 @@
   "source": ".lake/build/ir/Flac/Native/*.c",
   "note": "false-zero classifier; a tagged function cannot show coverage regardless of corpus",
   "counts": {
-    "has-standalone-body": 642,
-    "boxed-wrapper": 685,
-    "inline-elided": 41,
-    "csimp-superseded": 12
+    "has-standalone-body": 656,
+    "inline-elided": 39,
+    "boxed-wrapper": 639,
+    "csimp-superseded": 14,
+    "match-closure": 86,
+    "unreachable": 80,
+    "module-init": 2,
+    "derived-instance": 29
   },
   "functions": {
+    "_init_lp_vinyl_Flac_Bits_instDecidableFitsSInt___aux__1___closed__0": {
+      "module": "Flac/Native/Bits.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Bits_pow2Table": {
+      "module": "Flac/Native/Bits.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Bits_pow2Table___closed__1": {
+      "module": "Flac/Native/Bits.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Bits_sar___closed__0": {
+      "module": "Flac/Native/Bits.c",
+      "tag": "module-init"
+    },
+    "_init_lp_vinyl_Flac_Crc_crc16Table": {
+      "module": "Flac/Native/Crc.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Crc_crc16Table___closed__1": {
+      "module": "Flac/Native/Crc.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Crc_crc8Table": {
+      "module": "Flac/Native/Crc.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Crc_crc8Table___closed__1": {
+      "module": "Flac/Native/Crc.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Crc_crc8UpdateBitwise___closed__0": {
+      "module": "Flac/Native/Crc.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Decode_maxStepTasks": {
+      "module": "Flac/Native/Decode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Decode_minFrameBytes": {
+      "module": "Flac/Native/Decode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Decode_parThreshold": {
+      "module": "Flac/Native/Decode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Decode_readRiceSeqScan___closed__0": {
+      "module": "Flac/Native/Decode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Decode_readRice___closed__0": {
+      "module": "Flac/Native/Decode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Decode_stepChunkSize": {
+      "module": "Flac/Native/Decode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Decode_syncWindow": {
+      "module": "Flac/Native/Decode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushSIntSeg___closed__0": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushUtf8___closed__0": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushUtf8___closed__1": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushUtf8___closed__10": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushUtf8___closed__2": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushUtf8___closed__3": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushUtf8___closed__4": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushUtf8___closed__5": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushUtf8___closed__6": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushUtf8___closed__7": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushUtf8___closed__8": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Emit_W_pushUtf8___closed__9": {
+      "module": "Flac/Native/Emit.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushRice___closed__0": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushUtf8___closed__0": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushUtf8___closed__1": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushUtf8___closed__10": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushUtf8___closed__2": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushUtf8___closed__3": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushUtf8___closed__4": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushUtf8___closed__5": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushUtf8___closed__6": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushUtf8___closed__7": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushUtf8___closed__8": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_BitWriter_pushUtf8___closed__9": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_encodePcm16___closed__0": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_encodePcm16___closed__1": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_encodePcm16___closed__2": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_encodePcm16___closed__3": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_encodePcm16___closed__4": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Encode_sampleAt___closed__0": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Fixed_restore___closed__1": {
+      "module": "Flac/Native/Fixed.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Frame_headerCore___closed__0": {
+      "module": "Flac/Native/Frame.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Frame_headerCore___closed__1": {
+      "module": "Flac/Native/Frame.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Frame_headerCore___closed__2": {
+      "module": "Flac/Native/Frame.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Frame_headerCore___closed__3": {
+      "module": "Flac/Native/Frame.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Frame_headerCore___closed__4": {
+      "module": "Flac/Native/Frame.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Frame_instReprFields_repr___redArg___closed__12": {
+      "module": "Flac/Native/Frame.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Frame_instReprFields_repr___redArg___closed__15": {
+      "module": "Flac/Native/Frame.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Frame_instReprFields_repr___redArg___closed__19": {
+      "module": "Flac/Native/Frame.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Frame_instReprFields_repr___redArg___closed__20": {
+      "module": "Flac/Native/Frame.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Frame_instReprFields_repr___redArg___closed__7": {
+      "module": "Flac/Native/Frame.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Heuristics_clampSInt___closed__0": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Heuristics_levinson___boxed__const__1": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Heuristics_lpcMaxOrder": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Heuristics_pickLpcOrder___closed__0": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Heuristics_quantizeCoefs___closed__0": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Heuristics_quantizeCoefs___closed__1": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Heuristics_quantizeCoefs___closed__1___boxed__const__1": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Lpc_dot___closed__0": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Lpc_restoreAux___closed__0": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Md5_md5___closed__0": {
+      "module": "Flac/Native/Md5.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Md5_md5___closed__0___boxed__const__1": {
+      "module": "Flac/Native/Md5.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Md5_md5___closed__0___boxed__const__2": {
+      "module": "Flac/Native/Md5.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Md5_md5___closed__1": {
+      "module": "Flac/Native/Md5.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Md5_md5___closed__1___boxed__const__1": {
+      "module": "Flac/Native/Md5.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Md5_md5___closed__2": {
+      "module": "Flac/Native/Md5.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Md5_md5___closed__2___boxed__const__1": {
+      "module": "Flac/Native/Md5.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Rice_instReprMethod_repr___closed__4": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "module-init"
+    },
+    "_init_lp_vinyl_Flac_Rice_instReprResidualCfg_repr___redArg___closed__10": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Rice_instReprResidualCfg_repr___redArg___closed__13": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Rice_instReprResidualCfg_repr___redArg___closed__15": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Rice_instReprResidualCfg_repr___redArg___closed__16": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Rice_instReprResidualCfg_repr___redArg___closed__7": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Rice_unzigzag___closed__0": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Rice_zigzag___closed__0": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stereo_decodeLS___lam__0___closed__0": {
+      "module": "Flac/Native/Stereo.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stereo_mid___lam__0___closed__0": {
+      "module": "Flac/Native/Stereo.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_Audio_numSamples___closed__0": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_decodeAmpl": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_decodeFloor": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_instReprInfo_repr___redArg___closed__14": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Stream_instReprInfo_repr___redArg___closed__19": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Stream_instReprInfo_repr___redArg___closed__22": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Stream_instReprInfo_repr___redArg___closed__24": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Stream_instReprInfo_repr___redArg___closed__25": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Stream_instReprInfo_repr___redArg___closed__7": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_Flac_Stream_pcmWindow": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_writeStreamInfo___closed__0": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_writeStream___closed__0": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_writeStream___closed__1": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_writeStream___closed__2": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_writeStream___closed__3": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_writeStream___closed__4": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_writeStream___closed__5": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Stream_writeStream___closed__6": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Subframe_instDecidableValid___lam__0___closed__0": {
+      "module": "Flac/Native/Subframe.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Subframe_write___closed__0": {
+      "module": "Flac/Native/Subframe.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Subframe_write___closed__1": {
+      "module": "Flac/Native/Subframe.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_Utf8Num_write___closed__0": {
+      "module": "Flac/Native/Utf8Num.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_pcm16Row___closed__0": {
+      "module": "Flac/Native/Codec.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_Flac_sInt16___closed__0": {
+      "module": "Flac/Native/Codec.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_List_mapTR_loop___at___00Flac_Stream_interleave_spec__0___closed__0": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_List_mapTR_loop___at___00List_mapTR_loop___at___00Flac_Fixed_restore_spec__0_spec__0___closed__0": {
+      "module": "Flac/Native/Fixed.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl_List_repr___at___00Flac_Rice_instReprResidualCfg_repr_spec__0___redArg___closed__7": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl_List_repr___at___00Flac_Rice_instReprResidualCfg_repr_spec__0___redArg___closed__8": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_ff0": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_ff0___closed__0": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_ff1": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_ff1___closed__0": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_ff2": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_ff2___closed__0": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedPartitionSums___closed__0": {
+      "module": "Flac/Native/Encode.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_f0": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_f0___closed__0": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_f1": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_f1___closed__0": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_f2": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_f2___closed__0": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Init_Data_List_Impl_0__List_flatMapTR_go___at___00Flac_Md5_md5Hex_spec__0___lam__0___closed__1": {
+      "module": "Flac/Native/Md5.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__0___redArg___boxed__const__1": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "_init_lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_welchF_spec__0___redArg___closed__0": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
     "initialize_vinyl_Flac_Native_Bits": {
       "module": "Flac/Native/Bits.c",
       "tag": "has-standalone-body"
@@ -191,7 +703,7 @@
     },
     "lp_vinyl_Flac_Bits_BitReader_accBytes": {
       "module": "Flac/Native/Reader.c",
-      "tag": "inline-elided"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Bits_BitReader_accBytes___boxed": {
       "module": "Flac/Native/Reader.c",
@@ -199,7 +711,7 @@
     },
     "lp_vinyl_Flac_Bits_BitReader_bit": {
       "module": "Flac/Native/Reader.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Bits_BitReader_bitFast": {
       "module": "Flac/Native/Reader.c",
@@ -215,7 +727,7 @@
     },
     "lp_vinyl_Flac_Bits_BitReader_extractBits": {
       "module": "Flac/Native/Reader.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Bits_BitReader_extractBits3": {
       "module": "Flac/Native/Reader.c",
@@ -255,7 +767,7 @@
     },
     "lp_vinyl_Flac_Bits_BitReader_readUnary": {
       "module": "Flac/Native/Reader.c",
-      "tag": "csimp-superseded"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Bits_BitReader_readUnaryGo": {
       "module": "Flac/Native/Reader.c",
@@ -279,7 +791,7 @@
     },
     "lp_vinyl_Flac_Bits_BitReader_scanOne": {
       "module": "Flac/Native/Reader.c",
-      "tag": "inline-elided"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Bits_BitReader_scanOne___boxed": {
       "module": "Flac/Native/Reader.c",
@@ -363,7 +875,7 @@
     },
     "lp_vinyl_Flac_Bits_instDecidableFitsSInt___boxed": {
       "module": "Flac/Native/Bits.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Bits_p2": {
       "module": "Flac/Native/Bits.c",
@@ -387,7 +899,7 @@
     },
     "lp_vinyl_Flac_Bits_pow2Table___lam__0___boxed": {
       "module": "Flac/Native/Bits.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Bits_readBits": {
       "module": "Flac/Native/Bits.c",
@@ -439,7 +951,7 @@
     },
     "lp_vinyl_Flac_Bits_shiftDown___boxed": {
       "module": "Flac/Native/Bits.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Bits_shiftUp": {
       "module": "Flac/Native/Bits.c",
@@ -451,11 +963,11 @@
     },
     "lp_vinyl_Flac_Bits_withConsumed": {
       "module": "Flac/Native/Bits.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Bits_withConsumed___redArg": {
       "module": "Flac/Native/Bits.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Bits_wrapSInt": {
       "module": "Flac/Native/Bits.c",
@@ -491,7 +1003,7 @@
     },
     "lp_vinyl_Flac_Crc_crc16List": {
       "module": "Flac/Native/Crc.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Crc_crc16List___boxed": {
       "module": "Flac/Native/Crc.c",
@@ -511,7 +1023,7 @@
     },
     "lp_vinyl_Flac_Crc_crc16Table___lam__0___boxed": {
       "module": "Flac/Native/Crc.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Crc_crc16Update": {
       "module": "Flac/Native/Crc.c",
@@ -539,7 +1051,7 @@
     },
     "lp_vinyl_Flac_Crc_crc8List": {
       "module": "Flac/Native/Crc.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Crc_crc8List___boxed": {
       "module": "Flac/Native/Crc.c",
@@ -559,7 +1071,7 @@
     },
     "lp_vinyl_Flac_Crc_crc8Table___lam__0___boxed": {
       "module": "Flac/Native/Crc.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Crc_crc8Update": {
       "module": "Flac/Native/Crc.c",
@@ -595,7 +1107,7 @@
     },
     "lp_vinyl_Flac_Decode_byteStepAt___lam__0___boxed": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Decode_byteStepChunk": {
       "module": "Flac/Native/Decode.c",
@@ -655,7 +1167,7 @@
     },
     "lp_vinyl_Flac_Decode_findByteStep": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_findByteStep___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -663,7 +1175,7 @@
     },
     "lp_vinyl_Flac_Decode_findByteStep___redArg": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Decode_findByteStep___redArg___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -671,7 +1183,7 @@
     },
     "lp_vinyl_Flac_Decode_findStep": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_findStep___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -679,7 +1191,7 @@
     },
     "lp_vinyl_Flac_Decode_findStep___redArg": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Decode_findStep___redArg___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -691,7 +1203,7 @@
     },
     "lp_vinyl_Flac_Decode_frameCostTotalA": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_outCapacity": {
       "module": "Flac/Native/Decode.c",
@@ -707,7 +1219,7 @@
     },
     "lp_vinyl_Flac_Decode_readBytesSteps": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_readBytesStepsB": {
       "module": "Flac/Native/Decode.c",
@@ -741,6 +1253,10 @@
       "module": "Flac/Native/Decode.c",
       "tag": "has-standalone-body"
     },
+    "lp_vinyl_Flac_Decode_readContsMin": {
+      "module": "Flac/Native/Decode.c",
+      "tag": "has-standalone-body"
+    },
     "lp_vinyl_Flac_Decode_readFields": {
       "module": "Flac/Native/Decode.c",
       "tag": "has-standalone-body"
@@ -755,11 +1271,11 @@
     },
     "lp_vinyl_Flac_Decode_readFrames": {
       "module": "Flac/Native/Decode.c",
-      "tag": "csimp-superseded"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_readFramesAt": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_readFramesAt___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -767,7 +1283,7 @@
     },
     "lp_vinyl_Flac_Decode_readFramesFast": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_readFramesFastB": {
       "module": "Flac/Native/Decode.c",
@@ -779,7 +1295,7 @@
     },
     "lp_vinyl_Flac_Decode_readFramesSteps": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_readFramesStepsB": {
       "module": "Flac/Native/Decode.c",
@@ -851,11 +1367,11 @@
     },
     "lp_vinyl_Flac_Decode_readRice": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_readRiceNat": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_readRiceNat___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -863,7 +1379,7 @@
     },
     "lp_vinyl_Flac_Decode_readRiceSeqA": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_readRiceSeqA___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -879,7 +1395,7 @@
     },
     "lp_vinyl_Flac_Decode_readRiceSeqGo": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_readRiceSeqGo___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -919,7 +1435,7 @@
     },
     "lp_vinyl_Flac_Decode_readSIntSeqA": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_readSIntSeqA___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -995,7 +1511,7 @@
     },
     "lp_vinyl_Flac_Decode_sliceBytes": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Decode_sliceBytes___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -1395,7 +1911,7 @@
     },
     "lp_vinyl_Flac_Encode_BitWriter_pushRice": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_BitWriter_pushRiceFolded": {
       "module": "Flac/Native/Encode.c",
@@ -1463,7 +1979,7 @@
     },
     "lp_vinyl_Flac_Encode_StereoMode_ctorElim": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Encode_StereoMode_ctorElim___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1479,7 +1995,7 @@
     },
     "lp_vinyl_Flac_Encode_StereoMode_ctorIdx": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Encode_StereoMode_ctorIdx___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1487,7 +2003,7 @@
     },
     "lp_vinyl_Flac_Encode_StereoMode_independent_elim": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_StereoMode_independent_elim___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1503,7 +2019,7 @@
     },
     "lp_vinyl_Flac_Encode_StereoMode_leftSide_elim": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_StereoMode_leftSide_elim___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1519,7 +2035,7 @@
     },
     "lp_vinyl_Flac_Encode_StereoMode_midSide_elim": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_StereoMode_midSide_elim___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1535,7 +2051,7 @@
     },
     "lp_vinyl_Flac_Encode_StereoMode_ofNat": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Encode_StereoMode_ofNat___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1543,7 +2059,7 @@
     },
     "lp_vinyl_Flac_Encode_StereoMode_rightSide_elim": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_StereoMode_rightSide_elim___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1559,7 +2075,7 @@
     },
     "lp_vinyl_Flac_Encode_StereoMode_toCtorIdx": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Encode_StereoMode_toCtorIdx___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1567,7 +2083,7 @@
     },
     "lp_vinyl_Flac_Encode_SubPlan_constant_elim": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_SubPlan_constant_elim___redArg": {
       "module": "Flac/Native/Encode.c",
@@ -1575,7 +2091,7 @@
     },
     "lp_vinyl_Flac_Encode_SubPlan_ctorElim": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Encode_SubPlan_ctorElim___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1587,7 +2103,7 @@
     },
     "lp_vinyl_Flac_Encode_SubPlan_ctorIdx": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Encode_SubPlan_ctorIdx___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1595,7 +2111,7 @@
     },
     "lp_vinyl_Flac_Encode_SubPlan_fixed_elim": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_SubPlan_fixed_elim___redArg": {
       "module": "Flac/Native/Encode.c",
@@ -1603,7 +2119,7 @@
     },
     "lp_vinyl_Flac_Encode_SubPlan_lpc_elim": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_SubPlan_lpc_elim___redArg": {
       "module": "Flac/Native/Encode.c",
@@ -1627,7 +2143,7 @@
     },
     "lp_vinyl_Flac_Encode_SubPlan_verbatim_elim": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_SubPlan_verbatim_elim___redArg": {
       "module": "Flac/Native/Encode.c",
@@ -1647,7 +2163,7 @@
     },
     "lp_vinyl_Flac_Encode_channelSeg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_channelSegO": {
       "module": "Flac/Native/Encode.c",
@@ -1667,7 +2183,7 @@
     },
     "lp_vinyl_Flac_Encode_choosePlan": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_choosePlanF": {
       "module": "Flac/Native/Encode.c",
@@ -1715,7 +2231,7 @@
     },
     "lp_vinyl_Flac_Encode_encodePcm16___lam__0___boxed": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Encode_fastChooser": {
       "module": "Flac/Native/Encode.c",
@@ -1763,7 +2279,7 @@
     },
     "lp_vinyl_Flac_Encode_instDecidableEqStereoMode": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Encode_instDecidableEqStereoMode___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1771,7 +2287,7 @@
     },
     "lp_vinyl_Flac_Encode_lpcSearchF": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_lpcSearchF___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1787,7 +2303,7 @@
     },
     "lp_vinyl_Flac_Encode_planOf": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_pushContentOf": {
       "module": "Flac/Native/Encode.c",
@@ -1835,11 +2351,11 @@
     },
     "lp_vinyl_Flac_Encode_pushRiceRange": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_pushRiceRangeF": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_pushRiceRangeF___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1847,7 +2363,7 @@
     },
     "lp_vinyl_Flac_Encode_pushRiceRangeF___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Encode_pushRiceRangeF___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1859,7 +2375,7 @@
     },
     "lp_vinyl_Flac_Encode_pushRiceRange___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Encode_pushRiceRange___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1923,7 +2439,7 @@
     },
     "lp_vinyl_Flac_Encode_sumAbsArr": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Encode_sumAbsArr___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -1955,6 +2471,14 @@
     },
     "lp_vinyl_Flac_Fixed_diff1": {
       "module": "Flac/Native/Fixed.c",
+      "tag": "csimp-superseded"
+    },
+    "lp_vinyl_Flac_Fixed_diff1Acc": {
+      "module": "Flac/Native/Fixed.c",
+      "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Fixed_diff1TR": {
+      "module": "Flac/Native/Fixed.c",
       "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Fixed_diffN": {
@@ -1967,7 +2491,7 @@
     },
     "lp_vinyl_Flac_Fixed_residual": {
       "module": "Flac/Native/Fixed.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Fixed_residual___boxed": {
       "module": "Flac/Native/Fixed.c",
@@ -2011,7 +2535,7 @@
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_ctorElim": {
       "module": "Flac/Native/Frame.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_ctorElim___boxed": {
       "module": "Flac/Native/Frame.c",
@@ -2023,7 +2547,7 @@
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_ctorIdx": {
       "module": "Flac/Native/Frame.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_ctorIdx___boxed": {
       "module": "Flac/Native/Frame.c",
@@ -2031,7 +2555,7 @@
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_independent_elim": {
       "module": "Flac/Native/Frame.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_independent_elim___redArg": {
       "module": "Flac/Native/Frame.c",
@@ -2039,7 +2563,7 @@
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_leftSide_elim": {
       "module": "Flac/Native/Frame.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_leftSide_elim___redArg": {
       "module": "Flac/Native/Frame.c",
@@ -2047,7 +2571,7 @@
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_midSide_elim": {
       "module": "Flac/Native/Frame.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_midSide_elim___redArg": {
       "module": "Flac/Native/Frame.c",
@@ -2059,7 +2583,7 @@
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_rightSide_elim": {
       "module": "Flac/Native/Frame.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Frame_ChannelAsg_rightSide_elim___redArg": {
       "module": "Flac/Native/Frame.c",
@@ -2099,7 +2623,7 @@
     },
     "lp_vinyl_Flac_Frame_instDecidableEqFields": {
       "module": "Flac/Native/Frame.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Frame_instDecidableEqFields___boxed": {
       "module": "Flac/Native/Frame.c",
@@ -2107,7 +2631,7 @@
     },
     "lp_vinyl_Flac_Frame_instDecidableEqFields_decEq": {
       "module": "Flac/Native/Frame.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Frame_instDecidableEqFields_decEq___boxed": {
       "module": "Flac/Native/Frame.c",
@@ -2127,7 +2651,7 @@
     },
     "lp_vinyl_Flac_Frame_instDecidableValid___lam__0___boxed": {
       "module": "Flac/Native/Frame.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Frame_instDecidableValid___lam__1": {
       "module": "Flac/Native/Frame.c",
@@ -2135,11 +2659,11 @@
     },
     "lp_vinyl_Flac_Frame_instDecidableValid___lam__1___boxed": {
       "module": "Flac/Native/Frame.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Frame_instReprFields_repr": {
       "module": "Flac/Native/Frame.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Frame_instReprFields_repr___boxed": {
       "module": "Flac/Native/Frame.c",
@@ -2419,7 +2943,7 @@
     },
     "lp_vinyl_Flac_Heuristics_sumAbs": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Heuristics_sumAbsStride": {
       "module": "Flac/Native/Heuristics.c",
@@ -2523,7 +3047,7 @@
     },
     "lp_vinyl_Flac_Lpc_dotAGo": {
       "module": "Flac/Native/Lpc.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Lpc_dotAGo___boxed": {
       "module": "Flac/Native/Lpc.c",
@@ -2531,7 +3055,7 @@
     },
     "lp_vinyl_Flac_Lpc_dotAGo___redArg": {
       "module": "Flac/Native/Lpc.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Lpc_dotAGo___redArg___boxed": {
       "module": "Flac/Native/Lpc.c",
@@ -2567,7 +3091,23 @@
     },
     "lp_vinyl_Flac_Lpc_residualAux": {
       "module": "Flac/Native/Lpc.c",
+      "tag": "csimp-superseded"
+    },
+    "lp_vinyl_Flac_Lpc_residualAuxAcc": {
+      "module": "Flac/Native/Lpc.c",
       "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Lpc_residualAuxAcc___boxed": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "boxed-wrapper"
+    },
+    "lp_vinyl_Flac_Lpc_residualAuxTR": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Lpc_residualAuxTR___boxed": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "boxed-wrapper"
     },
     "lp_vinyl_Flac_Lpc_residualAux___boxed": {
       "module": "Flac/Native/Lpc.c",
@@ -2627,7 +3167,7 @@
     },
     "lp_vinyl_Flac_Rice_Method_ctorElim": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_Method_ctorElim___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2643,7 +3183,7 @@
     },
     "lp_vinyl_Flac_Rice_Method_ctorIdx": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_Method_ctorIdx___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2667,7 +3207,7 @@
     },
     "lp_vinyl_Flac_Rice_Method_ofNat": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_Method_ofNat___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2683,7 +3223,7 @@
     },
     "lp_vinyl_Flac_Rice_Method_rice4_elim": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Rice_Method_rice4_elim___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2699,7 +3239,7 @@
     },
     "lp_vinyl_Flac_Rice_Method_rice5_elim": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Rice_Method_rice5_elim___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2715,7 +3255,7 @@
     },
     "lp_vinyl_Flac_Rice_Method_toCtorIdx": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_Method_toCtorIdx___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2723,7 +3263,7 @@
     },
     "lp_vinyl_Flac_Rice_Partition_ctorElim": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_Partition_ctorElim___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2735,7 +3275,7 @@
     },
     "lp_vinyl_Flac_Rice_Partition_ctorIdx": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_Partition_ctorIdx___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2743,7 +3283,7 @@
     },
     "lp_vinyl_Flac_Rice_Partition_escape_elim": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Rice_Partition_escape_elim___redArg": {
       "module": "Flac/Native/Rice.c",
@@ -2751,7 +3291,7 @@
     },
     "lp_vinyl_Flac_Rice_Partition_rice_elim": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Rice_Partition_rice_elim___redArg": {
       "module": "Flac/Native/Rice.c",
@@ -2759,15 +3299,15 @@
     },
     "lp_vinyl_Flac_Rice_chunkBySizes": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Rice_chunkBySizes___redArg": {
       "module": "Flac/Native/Rice.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Rice_instDecidableEqMethod": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_instDecidableEqMethod___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2775,7 +3315,7 @@
     },
     "lp_vinyl_Flac_Rice_instDecidableEqPartition": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_instDecidableEqPartition___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2783,7 +3323,7 @@
     },
     "lp_vinyl_Flac_Rice_instDecidableEqPartition_decEq": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_instDecidableEqPartition_decEq___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2807,7 +3347,7 @@
     },
     "lp_vinyl_Flac_Rice_instDecidableValid__1___lam__0___boxed": {
       "module": "Flac/Native/Rice.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Rice_instDecidableValid___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2815,7 +3355,7 @@
     },
     "lp_vinyl_Flac_Rice_instReprMethod_repr": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_instReprMethod_repr___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2823,7 +3363,7 @@
     },
     "lp_vinyl_Flac_Rice_instReprPartition_repr": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_instReprPartition_repr___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2831,7 +3371,7 @@
     },
     "lp_vinyl_Flac_Rice_instReprResidualCfg_repr": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Rice_instReprResidualCfg_repr___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2887,7 +3427,23 @@
     },
     "lp_vinyl_Flac_Rice_readRiceSeq": {
       "module": "Flac/Native/Rice.c",
+      "tag": "csimp-superseded"
+    },
+    "lp_vinyl_Flac_Rice_readRiceSeqAcc": {
+      "module": "Flac/Native/Rice.c",
       "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Rice_readRiceSeqAcc___boxed": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "lp_vinyl_Flac_Rice_readRiceSeqTR": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Rice_readRiceSeqTR___boxed": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
     },
     "lp_vinyl_Flac_Rice_readRiceSeq___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2899,7 +3455,23 @@
     },
     "lp_vinyl_Flac_Rice_readSIntSeq": {
       "module": "Flac/Native/Rice.c",
+      "tag": "csimp-superseded"
+    },
+    "lp_vinyl_Flac_Rice_readSIntSeqAcc": {
+      "module": "Flac/Native/Rice.c",
       "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Rice_readSIntSeqAcc___boxed": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "lp_vinyl_Flac_Rice_readSIntSeqTR": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Rice_readSIntSeqTR___boxed": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
     },
     "lp_vinyl_Flac_Rice_readSIntSeq___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -2995,7 +3567,7 @@
     },
     "lp_vinyl_Flac_Stereo_decodeLS___lam__0___boxed": {
       "module": "Flac/Native/Stereo.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Stereo_decodeMSL": {
       "module": "Flac/Native/Stereo.c",
@@ -3015,7 +3587,7 @@
     },
     "lp_vinyl_Flac_Stereo_decodeMSL___lam__0___boxed": {
       "module": "Flac/Native/Stereo.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Stereo_decodeMSR": {
       "module": "Flac/Native/Stereo.c",
@@ -3035,7 +3607,7 @@
     },
     "lp_vinyl_Flac_Stereo_decodeMSR___lam__0___boxed": {
       "module": "Flac/Native/Stereo.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Stereo_decodeRS": {
       "module": "Flac/Native/Stereo.c",
@@ -3055,7 +3627,7 @@
     },
     "lp_vinyl_Flac_Stereo_decodeRS___lam__0___boxed": {
       "module": "Flac/Native/Stereo.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Stereo_mid": {
       "module": "Flac/Native/Stereo.c",
@@ -3075,7 +3647,7 @@
     },
     "lp_vinyl_Flac_Stereo_mid___lam__0___boxed": {
       "module": "Flac/Native/Stereo.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Stereo_side": {
       "module": "Flac/Native/Stereo.c",
@@ -3103,9 +3675,17 @@
     },
     "lp_vinyl_Flac_Stream_Unchecked_encode": {
       "module": "Flac/Native/Stream.c",
-      "tag": "csimp-superseded"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Stream_chunkChannels": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "csimp-superseded"
+    },
+    "lp_vinyl_Flac_Stream_chunkChannelsAcc": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Stream_chunkChannelsTR": {
       "module": "Flac/Native/Stream.c",
       "tag": "has-standalone-body"
     },
@@ -3131,11 +3711,11 @@
     },
     "lp_vinyl_Flac_Stream_frameCostTotal": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Stream_instDecidableEqInfo": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Stream_instDecidableEqInfo___boxed": {
       "module": "Flac/Native/Stream.c",
@@ -3143,7 +3723,7 @@
     },
     "lp_vinyl_Flac_Stream_instDecidableEqInfo_decEq": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Stream_instDecidableEqInfo_decEq___boxed": {
       "module": "Flac/Native/Stream.c",
@@ -3163,7 +3743,7 @@
     },
     "lp_vinyl_Flac_Stream_instDecidableWellFormed___lam__0___boxed": {
       "module": "Flac/Native/Stream.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Stream_instDecidableWellFormed___lam__1": {
       "module": "Flac/Native/Stream.c",
@@ -3171,11 +3751,11 @@
     },
     "lp_vinyl_Flac_Stream_instDecidableWellFormed___lam__1___boxed": {
       "module": "Flac/Native/Stream.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Stream_instReprInfo_repr": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Stream_instReprInfo_repr___boxed": {
       "module": "Flac/Native/Stream.c",
@@ -3187,7 +3767,7 @@
     },
     "lp_vinyl_Flac_Stream_interleave": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Stream_md5Nat": {
       "module": "Flac/Native/Stream.c",
@@ -3215,11 +3795,11 @@
     },
     "lp_vinyl_Flac_Stream_pcmBytesRange___boxed": {
       "module": "Flac/Native/Stream.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Stream_pcmBytes___boxed": {
       "module": "Flac/Native/Stream.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Stream_pcmMonoGo": {
       "module": "Flac/Native/Stream.c",
@@ -3279,7 +3859,7 @@
     },
     "lp_vinyl_Flac_Stream_readFramesAcc": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Stream_readFramesB": {
       "module": "Flac/Native/Stream.c",
@@ -3299,7 +3879,7 @@
     },
     "lp_vinyl_Flac_Stream_readFramesTR": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Stream_readFrames___boxed": {
       "module": "Flac/Native/Stream.c",
@@ -3335,7 +3915,7 @@
     },
     "lp_vinyl_Flac_Stream_tailAll": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Stream_takeAll": {
       "module": "Flac/Native/Stream.c",
@@ -3343,11 +3923,27 @@
     },
     "lp_vinyl_Flac_Stream_verbatimChooser": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Stream_writeFrames": {
       "module": "Flac/Native/Stream.c",
+      "tag": "csimp-superseded"
+    },
+    "lp_vinyl_Flac_Stream_writeFramesAcc": {
+      "module": "Flac/Native/Stream.c",
       "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Stream_writeFramesAcc___boxed": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "boxed-wrapper"
+    },
+    "lp_vinyl_Flac_Stream_writeFramesTR": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Stream_writeFramesTR___boxed": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "boxed-wrapper"
     },
     "lp_vinyl_Flac_Stream_writeFrames___boxed": {
       "module": "Flac/Native/Stream.c",
@@ -3367,7 +3963,7 @@
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_constant_elim": {
       "module": "Flac/Native/Subframe.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_constant_elim___redArg": {
       "module": "Flac/Native/Subframe.c",
@@ -3375,7 +3971,7 @@
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_ctorElim": {
       "module": "Flac/Native/Subframe.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_ctorElim___boxed": {
       "module": "Flac/Native/Subframe.c",
@@ -3387,7 +3983,7 @@
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_ctorIdx": {
       "module": "Flac/Native/Subframe.c",
-      "tag": "has-standalone-body"
+      "tag": "derived-instance"
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_ctorIdx___boxed": {
       "module": "Flac/Native/Subframe.c",
@@ -3395,7 +3991,7 @@
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_fixed_elim": {
       "module": "Flac/Native/Subframe.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_fixed_elim___redArg": {
       "module": "Flac/Native/Subframe.c",
@@ -3403,7 +3999,7 @@
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_lpc_elim": {
       "module": "Flac/Native/Subframe.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_lpc_elim___redArg": {
       "module": "Flac/Native/Subframe.c",
@@ -3419,7 +4015,7 @@
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_verbatim_elim": {
       "module": "Flac/Native/Subframe.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_Subframe_SubframeCfg_verbatim_elim___redArg": {
       "module": "Flac/Native/Subframe.c",
@@ -3447,7 +4043,7 @@
     },
     "lp_vinyl_Flac_Subframe_instDecidableValid___lam__0___boxed": {
       "module": "Flac/Native/Subframe.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Subframe_read": {
       "module": "Flac/Native/Subframe.c",
@@ -3483,13 +4079,25 @@
     },
     "lp_vinyl_Flac_Unchecked_encode": {
       "module": "Flac/Native/Codec.c",
-      "tag": "csimp-superseded"
+      "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Utf8Num_contsFloor": {
+      "module": "Flac/Native/Utf8Num.c",
+      "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Utf8Num_contsFloor___boxed": {
+      "module": "Flac/Native/Utf8Num.c",
+      "tag": "boxed-wrapper"
     },
     "lp_vinyl_Flac_Utf8Num_read": {
       "module": "Flac/Native/Utf8Num.c",
       "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_Utf8Num_readConts": {
+      "module": "Flac/Native/Utf8Num.c",
+      "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Utf8Num_readContsMin": {
       "module": "Flac/Native/Utf8Num.c",
       "tag": "has-standalone-body"
     },
@@ -3519,7 +4127,7 @@
     },
     "lp_vinyl_Flac_byteListOfPcm16": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_decode": {
       "module": "Flac/Native/Decode.c",
@@ -3527,7 +4135,7 @@
     },
     "lp_vinyl_Flac_decodePcm16": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_decodePcm16A": {
       "module": "Flac/Native/Codec.c",
@@ -3559,7 +4167,7 @@
     },
     "lp_vinyl_Flac_deinterleaveN___lam__0": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_Flac_encode": {
       "module": "Flac/Native/Codec.c",
@@ -3567,7 +4175,7 @@
     },
     "lp_vinyl_Flac_encodeChecked": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_encodeCheckedCfg": {
       "module": "Flac/Native/Codec.c",
@@ -3575,7 +4183,7 @@
     },
     "lp_vinyl_Flac_encodePcm16": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_encodePcm16Cfg": {
       "module": "Flac/Native/Codec.c",
@@ -3587,7 +4195,7 @@
     },
     "lp_vinyl_Flac_encodePcm16Fast___boxed": {
       "module": "Flac/Native/Codec.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_Flac_instDecidablePcm16ShapeOk": {
       "module": "Flac/Native/Codec.c",
@@ -3599,11 +4207,11 @@
     },
     "lp_vinyl_Flac_interleave": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_interleaveN": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_interleaveN___boxed": {
       "module": "Flac/Native/Codec.c",
@@ -3627,7 +4235,7 @@
     },
     "lp_vinyl_Flac_pcm16Fast": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl_Flac_pcm16FastA": {
       "module": "Flac/Native/Codec.c",
@@ -3723,7 +4331,7 @@
     },
     "lp_vinyl_List_foldl___at___00Flac_Crc_crc16List_spec__0": {
       "module": "Flac/Native/Crc.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_foldl___at___00Flac_Crc_crc16List_spec__0___boxed": {
       "module": "Flac/Native/Crc.c",
@@ -3739,7 +4347,7 @@
     },
     "lp_vinyl_List_foldl___at___00Flac_Crc_crc8List_spec__0": {
       "module": "Flac/Native/Crc.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_foldl___at___00Flac_Crc_crc8List_spec__0___boxed": {
       "module": "Flac/Native/Crc.c",
@@ -3756,6 +4364,14 @@
     "lp_vinyl_List_foldl___at___00Flac_Decode_syncCandidates_spec__1": {
       "module": "Flac/Native/Decode.c",
       "tag": "has-standalone-body"
+    },
+    "lp_vinyl_List_foldl___at___00Flac_Heuristics_partitionSearch_spec__0": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "has-standalone-body"
+    },
+    "lp_vinyl_List_foldl___at___00Flac_Heuristics_partitionSearch_spec__0___boxed": {
+      "module": "Flac/Native/Heuristics.c",
+      "tag": "boxed-wrapper"
     },
     "lp_vinyl_List_foldl___at___00Flac_Heuristics_partitionSearch_spec__2": {
       "module": "Flac/Native/Heuristics.c",
@@ -3775,7 +4391,7 @@
     },
     "lp_vinyl_List_foldl___at___00Flac_Heuristics_sumAbs_spec__0": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_foldl___at___00Flac_Heuristics_sumAbs_spec__0___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -3795,15 +4411,15 @@
     },
     "lp_vinyl_List_foldl___at___00List_foldl___at___00Std_Format_joinSep___at___00List_repr___at___00Flac_Rice_instReprResidualCfg_repr_spec__0_spec__0_spec__1_spec__2": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_foldl___at___00Std_Format_joinSep___at___00List_repr___at___00Flac_Rice_instReprResidualCfg_repr_spec__0_spec__0_spec__1": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_foldl___at___00__private_Flac_Native_Heuristics_0__Flac_Heuristics_pickMin_spec__0": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_foldl___at___00__private_Flac_Native_Heuristics_0__Flac_Heuristics_pickMin_spec__0___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -3817,14 +4433,6 @@
       "module": "Flac/Native/Heuristics.c",
       "tag": "boxed-wrapper"
     },
-    "lp_vinyl_List_foldr___at___00List_sum___at___00Flac_Heuristics_partitionSearch_spec__0_spec__0": {
-      "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
-    },
-    "lp_vinyl_List_foldr___at___00List_sum___at___00Flac_Heuristics_partitionSearch_spec__0_spec__0___boxed": {
-      "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
-    },
     "lp_vinyl_List_foldr___at___00List_sum___at___00Flac_Stream_frameCost_spec__1_spec__1": {
       "module": "Flac/Native/Stream.c",
       "tag": "has-standalone-body"
@@ -3835,7 +4443,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Decode_byteStepsPar_spec__1": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Decode_byteStepsPar_spec__1___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -3843,7 +4451,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Decode_byteStepsPar_spec__1___redArg": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Decode_byteStepsPar_spec__1___redArg___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -3851,7 +4459,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Decode_stepsPar_spec__1": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Decode_stepsPar_spec__1___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -3859,7 +4467,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Decode_stepsPar_spec__1___redArg": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Decode_stepsPar_spec__1___redArg___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -3867,7 +4475,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_lpcSearch_spec__1": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_lpcSearch_spec__1___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -3875,7 +4483,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_lpcSearch_spec__1___redArg": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_lpcSearch_spec__1___redArg___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -3883,7 +4491,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_partitionSearch_spec__4": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_partitionSearch_spec__4___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -3891,7 +4499,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_partitionSearch_spec__4___redArg": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_partitionSearch_spec__4___redArg___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -3899,7 +4507,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_quantizeCoefs_spec__1": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_quantizeCoefs_spec__1___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -3907,7 +4515,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_quantizeCoefs_spec__1___redArg": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00Flac_Heuristics_quantizeCoefs_spec__1___redArg___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -3915,7 +4523,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_lpcChoiceF_spec__1": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_lpcChoiceF_spec__1___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -3923,7 +4531,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_lpcChoiceF_spec__1___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_lpcChoiceF_spec__1___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -3931,7 +4539,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionMaxF_spec__0": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionMaxF_spec__0___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -3939,7 +4547,7 @@
     },
     "lp_vinyl_List_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionMaxF_spec__0___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionMaxF_spec__0___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -3955,7 +4563,7 @@
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Decode_byteStepsPar_spec__0___lam__0___boxed": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Decode_decodeOption_spec__0": {
       "module": "Flac/Native/Decode.c",
@@ -3967,7 +4575,7 @@
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Decode_frameCostTotalA_spec__0": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Decode_stepsPar_spec__0": {
       "module": "Flac/Native/Decode.c",
@@ -3979,7 +4587,7 @@
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Decode_stepsPar_spec__0___lam__0___boxed": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Decode_syncCandidates_spec__0": {
       "module": "Flac/Native/Decode.c",
@@ -3991,7 +4599,7 @@
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Decode_syncCandidates_spec__0___lam__0___boxed": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Encode_FramePrep_asg_spec__0": {
       "module": "Flac/Native/Encode.c",
@@ -4011,7 +4619,7 @@
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Encode_encodePcm16_spec__0___lam__0___boxed": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Encode_riceChoices_spec__0": {
       "module": "Flac/Native/Encode.c",
@@ -4075,7 +4683,7 @@
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Stream_frameCostTotal_spec__0": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Stream_frameCost_spec__0": {
       "module": "Flac/Native/Stream.c",
@@ -4083,7 +4691,7 @@
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Stream_interleave_spec__0": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Stream_pcmBytes_spec__0": {
       "module": "Flac/Native/Stream.c",
@@ -4091,7 +4699,7 @@
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Stream_tailAll_spec__0": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_Stream_takeAll_spec__0": {
       "module": "Flac/Native/Stream.c",
@@ -4127,7 +4735,7 @@
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_pcm16Tasks_spec__0___lam__0___boxed": {
       "module": "Flac/Native/Codec.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl_List_mapTR_loop___at___00Flac_pcm16Tasks_spec__1": {
       "module": "Flac/Native/Codec.c",
@@ -4147,7 +4755,7 @@
     },
     "lp_vinyl_List_repr___at___00Flac_Rice_instReprResidualCfg_repr_spec__0": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_List_repr___at___00Flac_Rice_instReprResidualCfg_repr_spec__0___boxed": {
       "module": "Flac/Native/Rice.c",
@@ -4155,14 +4763,6 @@
     },
     "lp_vinyl_List_repr___at___00Flac_Rice_instReprResidualCfg_repr_spec__0___redArg": {
       "module": "Flac/Native/Rice.c",
-      "tag": "boxed-wrapper"
-    },
-    "lp_vinyl_List_sum___at___00Flac_Heuristics_partitionSearch_spec__0": {
-      "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
-    },
-    "lp_vinyl_List_sum___at___00Flac_Heuristics_partitionSearch_spec__0___boxed": {
-      "module": "Flac/Native/Heuristics.c",
       "tag": "boxed-wrapper"
     },
     "lp_vinyl_List_sum___at___00Flac_Stream_frameCost_spec__1": {
@@ -4175,15 +4775,15 @@
     },
     "lp_vinyl_Std_Format_joinSep___at___00List_repr___at___00Flac_Rice_instReprResidualCfg_repr_spec__0_spec__0": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl_Std_Format_joinSep___at___00List_repr___at___00Flac_Rice_instReprResidualCfg_repr_spec__0_spec__0___lam__0": {
       "module": "Flac/Native/Rice.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Bits_0__Flac_Bits_bitsToByteListAcc_match__1_splitter": {
       "module": "Flac/Native/Bits.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Bits_0__Flac_Bits_bitsToByteListAcc_match__1_splitter___redArg": {
       "module": "Flac/Native/Bits.c",
@@ -4191,7 +4791,7 @@
     },
     "lp_vinyl___private_Flac_Native_Bits_0__Flac_Bits_bitsToByteList_match__1_splitter": {
       "module": "Flac/Native/Bits.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Bits_0__Flac_Bits_bitsToByteList_match__1_splitter___redArg": {
       "module": "Flac/Native/Bits.c",
@@ -4199,7 +4799,7 @@
     },
     "lp_vinyl___private_Flac_Native_Bits_0__Flac_Bits_readBits_match__1_splitter": {
       "module": "Flac/Native/Bits.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Bits_0__Flac_Bits_readBits_match__1_splitter___redArg": {
       "module": "Flac/Native/Bits.c",
@@ -4207,7 +4807,7 @@
     },
     "lp_vinyl___private_Flac_Native_Bits_0__Flac_Bits_readUnaryAcc_match__1_splitter": {
       "module": "Flac/Native/Bits.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Bits_0__Flac_Bits_readUnaryAcc_match__1_splitter___redArg": {
       "module": "Flac/Native/Bits.c",
@@ -4215,7 +4815,7 @@
     },
     "lp_vinyl___private_Flac_Native_Bits_0__Flac_Bits_readUnary_match__1_splitter": {
       "module": "Flac/Native/Bits.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Bits_0__Flac_Bits_readUnary_match__1_splitter___redArg": {
       "module": "Flac/Native/Bits.c",
@@ -4223,7 +4823,7 @@
     },
     "lp_vinyl___private_Flac_Native_Codec_0__Flac_deinterleaveAcc_match__1_splitter": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Codec_0__Flac_deinterleaveAcc_match__1_splitter___boxed": {
       "module": "Flac/Native/Codec.c",
@@ -4239,7 +4839,7 @@
     },
     "lp_vinyl___private_Flac_Native_Codec_0__Flac_deinterleaveN_match__1_splitter": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Codec_0__Flac_deinterleaveN_match__1_splitter___boxed": {
       "module": "Flac/Native/Codec.c",
@@ -4255,7 +4855,7 @@
     },
     "lp_vinyl___private_Flac_Native_Codec_0__Flac_pcm16OfByteListAcc_match__1_splitter": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Codec_0__Flac_pcm16OfByteListAcc_match__1_splitter___redArg": {
       "module": "Flac/Native/Codec.c",
@@ -4263,7 +4863,7 @@
     },
     "lp_vinyl___private_Flac_Native_Codec_0__Flac_pcm16OfByteList_match__1_splitter": {
       "module": "Flac/Native/Codec.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Codec_0__Flac_pcm16OfByteList_match__1_splitter___redArg": {
       "module": "Flac/Native/Codec.c",
@@ -4271,7 +4871,7 @@
     },
     "lp_vinyl___private_Flac_Native_Decode_0__Flac_Decode_readFramesAt_match__1_splitter": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Decode_0__Flac_Decode_readFramesAt_match__1_splitter___redArg": {
       "module": "Flac/Native/Decode.c",
@@ -4279,7 +4879,7 @@
     },
     "lp_vinyl___private_Flac_Native_Decode_0__Flac_Decode_readFramesAt_match__3_splitter": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Decode_0__Flac_Decode_readFramesAt_match__3_splitter___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -4295,7 +4895,7 @@
     },
     "lp_vinyl___private_Flac_Native_Decode_0__Flac_Decode_readFramesStepsB_match__1_splitter": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Decode_0__Flac_Decode_readFramesStepsB_match__1_splitter___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -4311,7 +4911,7 @@
     },
     "lp_vinyl___private_Flac_Native_Decode_0__Flac_Decode_readFrames_match__1_splitter": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Decode_0__Flac_Decode_readFrames_match__1_splitter___redArg": {
       "module": "Flac/Native/Decode.c",
@@ -4327,7 +4927,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldHead": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldHead___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4335,7 +4935,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldHead___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldHead___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4343,7 +4943,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldHead_match__1_splitter": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldHead_match__1_splitter___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4355,7 +4955,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldTail": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldTail___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4363,7 +4963,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldTail___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldTail___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4371,7 +4971,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldTail_match__1_splitter": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_fixedFoldTail_match__1_splitter___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4419,7 +5019,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcDotFf": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcDotFf___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4427,7 +5027,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcDotFf___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcDotFf___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4435,7 +5035,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold1": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold1___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4443,7 +5043,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold1___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold1___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4451,7 +5051,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold1_match__1_splitter": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold1_match__1_splitter___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4467,7 +5067,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold2": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold2___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4475,7 +5075,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold2___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold2___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4483,7 +5083,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold3": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold3___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4491,7 +5091,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold3___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold3___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4499,7 +5099,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold4": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold4___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4507,7 +5107,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold4___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold4___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4515,7 +5115,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold5": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold5___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4523,7 +5123,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold5___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold5___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4531,7 +5131,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold6": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold6___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4539,7 +5139,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold6___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold6___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4547,7 +5147,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold7": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold7___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4555,7 +5155,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold7___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold7___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4563,7 +5163,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold8": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold8___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4571,7 +5171,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold8___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFold8___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4579,11 +5179,11 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFoldRange": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFoldRangeS": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFoldRangeS___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4591,7 +5191,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFoldRangeS___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFoldRangeS___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4603,7 +5203,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFoldRange___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFoldRange___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4611,7 +5211,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFoldRange_match__1_splitter": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_lpcFoldRange_match__1_splitter___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4651,7 +5251,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_pushRiceRange_match__1_splitter": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_pushRiceRange_match__1_splitter___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -4675,7 +5275,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_stereoSumsGo_match__1_splitter": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_stereoSumsGo_match__1_splitter___redArg": {
       "module": "Flac/Native/Encode.c",
@@ -4683,7 +5283,7 @@
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_wastedGo_match__1_splitter": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Encode_0__Flac_Encode_wastedGo_match__1_splitter___redArg": {
       "module": "Flac/Native/Encode.c",
@@ -4697,6 +5297,14 @@
       "module": "Flac/Native/Encode.c",
       "tag": "boxed-wrapper"
     },
+    "lp_vinyl___private_Flac_Native_Fixed_0__Flac_Fixed_diff1_match__1_splitter": {
+      "module": "Flac/Native/Fixed.c",
+      "tag": "match-closure"
+    },
+    "lp_vinyl___private_Flac_Native_Fixed_0__Flac_Fixed_diff1_match__1_splitter___redArg": {
+      "module": "Flac/Native/Fixed.c",
+      "tag": "boxed-wrapper"
+    },
     "lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_acorr1": {
       "module": "Flac/Native/Heuristics.c",
       "tag": "has-standalone-body"
@@ -4707,7 +5315,7 @@
     },
     "lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_acorr1_match__1_splitter": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_acorr1_match__1_splitter___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -4731,7 +5339,7 @@
     },
     "lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_acorr3_match__1_splitter": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_acorr3_match__1_splitter___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -4747,7 +5355,7 @@
     },
     "lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_pickMin": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Heuristics_0__Flac_Heuristics_pickMin___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -4769,6 +5377,22 @@
       "module": "Flac/Native/Lpc.c",
       "tag": "boxed-wrapper"
     },
+    "lp_vinyl___private_Flac_Native_Lpc_0__Flac_Lpc_residualAuxAcc_match__1_splitter": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "match-closure"
+    },
+    "lp_vinyl___private_Flac_Native_Lpc_0__Flac_Lpc_residualAuxAcc_match__1_splitter___redArg": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "boxed-wrapper"
+    },
+    "lp_vinyl___private_Flac_Native_Lpc_0__Flac_Lpc_residualAux_match__1_splitter": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "match-closure"
+    },
+    "lp_vinyl___private_Flac_Native_Lpc_0__Flac_Lpc_residualAux_match__1_splitter___redArg": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "boxed-wrapper"
+    },
     "lp_vinyl___private_Flac_Native_Md5_0__Flac_Md5_blockWord": {
       "module": "Flac/Native/Md5.c",
       "tag": "inline-elided"
@@ -4787,7 +5411,7 @@
     },
     "lp_vinyl___private_Flac_Native_Md5_0__Flac_Md5_compress": {
       "module": "Flac/Native/Md5.c",
-      "tag": "has-standalone-body"
+      "tag": "unreachable"
     },
     "lp_vinyl___private_Flac_Native_Md5_0__Flac_Md5_compress___boxed": {
       "module": "Flac/Native/Md5.c",
@@ -4795,7 +5419,7 @@
     },
     "lp_vinyl___private_Flac_Native_Md5_0__Flac_Md5_compress___redArg": {
       "module": "Flac/Native/Md5.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Flac_Native_Md5_0__Flac_Md5_compress___redArg___boxed": {
       "module": "Flac/Native/Md5.c",
@@ -4865,9 +5489,41 @@
       "module": "Flac/Native/Md5.c",
       "tag": "boxed-wrapper"
     },
+    "lp_vinyl___private_Flac_Native_Rice_0__Flac_Rice_readRiceSeq_match__1_splitter": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "match-closure"
+    },
+    "lp_vinyl___private_Flac_Native_Rice_0__Flac_Rice_readRiceSeq_match__1_splitter___redArg": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "lp_vinyl___private_Flac_Native_Rice_0__Flac_Rice_readRiceSeq_match__3_splitter": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "match-closure"
+    },
+    "lp_vinyl___private_Flac_Native_Rice_0__Flac_Rice_readRiceSeq_match__3_splitter___redArg": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "lp_vinyl___private_Flac_Native_Rice_0__Flac_Rice_readRiceSeq_match__5_splitter": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "match-closure"
+    },
+    "lp_vinyl___private_Flac_Native_Rice_0__Flac_Rice_readRiceSeq_match__5_splitter___boxed": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "lp_vinyl___private_Flac_Native_Rice_0__Flac_Rice_readRiceSeq_match__5_splitter___redArg": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
+    "lp_vinyl___private_Flac_Native_Rice_0__Flac_Rice_readRiceSeq_match__5_splitter___redArg___boxed": {
+      "module": "Flac/Native/Rice.c",
+      "tag": "boxed-wrapper"
+    },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_pcmMonoGo_match__1_splitter": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_pcmMonoGo_match__1_splitter___redArg": {
       "module": "Flac/Native/Stream.c",
@@ -4875,7 +5531,7 @@
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_pcmWindows_go_match__1_splitter": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_pcmWindows_go_match__1_splitter___boxed": {
       "module": "Flac/Native/Stream.c",
@@ -4891,7 +5547,7 @@
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_readFramesB_match__1_splitter": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_readFramesB_match__1_splitter___boxed": {
       "module": "Flac/Native/Stream.c",
@@ -4907,7 +5563,7 @@
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_readFrames_match__1_splitter": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_readFrames_match__1_splitter___redArg": {
       "module": "Flac/Native/Stream.c",
@@ -4915,7 +5571,7 @@
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_readFrames_match__3_splitter": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_readFrames_match__3_splitter___redArg": {
       "module": "Flac/Native/Stream.c",
@@ -4923,7 +5579,7 @@
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_recombine_match__1_splitter": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_recombine_match__1_splitter___redArg": {
       "module": "Flac/Native/Stream.c",
@@ -4931,7 +5587,7 @@
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_skipBlocks_match__3_splitter": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_skipBlocks_match__3_splitter___boxed": {
       "module": "Flac/Native/Stream.c",
@@ -4945,9 +5601,17 @@
       "module": "Flac/Native/Stream.c",
       "tag": "boxed-wrapper"
     },
+    "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_writeFrames_match__1_splitter": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "match-closure"
+    },
+    "lp_vinyl___private_Flac_Native_Stream_0__Flac_Stream_writeFrames_match__1_splitter___redArg": {
+      "module": "Flac/Native/Stream.c",
+      "tag": "boxed-wrapper"
+    },
     "lp_vinyl___private_Flac_Native_Stream_0__List_map__unattach_match__1_splitter": {
       "module": "Flac/Native/Stream.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Flac_Native_Stream_0__List_map__unattach_match__1_splitter___redArg": {
       "module": "Flac/Native/Stream.c",
@@ -4963,7 +5627,7 @@
     },
     "lp_vinyl___private_Init_Data_Array_Basic_0__Array_foldlMUnsafe_fold___at___00Flac_Encode_sumAbsArr_spec__0": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Array_Basic_0__Array_foldlMUnsafe_fold___at___00Flac_Encode_sumAbsArr_spec__0___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5099,7 +5763,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_byteStepChunk_spec__0": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_byteStepChunk_spec__0___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -5107,7 +5771,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_byteStepChunk_spec__0___redArg": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_byteStepChunk_spec__0___redArg___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -5115,7 +5779,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_findByteStep_spec__0": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_findByteStep_spec__0___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -5123,7 +5787,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_findByteStep_spec__0___redArg": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_findByteStep_spec__0___redArg___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -5131,7 +5795,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_findStep_spec__0": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_findStep_spec__0___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -5139,7 +5803,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_findStep_spec__0___redArg": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_findStep_spec__0___redArg___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -5147,7 +5811,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_stepChunk_spec__0": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_stepChunk_spec__0___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -5155,7 +5819,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_stepChunk_spec__0___redArg": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_stepChunk_spec__0___redArg___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -5163,7 +5827,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_syncScan_spec__0": {
       "module": "Flac/Native/Decode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_syncScan_spec__0___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -5171,7 +5835,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_syncScan_spec__0___redArg": {
       "module": "Flac/Native/Decode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Decode_syncScan_spec__0___redArg___boxed": {
       "module": "Flac/Native/Decode.c",
@@ -5179,7 +5843,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Encode_fixedSearchF_spec__0": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Encode_fixedSearchF_spec__0___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5187,7 +5851,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Encode_fixedSearchF_spec__0___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Encode_fixedSearchF_spec__0___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5195,7 +5859,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_autocorrF_spec__0": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_autocorrF_spec__0___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5203,7 +5867,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_autocorrF_spec__0___redArg": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_autocorrF_spec__0___redArg___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5211,7 +5875,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_fixedSearch_spec__0": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_fixedSearch_spec__0___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5219,7 +5883,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_fixedSearch_spec__0___redArg": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_fixedSearch_spec__0___redArg___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5227,7 +5891,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinsonErrs_spec__0": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinsonErrs_spec__0___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5235,7 +5899,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinsonErrs_spec__0___redArg": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinsonErrs_spec__0___redArg___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5243,7 +5907,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__0": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__0___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5251,7 +5915,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__0___redArg": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__0___redArg___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5259,7 +5923,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__1": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__1___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5267,7 +5931,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__1___redArg": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__1___redArg___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5275,7 +5939,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__2": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__2___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5283,7 +5947,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__2___redArg": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_levinson_spec__2___redArg___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5291,7 +5955,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_pickLpcOrder_spec__0": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_pickLpcOrder_spec__0___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5299,7 +5963,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_pickLpcOrder_spec__0___redArg": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_pickLpcOrder_spec__0___redArg___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5307,7 +5971,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_welchF_spec__0": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_welchF_spec__0___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5315,7 +5979,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_welchF_spec__0___redArg": {
       "module": "Flac/Native/Heuristics.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Heuristics_welchF_spec__0___redArg___boxed": {
       "module": "Flac/Native/Heuristics.c",
@@ -5323,7 +5987,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Md5_md5_spec__0": {
       "module": "Flac/Native/Md5.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Md5_md5_spec__0___boxed": {
       "module": "Flac/Native/Md5.c",
@@ -5331,7 +5995,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Md5_md5_spec__0___redArg": {
       "module": "Flac/Native/Md5.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00Flac_Md5_md5_spec__0___redArg___boxed": {
       "module": "Flac/Native/Md5.c",
@@ -5339,7 +6003,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_aggrSums_spec__0": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_aggrSums_spec__0___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5347,7 +6011,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_aggrSums_spec__0___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_aggrSums_spec__0___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5355,7 +6019,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_aggrSums_spec__1": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_aggrSums_spec__1___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5363,7 +6027,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_aggrSums_spec__1___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_aggrSums_spec__1___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5371,7 +6035,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_fixedPartitionSums_spec__0": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_fixedPartitionSums_spec__0___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5379,7 +6043,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_fixedPartitionSums_spec__0___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_fixedPartitionSums_spec__0___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5387,7 +6051,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_lpcPartitionSearchFf_spec__0": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_lpcPartitionSearchFf_spec__0___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5395,7 +6059,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_lpcPartitionSearchFf_spec__0___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_lpcPartitionSearchFf_spec__0___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5403,7 +6067,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__0": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__0___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5411,7 +6075,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__0___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__0___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5419,7 +6083,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__1": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__1___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5427,7 +6091,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__1___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__1___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5435,7 +6099,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__2": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__2___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5443,7 +6107,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__2___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__2___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5451,7 +6115,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__3": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__3___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5459,7 +6123,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__3___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_partitionSearchSumsF_spec__3___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5467,7 +6131,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_welchFf_spec__0": {
       "module": "Flac/Native/Encode.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_welchFf_spec__0___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5475,7 +6139,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_welchFf_spec__0___redArg": {
       "module": "Flac/Native/Encode.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Encode_0__Flac_Encode_welchFf_spec__0___redArg___boxed": {
       "module": "Flac/Native/Encode.c",
@@ -5483,7 +6147,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__0": {
       "module": "Flac/Native/Md5.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__0___boxed": {
       "module": "Flac/Native/Md5.c",
@@ -5491,7 +6155,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__0___redArg": {
       "module": "Flac/Native/Md5.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__0___redArg___boxed": {
       "module": "Flac/Native/Md5.c",
@@ -5499,7 +6163,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__1": {
       "module": "Flac/Native/Md5.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__1___boxed": {
       "module": "Flac/Native/Md5.c",
@@ -5507,7 +6171,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__1___redArg": {
       "module": "Flac/Native/Md5.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__1___redArg___boxed": {
       "module": "Flac/Native/Md5.c",
@@ -5515,7 +6179,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__2": {
       "module": "Flac/Native/Md5.c",
-      "tag": "has-standalone-body"
+      "tag": "match-closure"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__2___boxed": {
       "module": "Flac/Native/Md5.c",
@@ -5523,7 +6187,7 @@
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__2___redArg": {
       "module": "Flac/Native/Md5.c",
-      "tag": "boxed-wrapper"
+      "tag": "has-standalone-body"
     },
     "lp_vinyl___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_Flac_Native_Md5_0__Flac_Md5_finalBlocks_spec__2___redArg___boxed": {
       "module": "Flac/Native/Md5.c",

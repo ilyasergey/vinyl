@@ -7,6 +7,8 @@ for future runs. Regenerate the numbers with:
 python3 -m fleet run official 3600     # the campaign (writes runs/<ts>/SUMMARY.md)
 scripts/ratchet.sh                      # distil grown corpus -> corpus/*/evolved/
 make coverage                           # llvm-cov over Flac/Native (cov/report/latest/)
+                                        #   prints the EFFECTIVE (honest-denominator) figure too
+python3 cov/structural_zero.py --validate   # refresh the never-executable classifier; 0 contradictions expected
 ```
 
 ## 2026-09-02 — `official` campaign, 10 h (current reference)
@@ -23,15 +25,16 @@ make coverage                           # llvm-cov over Flac/Native (cov/report/
 
 ### Coverage — fleet union over `Flac/Native/*.c` (honest llvm-cov denominator)
 
-Measured after the `fz_proven_pairs` shipped-entrypoint improvement (drives `Flac.decode`
-+ `Stream.peekInfo`, previously undriven) and re-`ratchet`ed corpus.
+Measured after the two direct proven-pair lanes (`fz_proven_pairs` → `Flac.decode` +
+`Stream.peekInfo`; `fz_overlong_utf8` → `Utf8Num.read`/`write`, see the anatomy section) and
+the re-`ratchet`ed 10 h corpus.
 
 | metric | covered / total | % |
 |---|---|---|
-| **regions** | 6586 / 11098 | **59.3 %** |
-| branches | 2818 / 4792 | 58.8 % |
-| lines | 36332 / 62851 | 57.8 % |
-| functions | 632 / 1545 | 40.9 % |
+| **regions** | 6599 / 11098 | **59.5 %** |
+| branches | 2826 / 4792 | 59.0 % |
+| lines | 36426 / 62851 | 58.0 % |
+| functions | 633 / 1545 | 41.0 % |
 
 Up from the pre-improvement 10 h measurement (regions 6528 / 58.8 %); `fz_proven_pairs`
 alone rose 3031 → 3059 regions (+28, all new to the union — those two entrypoints reached
@@ -49,6 +52,53 @@ into `Emit.lpcResGoN`), `@[csimp]` pre-swap originals, the List-Bool reference l
 derived-instance/`repr`/`Format`/boxed/splitter noise. The reachable encoder LPC orders 1–6
 and all four stereo modes are already covered; `Encode.lpcFold7/8` + the multi-candidate
 `Heuristics.lpcSearch` need a codec-side knob. See `TODO.md` Coverage.
+
+### Coverage anatomy — what the uncovered 40.5 % IS (validated classifier, 2026-09-02)
+
+`cov/structural_zero.py` classifies every `Flac/Native` C symbol by a whole-IR static
+reachability analysis: the call graph over all emitted C (Flac + FlacTest), rooted at every
+Lean symbol the fuzz harness references plus the module initializers, with closures followed
+through their `___boxed` thunks and file-scope static closure objects. `--validate`
+cross-checks it against the union profile: **0 contradictions** (no function with coverage is
+tagged never-executable). `make coverage` prints the EFFECTIVE figure and writes
+`cov/report/latest/structural.txt`.
+
+| view | regions | % |
+|---|---|---|
+| raw llvm-cov headline | 6599 / 11098 | 59.5 % |
+| dead-by-design — can never execute from any fuzz binary | 3305 (29.8 % of all) | — |
+| **effective — over functions that are genuine targets** | **6599 / 7793** | **84.7 %** |
+
+The 4499 missed regions, by cause:
+
+| cause | missed | % of missed |
+|---|---|---|
+| `___boxed` / `___redArg` ABI thunks (unreferenced) | 1431 | 31.8 % |
+| **live functions — the real frontier** | **1194** | **26.5 %** |
+| unreachable (no call path from any fuzz entry point: unbudgeted / spec predecessors) | 528 | 11.7 % |
+| `@[inline]`-elided standalone copies | 460 | 10.2 % |
+| match / lambda closures (unreferenced) | 399 | 8.9 % |
+| `@[csimp]` pre-swap originals | 320 | 7.1 % |
+| derived instances / `repr` / `Format` | 163 | 3.6 % |
+| module-init constants | 4 | 0.1 % |
+
+The 1194 missed regions inside LIVE functions decompose at arm level (`llvm-cov show`):
+~66 % refcount ownership + Lean constructor-reuse (`reuseFailAlloc` / `isShared`) arms —
+memory-management alternatives, not input logic; ~1 % closed-constant fallbacks; ~33 % logic
+arms, which are (a) **impossible by invariant** — `defaultChooser`'s `none, some` match arm
+(`fixedSearch` is `none` only for an empty block while `lpcSearch` needs ≥16 samples),
+`riceCfg`'s valid-by-construction clamp, `lpcResGoN` out-of-bounds tails, bignum quotient
+paths; (b) **codec-knob** — `lpcFold7/8`, the `lpcCandidates=[est]` candidate loop,
+`pushPartsR`'s RICE2 arm behind the `riceChoices` k≤14 clamp; or (c) **input-size-bound** —
+`Emit.W.pushUtf8` / `Encode.BitWriter.pushUtf8` 4–6-byte frame indices need ≥2^16 frames.
+"100 % of reachable code" is therefore bounded by (a)+(b)+(c). The corpus-reachable
+remainder was closed by two direct proven-pair lanes:
+
+- `fz_proven_pairs` → `Flac.decode` + `Stream.peekInfo` (+28 regions, above).
+- `fz_overlong_utf8` → `Utf8Num.read (Utf8Num.write n) = some (n, [])` (Spec `read_write`,
+  n < 2^36) across all seven width classes: `fz_overlong_utf8` 406 → 508 regions, Utf8Num.c in the
+  union 79.3 → 89.3 % — the 4/5/6-byte writer arms no stream input can reach. 1.25 M round trips
+  in a 15 s smoke, `rt_bug=0`.
 
 ### Corpus
 

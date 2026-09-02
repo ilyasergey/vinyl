@@ -23,6 +23,10 @@ Products (cov/report/<stamp>/):
                       ("is this job earning its cores"; fz_md5/fz_float_exact ~0)
   aborts.txt          per target, the corpus chunks that abort/OOM the binary
                       (a deliverable the old rig could not produce)
+  structural.txt      the union re-read through cov/structural_zero.json: how many
+                      regions belong to functions that can never execute (ABI thunks,
+                      csimp pre-swap, inline-elided, closures, derived instances,
+                      module init) and the EFFECTIVE coverage over the live remainder
 
 Coverage comes from .covfuzz binaries ONLY. Divergence verdicts NEVER do.
 
@@ -280,6 +284,56 @@ def cov_html(bin_: Path, pd: Path, sources: list[str], outdir: Path) -> None:
                    check=True, stdout=subprocess.DEVNULL)
 
 
+def structural_summary(rep: Path, union: Path, native: list[str], out: Path) -> None:
+    """Honest-denominator view of the union: attribute every Native function's regions to
+    its cov/structural_zero.json tag. Functions tagged anything but `has-standalone-body`
+    can NEVER execute their standalone body (ABI thunks, csimp pre-swap originals,
+    @[inline]-elided copies, match closures, derived instances, module init), so they are
+    excluded from BOTH numerator and denominator of the `effective` figure. Uses
+    `llvm-cov report -show-functions` per file, whose rows reconcile exactly to the
+    file TOTALs (the per-function `export` does not). Writes structural.txt."""
+    sz = FUZZ / "cov" / "structural_zero.json"
+    if not sz.exists():
+        return
+    tags = {k: v.get("tag", "has-standalone-body")
+            for k, v in json.loads(sz.read_text()).get("functions", {}).items()}
+    tot = miss = dead_tot = dead_miss = 0
+    by_tag: dict[str, list[int]] = {}
+    for src in native:
+        rep_txt = subprocess.run([tool("llvm-cov"), "report", str(rep), f"-instr-profile={union}", src,
+                                  "-show-functions"], capture_output=True, text=True).stdout
+        for line in rep_txt.splitlines():
+            p = line.split()
+            if len(p) < 4 or not p[1].isdigit() or p[0] == "TOTAL":
+                continue
+            name = p[0].split(":", 1)[-1]
+            n, m = int(p[1]), int(p[2])
+            tag = tags.get(name, "has-standalone-body")
+            tot += n
+            miss += m
+            b = by_tag.setdefault(tag, [0, 0])
+            b[0] += n
+            b[1] += m
+            if tag != "has-standalone-body":
+                dead_tot += n
+                dead_miss += m
+    if not tot:
+        return
+    live_tot, live_cov = tot - dead_tot, (tot - miss) - (dead_tot - dead_miss)
+    lines = [f"# Structural (honest-denominator) view of the fleet union over Flac/Native/*.c",
+             f"# raw:       {tot - miss}/{tot} regions covered = {100 * (tot - miss) / tot:.1f}%  (the llvm-cov headline)",
+             f"# dead-by-design (structural_zero tag != has-standalone-body): {dead_tot} regions "
+             f"({dead_miss} missed) = {100 * dead_tot / tot:.1f}% of all regions, can never execute",
+             f"# effective: {live_cov}/{live_tot} = {100 * live_cov / max(1, live_tot):.1f}%  "
+             f"(coverage of functions that ARE genuine coverage targets)", "",
+             f"{'tag':22s} {'regions':>8s} {'missed':>7s} {'% of missed':>11s}"]
+    for tag, (n, m) in sorted(by_tag.items(), key=lambda kv: -kv[1][1]):
+        lines.append(f"{tag:22s} {n:8d} {m:7d} {100 * m / max(1, miss):10.1f}%")
+    (out / "structural.txt").write_text("\n".join(lines) + "\n")
+    print(f"{'EFFECTIVE (live fns)':28s} {live_cov:>7d}/{live_tot:<7d}{100 * live_cov / max(1, live_tot):5.1f}%  "
+          f"(dead-by-design excluded: {dead_tot} regions; see structural.txt)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("targets", nargs="*", help="targets to measure (default: all)")
@@ -349,6 +403,7 @@ def main() -> int:
         rc, rt = region_pct(ex)
         summary["__union__"] = dict(regions_covered=rc, regions_total=rt)
         print(f"\n{'FLEET UNION':28s} {rc:>7d}/{rt:<7d}{100*rc/rt:5.1f}%  (headline native region coverage)")
+        structural_summary(rep, union, native, out)
 
     (out / "summary.json").write_text(json.dumps(
         dict(seeds_only=args.seeds_only, targets=summary), indent=2))

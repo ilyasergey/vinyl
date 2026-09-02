@@ -111,9 +111,10 @@ gate once a fix lands):**
   mid/side stereo, and explicit sample-rate codes (12-14), so they reach the
   `fz_decode_modes` reference lane (`VM_REF_MAX_INPUT=8192`) and drive
   `decodeReference` / `Frame.readChannels` / `resolveBlockSize` / `skipSampleRate` /
-  `Stereo.c` on shapes Vinyl's own writer never emits. Remaining minor gap: a
-  forced FIXED-order 0-4 sweep (libFLAC auto-selects order, so this needs the G1
-  hostile-fixed chooser at <=8 KB rather than a libFLAC seed).
+  `Stereo.c` on shapes Vinyl's own writer never emits. The once-listed "forced
+  FIXED-order 0-4 sweep" gap is closed: `hostile_fixed_bps*` seeds (G1 chooser 4, <=8 KB)
+  exist and `Fixed.restore` / `restoreA` are 8/9 covered — the last miss is the
+  closed-constant `order > 4` fallback the subframe reader makes unreachable.
 - **Encoder search branches.** `Encode.lpcFold7/8` stay cold behind the
   `lpcMaxOrder=6` heuristic ceiling, and `Heuristics.lpcSearch`'s multi-candidate
   loop behind the `lpcCandidates=[est]` singleton. These need a codec-side knob to
@@ -138,17 +139,35 @@ gate once a fix lands):**
   tautology-safe TCB check + measured `peek_incoherent` counter in the target. +28 regions
   on `fz_proven_pairs` (3031→3059), all new to the fleet union. Validated clean over a 30 min
   fleet run (0 crash/oom, `peek_incoherent=0`, no false abort).
-- **10h coverage frontier — analyzed (2026-09-01), no further corpus-reachable gain.**
-  A per-cluster gpt-5.6-sol audit against the Lean source established that the uncovered
-  ~41% is overwhelmingly dead-by-design generated C, NOT a corpus weakness: `@[inline]`-elided
-  standalone bodies (e.g. the 8 `Lpc.dotN` bodies = 203/330 missed Lpc.c regions, compiled
-  into `Emit.lpcResGoN`), `@[csimp]` pre-swap originals, the List-Bool reference lanes, and
-  derived-instance/`repr`/`Format`/boxed/splitter noise. The reachable encoder LPC orders 1–6
-  and all four stereo modes are already covered by `encode/shapes`. Chasing the standalone
-  `dotN`/CRC-range/`decodePcm16`/MD5/Rice-PO bodies would test dead out-of-line copies and
-  dishonestly inflate coverage — deliberately NOT done. Classifier nit (unfixed, cosmetic):
-  `structural_zero.py`'s namespace-blind suffix match tags `Bits.BitReader.readUnary` as
-  `csimp-superseded` off `Bits.readUnary_eq_readUnaryTR`; it is an unused predecessor, not a
-  csimp victim. No coverage-number impact (both are structural-zero categories).
+- **10h coverage frontier — analyzed (2026-09-01), classifier validated (2026-09-02).**
+  A per-cluster gpt-5.6-sol audit against the Lean source, then a whole-IR static
+  reachability classifier (`cov/structural_zero.py`: call-graph closure from every
+  fuzz-harness entry point + module initializers; closures via `___boxed` thunks and
+  file-scope static closure objects; `--validate` = 0 contradictions against the union
+  profile) established what the uncovered ~41 % is: **29.8 % of all regions can never
+  execute from any fuzz binary** (unreferenced ABI thunks, `@[csimp]` pre-swap originals,
+  `@[inline]`-elided copies, unreachable spec/unbudgeted predecessors, closures, derived
+  instances). **Effective coverage over genuine targets: 84.5 %** (`make coverage` prints
+  it; `cov/report/latest/structural.txt`). Of the 1207 missed regions in live functions,
+  ~66 % are refcount/ctor-reuse arms and the logic remainder is impossible-by-invariant
+  (`defaultChooser` `none,some`; `riceCfg` clamp; `lpcResGoN` OOB tails), codec-knob
+  (`lpcFold7/8`, `lpcCandidates=[est]`, `pushPartsR` RICE2 behind `riceChoices` k<=14), or
+  input-size-bound (`pushUtf8` twins need >=2^16 frames). Chasing standalone `dotN` /
+  CRC-range / `decodePcm16` / MD5 / Rice-PO bodies would test dead code — deliberately NOT
+  done. The classifier nit (namespace-blind csimp suffix match) is FIXED: the stated `@LHS`
+  is parsed, so exactly one symbol per theorem is tagged (15).
+- **Utf8Num write/read proven-pair lane — DONE (2026-09-02).** `fz_overlong_utf8` now also
+  runs `Utf8Num.read (Utf8Num.write n) = some (n, [])` (Spec `read_write`, n < 2^36) on the
+  binary for every exec, checking the writer chose the minimal width against the target's
+  independent W(k) model. Closes the only corpus-reachable gap the audit left: `write`'s
+  4/5/6-byte arms need a frame index >= 2^16 (a >1M-sample encode), so no stream target
+  could reach them. `@[export vinyl_utf8_write]` / `vinyl_utf8_read` (`FuzzGen.lean`).
+  `fz_overlong_utf8` 406 -> 508 regions; 1.25 M round trips in a 15 s smoke, `rt_bug=0`.
+- **Remaining, NOT corpus-fixable (needs a codec-side knob or is size-bound):**
+  `Encode.lpcFold7/8` (`lpcMaxOrder=6`), the multi-candidate `Heuristics.lpcSearch` loop
+  (`lpcCandidates=[est]`), `Encode.pushPartsR`'s RICE2 arm (`riceChoices` clamps k<=14),
+  and the `Emit.W.pushUtf8` / `Encode.BitWriter.pushUtf8` 4-6-byte frame-index arms
+  (>=2^16 frames per stream). Everything else uncovered is dead-by-design or an
+  impossible-by-invariant arm.
 - Re-run variant-merged coverage after each campaign (`make coverage`,
   `cov/per_target.py`) and confirm the new seeds' payoff.

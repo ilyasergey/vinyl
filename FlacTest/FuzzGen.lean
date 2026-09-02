@@ -184,6 +184,14 @@ no theorem, `Flac/` untouched. -/
 @[export vinyl_lean_crc8]        def fzCrc8            := Flac.Crc.crc8
 @[export vinyl_lean_crc16]       def fzCrc16           := Flac.Crc.crc16
 
+-- Coded numbers (fz_overlong_utf8): the List-Bool `Utf8Num.write` / `read` pair, so the
+-- rig can run the kernel-checked round trip `read (write n ++ rest) = some (n, rest)`
+-- (Spec/Utf8Num.lean `read_write`, n < 2^36) ON THE BINARY across all seven width
+-- classes. `write`'s 4/5/6-byte arms need a frame index >= 2^16 -- a >1M-sample encode,
+-- beyond any fuzz input -- so no stream-level target could ever reach them.
+@[export vinyl_utf8_write]       def fzUtf8Write       := Flac.Utf8Num.write
+@[export vinyl_utf8_read]        def fzUtf8Read        := Flac.Utf8Num.read
+
 -- A3e / C5: stable ABI for the emit writer and the pcm16 encode pipeline, so
 -- `fz_encode_pcm16_eq.c` and `vinyl_gen.c` can drop the mangled `lp_vinyl_*`
 -- names. Same arity/shape as the wrapped defs (emitFast: cfg, audio;
