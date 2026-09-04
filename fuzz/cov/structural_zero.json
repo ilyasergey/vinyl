@@ -3,10 +3,10 @@
   "source": ".lake/build/ir/Flac/Native/*.c",
   "note": "false-zero classifier; a tagged function cannot show coverage regardless of corpus",
   "counts": {
-    "has-standalone-body": 656,
+    "has-standalone-body": 657,
     "inline-elided": 39,
-    "boxed-wrapper": 639,
-    "csimp-superseded": 14,
+    "boxed-wrapper": 641,
+    "csimp-superseded": 15,
     "match-closure": 86,
     "unreachable": 80,
     "module-init": 2,
@@ -3131,7 +3131,23 @@
     },
     "lp_vinyl_Flac_Lpc_restoreAux": {
       "module": "Flac/Native/Lpc.c",
+      "tag": "csimp-superseded"
+    },
+    "lp_vinyl_Flac_Lpc_restoreAuxAcc": {
+      "module": "Flac/Native/Lpc.c",
       "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Lpc_restoreAuxAcc___boxed": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "boxed-wrapper"
+    },
+    "lp_vinyl_Flac_Lpc_restoreAuxTR": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "has-standalone-body"
+    },
+    "lp_vinyl_Flac_Lpc_restoreAuxTR___boxed": {
+      "module": "Flac/Native/Lpc.c",
+      "tag": "boxed-wrapper"
     },
     "lp_vinyl_Flac_Lpc_restoreAux___boxed": {
       "module": "Flac/Native/Lpc.c",
