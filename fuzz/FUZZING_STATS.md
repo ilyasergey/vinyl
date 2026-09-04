@@ -11,7 +11,57 @@ make coverage                           # llvm-cov over Flac/Native (cov/report/
 python3 cov/structural_zero.py --validate   # refresh the never-executable classifier; 0 contradictions expected
 ```
 
-## 2026-09-02 — `official` campaign, 10 h (current reference)
+## 2026-09-04 — 12 h all-target campaign: `official` 11 h + `contract` 1 h (current reference)
+
+| field | value |
+|---|---|
+| recorded | 2026-09-04 |
+| runs | `runs/20260902_200441` (`official`, 39600 s) then `runs/20260903_070448` (`contract`, 3600 s) — all 27 targets |
+| cores / jobs | 31 cores / 27 jobs, then 30 cores / 10 jobs |
+| total executions | 1,113,066,823 (official) + 331,496,610 (contract) = ~1.44 B |
+| aggregate throughput | ~28,100 exec/s (official), ~92,100 exec/s (contract) |
+| **crashes / OOMs** | **0 / 0** in both phases (watchdog SIGKILLs 0) |
+| findings | none new. One fatal `wide_sample_diff` abort in `official` = the documented `decode-sample-divergence-highbps` class (4th witness, `repro-1003B`), auto-classified by the stream-level discriminator built this cycle |
+
+Invariants held across both phases: proven pairs (`fz_proven_pairs` 10,380 execs,
+`peek_incoherent=0`), `emitFast == encode` and `encodePcm16` byte-identical, emit referee
+`all_agree=9364`, both bounded-stack pins `overflow=0`, `16bit_violations=0`, and the new
+`fz_overlong_utf8` `Utf8Num.read (write n)` proven pair over **4.11 M** round trips
+(`rt_bug=0`, `overlong_accepted=0`).
+
+Rig findings fixed and verified in this cycle (see `TODO.md` / `findings/`): the reference
+model's `Lpc.restoreAux` stack overflow (`restoreAuxTR` `@[csimp]` twin; the previous, aborted
+6.4 h run's `fz_proven_pairs` crash), the per-process reproducer cap that let `-fork` restarts
+flood the disk (now a global 512/class cap — the 11 h run dir stayed at 2.7 GB vs 14 GB in
+6.4 h before), and the bps 17–31 `wide_sample_diff` discriminator (`flac_reconstruct_oob_at`).
+
+### Coverage — fleet union over `Flac/Native/*.c`
+
+| metric | covered / total | % |
+|---|---|---|
+| **regions** | 6603 / 11132 | **59.3 %** |
+| branches | 2828 / 4806 | 58.8 % |
+| lines | 36454 / 63034 | 57.8 % |
+| functions | 634 / 1549 | 40.9 % |
+| **effective (genuine targets, `structural.txt`)** | **6603 / 7827** | **84.4 %** |
+
+The denominator grew by 34 regions (the `restoreAuxAcc`/`restoreAuxTR` twin), so the
+percentages are flat on a larger base; dead-by-design is 3305 regions (29.7 %). Classifier
+`--validate`: 0 contradictions on this profile.
+
+### Corpus
+
+| set | files |
+|---|---|
+| committed seed archive (`corpus/seeds.tar.gz`) | 2616 seeds (unchanged) |
+| `corpus/*/evolved/` after `scripts/ratchet.sh` on both runs | 33,454 (+2,433 this cycle) |
+
+Largest distillate gains: `fz_trailing_data` +550, `fz_self_consistent` +423,
+`fz_metamorphic` +404, `fz_streaminfo_contradict` +324, `fz_gen_roundtrip` +242,
+`fz_residual_bound` +223, `fz_emit_conformance` +144, `fz_encode_pair` +111. The saturated
+decode targets (`fz_decode_*`, `fz_crc`) distilled +0.
+
+## 2026-09-02 — `official` campaign, 10 h
 
 | field | value |
 |---|---|

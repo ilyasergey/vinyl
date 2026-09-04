@@ -60,4 +60,35 @@ int flac_residual_frame(const uint8_t *buf, size_t n, size_t frame_start,
                         const int64_t *const *planes, int nch, long nx, int bps,
                         ResidualInfo *out);
 
+/* Stream-level RFC-invalidity witness for the decode-sample-divergence-highbps class.
+ * Reconstructs every LPC/FIXED subframe of a frame EXACTLY from the bitstream alone
+ * (warmup, coefficients/shift, the raw Rice/escape residuals; int64 samples, 128-bit
+ * accumulator) and stops at the first sample that leaves the subframe's coded depth
+ * (sub_bps - wasted). RFC 9639 §5 leaves decoding of such a stream unspecified: Vinyl
+ * folds the value to the coded depth (`Lpc.restoreA`'s `wrapSInt`, the P1 hardening)
+ * while libFLAC/ffmpeg keep it in their container width, so any sample divergence at or
+ * after that point is this documented accept-set class, not a decoder defect. It is
+ * decoder-independent, so it cannot mask a real bug on a VALID stream (a valid stream
+ * never reconstructs out of range); validated against Vinyl's own fold (a reconstructed
+ * 185083 at bps 16 vs Vinyl's -11525) and libFLAC's parse of the 215B witness. */
+typedef struct {
+  size_t frame;  /* frame index (flac_scan_frames order)           */
+  long index;    /* FRAME-LOCAL sample index of the first OOB value */
+  int channel;   /* subframe index                                  */
+  int depth;     /* coded depth it left (sub_bps - wasted)          */
+  int64_t value; /* the exact reconstruction (saturated to int64)   */
+} FlacOob;
+
+/* The frame at `frame_start`: 1 = a subframe reconstructs out of range (`o` filled),
+ * 0 = every parsable subframe stays in range OR the frame cannot be judged (unparsable,
+ * reserved, pathological unary run) -- the caller must treat 0 as "not proven". */
+int flac_reconstruct_oob(const uint8_t *buf, size_t n, size_t frame_start, int nch, int bps,
+                         FlacOob *o);
+
+/* The frame CONTAINING global sample `global_index`: 1 only when that frame reconstructs
+ * out of range AT OR BEFORE the frame-local position of `global_index` -- i.e. the
+ * out-of-range value can explain a divergence observed there. */
+int flac_reconstruct_oob_at(const uint8_t *buf, size_t n, int nch, int bps, long global_index,
+                            FlacOob *o);
+
 #endif /* FLAC_RESIDUAL_H */

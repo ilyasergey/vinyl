@@ -232,3 +232,172 @@ int flac_residual_frame(const uint8_t *buf, size_t n, size_t frame_start,
   }
   return count;
 }
+
+/* ---- stream-level exact reconstruction (decode-sample-divergence-highbps) ---- */
+
+/* Read one Rice-coded (or escaped) residual partition of `count` values into r[],
+ * returning 0 when the partition cannot be judged (reader overrun, a unary run so
+ * long the value is pathological). Values are exact: no 32-bit container. */
+static int read_residual_partition(FlacBitReader *br, int param_bits, long count, int64_t *r) {
+  int esc = (1 << param_bits) - 1;
+  int param = (int)fbr_read(br, param_bits);
+  if (br->err)
+    return 0;
+  if (param == esc) {
+    int width = (int)fbr_read(br, 5);
+    for (long i = 0; i < count; i++)
+      r[i] = width ? fbr_read_signed(br, width) : 0;
+    return !br->err;
+  }
+  for (long i = 0; i < count; i++) {
+    uint64_t q = fbr_unary(br);
+    if (br->err || q > ((uint64_t)1 << 33))
+      return 0; /* > 2^33 quotient: not a judgeable stream */
+    uint64_t lsb = fbr_read(br, param);
+    unsigned __int128 u = ((unsigned __int128)q << param) | lsb;
+    __int128 v = (__int128)(u >> 1);
+    if (u & 1)
+      v = -v - 1;
+    if (v > ((__int128)1 << 62) || v < -((__int128)1 << 62))
+      return 0;
+    r[i] = (int64_t)v;
+  }
+  return !br->err;
+}
+
+/* Exact reconstruction of one subframe; 1 = left its coded depth (o filled),
+ * 0 = stayed in range or not judgeable. `bs` is the frame block size. */
+static int reconstruct_subframe(const uint8_t *buf, size_t n, uint64_t start_bit, int sub_bps,
+                                long bs, int channel, FlacOob *o) {
+  FlacBitReader r;
+  fbr_init(&r, buf, n, start_bit);
+  if (fbr_read(&r, 1) != 0)
+    return 0;
+  int type = (int)fbr_read(&r, 6);
+  int wasted = 0;
+  if (fbr_read(&r, 1))
+    wasted = (int)fbr_unary(&r) + 1;
+  if (r.err || wasted < 0 || wasted >= sub_bps)
+    return 0;
+  int is_lpc, order;
+  if (type >= 8 && type <= 12) {
+    is_lpc = 0;
+    order = type - 8;
+  } else if (type >= 32) {
+    is_lpc = 1;
+    order = type - 31;
+  } else
+    return 0; /* CONSTANT / VERBATIM (read at coded width, cannot leave it) / reserved */
+  int depth = sub_bps - wasted;
+  if (order >= bs || order > 32 || depth < 1 || depth > 32 || bs > 65535)
+    return 0;
+
+  static int64_t x[65536];
+  for (int k = 0; k < order; k++)
+    x[k] = fbr_read_signed(&r, depth);
+  int64_t coef[32];
+  int shift = 0;
+  if (is_lpc) {
+    int precision = (int)fbr_read(&r, 4) + 1;
+    shift = (int)fbr_read_signed(&r, 5);
+    if (precision > 32 || shift < 0)
+      return 0;
+    for (int k = 0; k < order; k++)
+      coef[k] = fbr_read_signed(&r, precision);
+  }
+  if (r.err)
+    return 0;
+
+  /* residual: method (2 bits), partition order (4 bits), 2^po partitions */
+  int method = (int)fbr_read(&r, 2);
+  int po = (int)fbr_read(&r, 4);
+  if (r.err || method > 1)
+    return 0;
+  int param_bits = method == 0 ? 4 : 5;
+  long npart = 1L << po;
+  if (bs % npart != 0 || (bs >> po) < order)
+    return 0;
+  long idx = order;
+  for (long p = 0; p < npart; p++) {
+    long count = (bs >> po) - (p == 0 ? order : 0);
+    if (!read_residual_partition(&r, param_bits, count, x + idx)) /* residuals parked in x[] */
+      return 0;
+    idx += count;
+  }
+  /* reconstruct in place: x[i] currently holds the residual for i >= order */
+  const __int128 lo = -((__int128)1 << (depth - 1)), hi = (__int128)1 << (depth - 1);
+  for (long i = order; i < bs; i++) {
+    __int128 pred;
+    if (is_lpc) {
+      __int128 acc = 0;
+      for (int j = 0; j < order; j++)
+        acc += (__int128)coef[j] * (__int128)x[i - 1 - j];
+      pred = acc >> shift;
+    } else {
+      switch (order) {
+        case 0: pred = 0; break;
+        case 1: pred = x[i - 1]; break;
+        case 2: pred = 2 * (__int128)x[i - 1] - x[i - 2]; break;
+        case 3: pred = 3 * (__int128)x[i - 1] - 3 * (__int128)x[i - 2] + x[i - 3]; break;
+        default: pred = 4 * (__int128)x[i - 1] - 6 * (__int128)x[i - 2] + 4 * (__int128)x[i - 3] - x[i - 4];
+      }
+    }
+    __int128 v = pred + x[i];
+    if (v < lo || v >= hi) {
+      o->index = i;
+      o->channel = channel;
+      o->depth = depth;
+      o->value = (int64_t)(v > INT64_MAX ? INT64_MAX : v < INT64_MIN ? INT64_MIN : v);
+      return 1;
+    }
+    x[i] = (int64_t)v; /* in range: exact, and safe in int64 */
+  }
+  return 0;
+}
+
+int flac_reconstruct_oob(const uint8_t *buf, size_t n, size_t frame_start, int nch, int bps,
+                         FlacOob *o) {
+  if (o == NULL || nch < 1 || nch > FLAC_RESIDUAL_MAX_CH || bps < 1 || bps > 32 || frame_start + 4 > n)
+    return 0;
+  unsigned chc = flac_fh_channel_code(buf, frame_start);
+  int side_mode = chc <= 7 ? 0 : chc == 8 ? 1 : chc == 9 ? 2 : chc == 10 ? 3 : -1;
+  if (side_mode < 0 || (side_mode == 0 && (unsigned)nch != chc + 1) || (side_mode && nch != 2))
+    return 0;
+  FlacFrameHeader fh;
+  if (!flac_hdr_parse_permissive(buf, n, frame_start, (unsigned)bps, &fh) || fh.bs < 1 || fh.bps < 1)
+    return 0;
+  /* the frame's own resolved depth (its bps code, or the STREAMINFO fallback) */
+  int fbps = (int)fh.bps;
+  uint64_t starts[FLAC_RESIDUAL_MAX_CH];
+  if (!flac_subframe_bit_offsets(buf, n, frame_start, (unsigned)fh.hlen, (unsigned)nch,
+                                 (unsigned)fbps, side_mode, starts))
+    return 0;
+  for (int c = 0; c < nch; c++) {
+    int side = (side_mode == 1 && c == 1) || (side_mode == 2 && c == 0) || (side_mode == 3 && c == 1);
+    if (reconstruct_subframe(buf, n, starts[c], fbps + side, (long)fh.bs, c, o))
+      return 1;
+  }
+  return 0;
+}
+
+int flac_reconstruct_oob_at(const uint8_t *buf, size_t n, int nch, int bps, long global_index,
+                            FlacOob *o) {
+  static FlacFrame fr[FLAC_MAX_FRAMES];
+  size_t nf = flac_scan_frames(buf, n, fr, FLAC_MAX_FRAMES, 1);
+  long acc = 0;
+  for (size_t k = 0; k < nf; k++) {
+    FlacFrameHeader fh;
+    if (!flac_hdr_parse_permissive(buf, n, fr[k].start, (unsigned)bps, &fh) || fh.bs < 1)
+      return 0; /* cannot map the index to a frame: not proven */
+    if (global_index < acc + (long)fh.bs) {
+      long local = global_index - acc;
+      if (flac_reconstruct_oob(buf, n, fr[k].start, nch, bps, o) && o->index <= local) {
+        o->frame = k;
+        return 1;
+      }
+      return 0;
+    }
+    acc += (long)fh.bs;
+  }
+  return 0;
+}

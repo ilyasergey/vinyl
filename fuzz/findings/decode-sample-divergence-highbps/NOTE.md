@@ -1,7 +1,9 @@
 # Decoder sample divergence on bps=31 streams (Vinyl vs libFLAC+ffmpeg consensus)
 
-**Status: TRIAGED 2026-08-31 — RESOLVED as two accept-set differences on invalid/malformed
-input, NOT Vinyl bugs. 215B: malformed (frame/STREAMINFO sample-rate contradiction); the
+**Status: TRIAGED 2026-08-31 — RESOLVED as accept-set differences on invalid/malformed input,
+NOT Vinyl bugs. 2026-09-02: a third witness (`repro-215B-b.flac`) of the 561B class, and the
+class now has a SOUND, decoder-independent discriminator in the rig (see the last section) —
+future instances are catalogued as `wide_sample_diff_oob_coded`, not fatal. 215B: malformed (frame/STREAMINFO sample-rate contradiction); the
 wide libFLAC referee was fixed to reject it like the CLI. 561B: root-caused to the
 coded-depth wrap in `Lpc.restoreA` on an out-of-coded-range reconstruction — RFC 9639 §5
 leaves this unspecified; no codec fix. Details per case below.**
@@ -148,3 +150,54 @@ policy class). That would require adding a debug decode path to the verified cod
 not worth it for a confirmed non-bug — so `repro-561B.flac` is recorded here as a **known
 accept-set witness**: a fatal `wide_sample_diff` on a bps=31 mid/side stream whose mid
 subframe reconstructs out of coded range is this class, not a new defect.
+
+## 2026-09-02 — third witness (`repro-215B-b.flac`) and the stream-level discriminator
+
+`fz_samples_diff` aborted again in the 12 h campaign (`runs/20260902_043248`) on a 215-byte
+CRC-valid input, sha256 `a0488f339837bcb8e1e8a3874dfd73aa64379f00b0211eb05e5b03e02ed305cb`:
+`MID_SIDE`, bps=31, mid subframe LPC order 8 / precision 15 / shift 1. Vinyl ch0[9] =
+`734345081` vs consensus `-339396743`; **ΔL = ΔR = +2^30**, i.e. the mid channel moved by
+`2^31 >> shift(1)` — the 561B mechanism exactly.
+
+Reconstructing the mid subframe **exactly from the bitstream** (libFLAC's own parse of the
+coefficients `[4497,-14145,-7068,12832,0,0,0,0]`, warmup, and residuals):
+
+| local sample | exact `pred + r` | in 31-bit range? | Vinyl (`wrapSInt 31`) | referee |
+|---|---|---|---|---|
+| 8 | −380,323,667,278 (≈ −2^38) | no | −219,061,582 | −219,061,582 (coincides) |
+| 9 | −1,277,068,401,225 (≈ −2^40) | no | **684,369,335** (matches observed) | −389,372,489 |
+
+The stream is RFC-invalid from local sample 8 on. Vinyl folds to the coded depth (P1);
+the referee value matches neither the exact value mod 2^32 nor mod 2^31 (their container
+arithmetic is non-clean at bps 17–31), which is why the oracle's mod-2^bps congruence
+guard could not classify it and the two implementations formed a "consensus" on
+unspecified behaviour. Same verdict as 561B: **no codec fix**.
+
+**Discriminator (built, corrects the earlier "no sound discriminator" note).** The invalidity
+IS visible — not in the final PCM, but in the *stream*: `common/flac_residual.c`
+`flac_reconstruct_oob` reconstructs every LPC/FIXED subframe exactly from the bitstream
+(warmup, coefficients/shift, raw Rice/escape residuals; int64 samples, 128-bit accumulator)
+and stops at the first sample outside the subframe's coded depth. `flac_reconstruct_oob_at`
+maps the oracle's divergent global sample index to its frame and requires the out-of-range
+sample to precede it. `wide_diff.c` runs it before the fatal `wide_sample_diff` abort and,
+on a hit, catalogues the input as `wide_sample_diff_oob_coded` instead. Soundness: a valid
+stream never reconstructs out of range, so the check cannot mask a real divergence; it was
+validated against Vinyl's own fold (a generator seed reconstructing `185083` at bps 16 where
+Vinyl outputs the 16-bit fold `-11525`) and against libFLAC's parse of this witness. All
+three repros here classify; `decode/must_reject` and the valid `wide`/`hires`/`multichan`/
+`ref_small`/`g1_hostile` corpora never trigger it; 277 of 400 sampled
+`wide_sample_diff_1ref` witnesses from the 10 h run are this class.
+
+sha256 `repro-215B-b.flac` `a0488f339837bcb8e1e8a3874dfd73aa64379f00b0211eb05e5b03e02ed305cb`.
+
+## 2026-09-03 — fourth witness (`repro-1003B.flac`), caught by the discriminator
+
+The 12 h campaign (`runs/20260902_200441`, binaries predating the discriminator) aborted once
+more on a 1003-byte bps=31 `MID_SIDE` / LPC-order-8 input (sha256 `3f7e4afd81621b0d061c4d8132e98ee12e48e29a719f9bf1090fb3e7e3d54fc8`):
+ch0[42] Vinyl `-815916267` vs consensus `257825557`. `flac_reconstruct_oob_at` classifies it
+without human triage: frame 2, mid subframe, local sample 8 reconstructs **−180,586,724,999**
+(≈ −2^37.4), far outside the 31-bit coded depth, before the divergence at frame-local 10 —
+the same class. With the discriminator built in, `fz_samples_diff` catalogues it as
+`wide_sample_diff_oob_coded` (verified: `repro-215B-b` and `repro-561B` now exit 0 with
+"RFC-INVALID stream … catalogued"). Regression:
+`build/bin/fz_samples_diff.fuzz findings/decode-sample-divergence-highbps/repro-1003B.flac` must exit 0.

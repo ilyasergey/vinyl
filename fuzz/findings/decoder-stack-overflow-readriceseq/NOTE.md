@@ -1,7 +1,8 @@
-# readRiceSeq / readSIntSeq non-tail recursion — REFERENCE decoder only (corrected)
+# Reference-decoder non-tail recursion (readRiceSeq / readSIntSeq / restoreAux) — REFERENCE decoder only (corrected)
 
-**Status: reference-decoder residual readers hardened; shipped decoder verified
-UNAFFECTED. Not a shipped-decoder bug.** An earlier draft of this note filed this as
+**Status: reference-decoder residual readers hardened (2026-08-31) and its per-sample LPC
+restore `Lpc.restoreAux` hardened (2026-09-02, found live by `fz_proven_pairs` — last section);
+shipped decoder verified UNAFFECTED. Not a shipped-decoder bug.** An earlier draft of this note filed this as
 a stack-overflow DoS in the shipped array decoder. Two independent IR audits corrected
 that; this note records the accurate finding.
 
@@ -74,3 +75,16 @@ result: the shipped decoder's residual layer is stack-flat, verified by both the
 the prober. The lesson recorded for the record is the attribution discipline: pin the
 exact function the prober decodes, and read the IR to confirm which reader that path
 actually calls before naming it in a finding.
+
+## 2026-09-02 — `Lpc.restoreAux` (reference decoder), `repro-restoreAux-3343B.flac`
+
+The 12 h campaign's `fz_proven_pairs` died with `Stack overflow detected. Aborting.` on this
+3343-byte malformed input (sha256 `ea1838efd14b5af7b616794fd99deec36fd1566a47c5c56d2829cb9ca4b6550d`). gdb: ~3000 innermost frames in
+`lp_vinyl_Flac_Lpc_restoreAux` — the List-Bool reference decoder's per-sample LPC restore,
+non-tail, depth = the *declared* block size, so a malformed header can drive it 65535 deep
+regardless of input size (the target's 4096 B cap does not bound the model). The PRODUCTION
+decoder rejects the input cleanly (`measure_decode` decoded=0; CLI "not a decodable FLAC
+stream"), so this is the reference-path class above, NOT a shipped bug. Fix: `restoreAuxTR`
+`@[csimp]` twin in `Flac/Native/Lpc.lean` (value-equal; pinned in `scripts/check.sh`) — the
+decode-side sibling of `residualAuxTR`. After it the input runs in 122 ms as a clean
+`both_none` proven pair. Regression: `build/bin/fz_proven_pairs.fuzz fuzz/findings/decoder-stack-overflow-readriceseq/repro-restoreAux-3343B.flac`.

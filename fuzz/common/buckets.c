@@ -1,5 +1,6 @@
 #include "buckets.h"
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -115,6 +116,35 @@ static Bucket *find_bucket(const char *cls, int *is_new) {
   return e;
 }
 
+/* The bucket table is per PROCESS, but the fleet runs libFuzzer `-fork=1`, which
+ * restarts the worker child continuously (150+ jobs in a long campaign). Each fresh
+ * child starts at files=0 and writes another FILE_CAP reproducers per class, so a
+ * catalogue class dumped 100k+ near-duplicate files (GBs) over a 6 h run and filled
+ * the disk. Seed the counters from what is ALREADY on disk the first time this
+ * process touches a class, so FILE_CAP is a global bound: count entries (stop at
+ * FILE_CAP, so a full dir costs one bounded readdir) and take min.* as the standing
+ * minimum so a larger witness never overwrites a smaller one from a prior child. */
+static void seed_from_dir(Bucket *b, const char *dir, const char *ext) {
+  DIR *d = opendir(dir);
+  if (!d)
+    return;
+  unsigned n = 0;
+  struct dirent *e;
+  while (n < FILE_CAP && (e = readdir(d)) != NULL) {
+    if (e->d_name[0] == '.' || strncmp(e->d_name, "min.", 4) == 0)
+      continue;
+    n++;
+  }
+  closedir(d);
+  b->files = n;
+  b->capped = (n >= FILE_CAP);
+  char mpath[640];
+  snprintf(mpath, sizeof mpath, "%s/min.%s", dir, ext);
+  struct stat st;
+  if (stat(mpath, &st) == 0 && st.st_size > 0)
+    b->min_size = (size_t)st.st_size;
+}
+
 static const char *repro_ext(void) {
   /* 5C: name reproducers by the target's input_kind, not always .flac. */
   switch (fuzz_target_info.input_kind) {
@@ -167,6 +197,8 @@ void bucket_record(const char *cls, const uint8_t *data, size_t size) {
   snprintf(dir, sizeof dir, "%s/%s", base, cls);
   mkdir(dir, 0755);
   const char *ext = repro_ext();
+  if (is_new)
+    seed_from_dir(b, dir, ext); /* global FILE_CAP across -fork children */
 
   /* (1) the minimal witness per bucket, overwritten when a smaller input arrives. */
   if (b->min_size == 0 || size < b->min_size) {

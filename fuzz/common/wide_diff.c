@@ -12,6 +12,7 @@
 
 #include "FLAC/stream_decoder.h"
 #include "ffi_util.h"
+#include "flac_residual.h" /* flac_reconstruct_oob_at: RFC-invalid reconstruction witness */
 #include "flac_struct.h" /* flac_hdr_consistent */
 #include "fuzz_target.h"
 #include "oracle.h"
@@ -710,6 +711,28 @@ int wide_diff_oracle(const uint8_t *data, size_t size, const Wide *vin, const Wi
           uint64_t m = ((uint64_t)1 << vin->bps) - 1;
           if ((((uint64_t)(vin->plane[c][i] - flc->plane[c][i])) & m) == 0) {
             oracle_dump_write("wide_wrap_divergence", data, size);
+            return WD_REF_DISAGREE;
+          }
+        }
+        /* Stream-level RFC-invalidity witness (the decode-sample-divergence-highbps
+         * class, findings/): if the frame containing sample i reconstructs a subframe
+         * OUT OF ITS CODED DEPTH at or before i -- computed exactly from the bitstream,
+         * no decoder involved -- then RFC 9639 §5 leaves its decoding unspecified.
+         * Vinyl folds to the coded depth (P1 `Lpc.restoreA` wrap), the references keep
+         * container width with non-clean arithmetic at bps 17-31 (the mod-2^bps test
+         * above cannot see it), so a consensus here is two implementations agreeing on
+         * unspecified behaviour, not a Vinyl defect. Catalogue with the witness; the
+         * check cannot fire on a valid stream, so it can never mask a real divergence. */
+        {
+          FlacOob oob;
+          if (flac_reconstruct_oob_at(data, size, vin->nch, vin->bps, i, &oob)) {
+            fprintf(stderr,
+                    "[wide] sample divergence at ch%d[%ld] on an RFC-INVALID stream: frame %zu "
+                    "subframe %d reconstructs %lld at local sample %ld, outside its %d-bit coded "
+                    "depth (RFC 9639 §5: unspecified) -- decode-sample-divergence-highbps class, "
+                    "catalogued\n",
+                    c, i, oob.frame, oob.channel, (long long)oob.value, oob.index, oob.depth);
+            oracle_dump_write("wide_sample_diff_oob_coded", data, size);
             return WD_REF_DISAGREE;
           }
         }

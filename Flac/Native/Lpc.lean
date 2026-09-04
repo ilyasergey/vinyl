@@ -91,6 +91,38 @@ def restoreAux (b : Nat) (cs : List Int) (shift : Nat) (hist : List Int) :
     let x := Bits.wrapSInt b (r + predict cs shift hist)
     x :: restoreAux b cs shift (x :: hist) res
 
+/-- `restoreAux` with the samples accumulated, so the recursive call is in tail
+    position. The structural `restoreAux` recurses once per residual sample (depth =
+    block size), so the List-Bool reference decoder overflowed the stack on a
+    malformed frame declaring a huge block (fz_proven_pairs, 2026-09-02); this is the
+    decode-side twin of `residualAuxTR`. -/
+def restoreAuxAcc (b : Nat) (cs : List Int) (shift : Nat) (acc : List Int) :
+    (hist : List Int) → List Int → List Int
+  | _, [] => acc.reverse
+  | hist, r :: res =>
+    restoreAuxAcc b cs shift (Bits.wrapSInt b (r + predict cs shift hist) :: acc)
+      (Bits.wrapSInt b (r + predict cs shift hist) :: hist) res
+
+theorem restoreAuxAcc_eq (b : Nat) (cs : List Int) (shift : Nat) (acc hist : List Int)
+    (res : List Int) :
+    restoreAuxAcc b cs shift acc hist res = acc.reverse ++ restoreAux b cs shift hist res := by
+  induction res generalizing acc hist with
+  | nil => simp [restoreAuxAcc, restoreAux]
+  | cons r res ih =>
+    rw [restoreAuxAcc, restoreAux, ih]
+    simp
+
+def restoreAuxTR (b : Nat) (cs : List Int) (shift : Nat) (hist res : List Int) : List Int :=
+  restoreAuxAcc b cs shift [] hist res
+
+/-- Swap the compiled `restoreAux` for the tail form; theorems keep the structural
+    definition via the kernel (value-equal). -/
+@[csimp] theorem restoreAux_eq_restoreAuxTR : @restoreAux = @restoreAuxTR := by
+  funext b cs shift hist res
+  unfold restoreAuxTR
+  rw [restoreAuxAcc_eq]
+  simp
+
 /-- Restore samples from warmup and residual at bit depth `b`. -/
 def restore (b : Nat) (cs : List Int) (shift : Nat) (warmup res : List Int) : List Int :=
   warmup ++ restoreAux b cs shift warmup.reverse res

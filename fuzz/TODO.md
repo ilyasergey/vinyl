@@ -34,7 +34,13 @@ Each has a curated reproducer + a standing detector under `findings/`.
   reference path's two residual loops. `fz_decode_stack` verifies the SHIPPED decoder is
   stack-flat in its residual layer (green at every stack size, up to the legal max
   blockSize 65535 via the libFLAC-emitter lane). See
-  `findings/decoder-stack-overflow-readriceseq/`.
+  `findings/decoder-stack-overflow-readriceseq/`. **2026-09-02: `Lpc.restoreAux` twin** —
+  the 12 h campaign's `fz_proven_pairs` died with a Lean stack overflow on a 3343 B malformed
+  input the production decoder rejects: the reference model's per-sample LPC restore
+  (`restoreAux`, depth = declared block size) is non-tail. `restoreAuxTR` `@[csimp]` twin
+  landed (value-equal, pinned in `scripts/check.sh`); the input now runs in 122 ms as a clean
+  `both_none` proven pair. The 4096 B input cap alone does NOT bound the reference model's
+  depth (a malformed header can declare a 65535-sample block).
 - **overlong-coded-number** — `Utf8Num.contsFloor` minimality gate in both reader
   twins rejects non-minimal coded numbers (2026-08-31). Two-way pin:
   `fz_overlong_utf8` (`overlong_accepted` 114M→0, `overlong_rejected` climbs).
@@ -71,9 +77,13 @@ gate once a fix lands):**
   `2^31>>shift = 2^23`. RFC 9639 §5 leaves out-of-coded-range decode unspecified; Vinyl's
   wrap is the P1 output-contract hardening (safer; removing it re-opens
   `decoder-output-contract-stereo`). No codec fix. Recorded as a known accept-set witness.
-  Residual rig limitation (documented, not built): the final PCM cannot classify this;
-  the sound discriminator is a wrap-width-32 debug decode, not worth a codec debug path
-  for a confirmed non-bug. Detector: `fz_samples_diff`.
+  **Rig discriminator BUILT (2026-09-02)** after a third witness (`repro-215B-b`, same
+  mechanism, exact reconstruction ≈ −2^40 at bps 31): `flac_reconstruct_oob[_at]`
+  (`common/flac_residual.c`) reconstructs each subframe exactly from the bitstream and
+  proves the stream leaves its coded depth before the divergent sample; `wide_diff.c`
+  catalogues such inputs as `wide_sample_diff_oob_coded` instead of aborting. Sound
+  (cannot fire on a valid stream; validated against Vinyl's own fold and libFLAC's parse);
+  explains ~70 % of the 10 h run's `wide_sample_diff_1ref` pile. Detector: `fz_samples_diff`.
 
 ## Referee discipline
 
