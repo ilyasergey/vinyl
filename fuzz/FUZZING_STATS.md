@@ -11,7 +11,58 @@ make coverage                           # llvm-cov over Flac/Native (cov/report/
 python3 cov/structural_zero.py --validate   # refresh the never-executable classifier; 0 contradictions expected
 ```
 
-## 2026-09-04 — 12 h all-target campaign: `official` 11 h + `contract` 1 h (current reference)
+## 2026-09-08 — 72 h all-target campaign: `official` 66 h + `contract` 6 h (current reference)
+
+| field | value |
+|---|---|
+| recorded | 2026-09-08 |
+| runs | `runs/20260904_080449` (`official`, 237600 s) then `runs/20260907_020457` (`contract`, 21600 s) — all 27 targets |
+| cores / jobs | 31 cores / 27 jobs, then 30 cores / 10 jobs |
+| total executions | 7,474,221,966 (official) + 1,976,158,809 (contract) = **~9.45 B** |
+| aggregate throughput | ~31,500 exec/s (official), ~91,500 exec/s (contract) |
+| **crashes / OOMs** | **0 / 0** in both phases (watchdog SIGKILLs 0); no crash artifacts |
+| findings | **none** — no new witness classes; the fatal `wide_sample_diff` class was never reached (`wide_sample_diff_oob_coded` = 0 too) |
+
+First campaign on binaries carrying the reference-model `restoreAuxTR` twin, the global
+reproducer cap and the `flac_reconstruct_oob_at` discriminator; none of the previous cycle's
+rig failures recurred (run dir 3.6 GB after 66 h). Invariants held for the full duration:
+proven pairs (`fz_proven_pairs` 11,925 execs, `peek_incoherent=0`), `emitFast == encode` and
+`encodePcm16` byte-identical (`len_diff=0 byte_diff=0`), emit referee `all_agree=12506`,
+both bounded-stack pins `overflow=0`, `16bit_violations=0`, `fz_float_exact`
+`bps<=16_divergences=0`, and `fz_overlong_utf8`'s `Utf8Num.read (write n)` proven pair over
+**9,854,566** round trips (`rt_bug=0`, `overlong_accepted=0`).
+
+### Coverage — fleet union over `Flac/Native/*.c`
+
+| metric | covered / total | % |
+|---|---|---|
+| **regions** | 6610 / 11132 | **59.4 %** |
+| branches | 2833 / 4806 | 58.9 % |
+| lines | 36498 / 63034 | 57.9 % |
+| functions | 635 / 1549 | 41.0 % |
+| **effective (genuine targets, `structural.txt`)** | **6610 / 7795** | **84.8 %** |
+
+Dead-by-design 3337 regions (30.0 %); classifier `--validate`: 0 contradictions. Region
+coverage is flat versus the 12 h run (+7 regions) — the frontier is the dead-by-design /
+codec-knob / size-bound remainder documented in the 10 h entry, not corpus reach.
+
+### Corpus
+
+| set | files |
+|---|---|
+| committed seed archive (`corpus/seeds.tar.gz`) | 2616 seeds (unchanged) |
+| `corpus/*/evolved/` after `scripts/ratchet.sh` on both runs | **42,192** (+8,738 this cycle) |
+
+Largest distillate gains: `fz_decode_diff` +1502, `fz_decode_modes` +1348, `fz_samples_diff`
++934, `fz_decode_structured` +830, `fz_proven_pairs` +549, `fz_trailing_data` +499,
+`fz_decode_capacity` +382, `fz_decode_par_eq` +372, `fz_unchecked_encode` +371,
+`fz_self_consistent` +360, `fz_gen_roundtrip` +348, `fz_metamorphic` +288. Note the decode
+targets that distilled +0 after the 10 h run grew substantially at 66 h: libFuzzer's
+feature/edge signal keeps finding coverage-distinct inputs long after *region* coverage has
+plateaued, so the evolved corpus is still worth carrying forward even when the headline does
+not move.
+
+## 2026-09-04 — 12 h all-target campaign: `official` 11 h + `contract` 1 h
 
 | field | value |
 |---|---|

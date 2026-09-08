@@ -30,7 +30,7 @@ Each has a curated reproducer + a standing detector under `findings/`.
   `readSIntSeqGo` and calls no `Flac.Rice.readRiceSeq*` (IR-verified in `Decode.c`). An
   earlier draft misattributed a `vm_decode_ref` gdb trace to the shipped decoder; that
   was wrong. The `readRiceSeqTR` / `readSIntSeqTR` `@[csimp]` twins landed anyway (sound,
-  theorems intact, pinned by name in `scripts/check.sh`) as a minor hardening of the
+  theorems intact, pinned by name in `../scripts/check.sh`) as a minor hardening of the
   reference path's two residual loops. `fz_decode_stack` verifies the SHIPPED decoder is
   stack-flat in its residual layer (green at every stack size, up to the legal max
   blockSize 65535 via the libFLAC-emitter lane). See
@@ -38,7 +38,7 @@ Each has a curated reproducer + a standing detector under `findings/`.
   the 12 h campaign's `fz_proven_pairs` died with a Lean stack overflow on a 3343 B malformed
   input the production decoder rejects: the reference model's per-sample LPC restore
   (`restoreAux`, depth = declared block size) is non-tail. `restoreAuxTR` `@[csimp]` twin
-  landed (value-equal, pinned in `scripts/check.sh`); the input now runs in 122 ms as a clean
+  landed (value-equal, pinned in `../scripts/check.sh`); the input now runs in 122 ms as a clean
   `both_none` proven pair. The 4096 B input cap alone does NOT bound the reference model's
   depth (a malformed header can declare a 65535-sample block).
 - **overlong-coded-number** — `Utf8Num.contsFloor` minimality gate in both reader

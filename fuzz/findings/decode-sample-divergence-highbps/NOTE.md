@@ -142,14 +142,16 @@ normative; A.4 requires only that the *addition* use a wide enough type, which V
 bignum `Int` does exactly. This is the same class as `decoder-output-contract-stereo`, at
 the one depth where both referees accept.
 
-**Rig-classification limitation (documented, not fixed):** the invalidity is invisible in
-the final PCM (both `214977311` and `206588703` fit 31 bits), so no post-hoc sample-range
-check can auto-classify this witness; the only sound discriminator is a debug Vinyl decode
-with the `restoreA` wrap forced to 32-bit (if it then matches the consensus, it is this
-policy class). That would require adding a debug decode path to the verified codec, which is
-not worth it for a confirmed non-bug — so `repro-561B.flac` is recorded here as a **known
-accept-set witness**: a fatal `wide_sample_diff` on a bps=31 mid/side stream whose mid
-subframe reconstructs out of coded range is this class, not a new defect.
+**Rig classification (superseded 2026-09-02 — see the discriminator section below):** the
+invalidity is invisible in the final PCM (both `214977311` and `206588703` fit 31 bits), so
+no post-hoc *sample-range* check can classify this witness, and at the time the only known
+sound discriminator was a debug Vinyl decode with the `restoreA` wrap forced to 32-bit (a
+codec debug path, not worth it for a confirmed non-bug). That analysis missed a cheaper,
+decoder-independent witness: the *stream* itself. `flac_reconstruct_oob_at` reconstructs
+the subframe exactly from the bitstream and finds this very sample (frame 2, mid local[10] =
+`-1420933233`) outside the coded depth, so `repro-561B.flac` is now auto-catalogued as
+`wide_sample_diff_oob_coded`: a fatal `wide_sample_diff` on a bps=31 mid/side stream whose
+mid subframe reconstructs out of coded range is this class, not a new defect.
 
 ## 2026-09-02 — third witness (`repro-215B-b.flac`) and the stream-level discriminator
 
