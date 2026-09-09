@@ -2351,3 +2351,162 @@ divergences and produced clean reports.
 **Next:** a ≥24-core campaign (`python3 -m fleet run default 1800`) and triage of
 any divergence through the CLI into `findings/`; fetch+minimize the IETF corpus;
 optionally wire the internal forced-serial/parallel decode symbols.
+
+## 2026-09-08 / 09 — optimizations branch: machine-word kernels
+
+Branch `optimizations` (from `fuzzing`, 641dd8d), uncommitted. Every step gated by
+`scripts/check.sh`, which grew from 155 to 177 checks over the work. Encoder output stayed
+byte-identical to frozen reference streams throughout; every decode reproduces its PCM
+exactly; smoke green, IETF must-decode 61/61, fuzz rigs 3–5 clean.
+
+**What it is worth**, against the pre-branch tree on the same machine, as geometric means
+over a 13-probe corpus at 1 / 16 / 32 threads: decode **2.49× / 2.21× / 2.13×**, decode of
+`flac -8`-encoded streams **2.80× / 2.29× / 2.12×**, encode **1.59× / 1.29× / 1.40×**.
+
+### The finding that was not a kernel
+
+The decoder ran *identical instruction counts* at 1 and 16 threads with IPC collapsing
+5.03 → 2.37. The cause was the load of `m_size` from the input `ByteArray`'s object header,
+performed once per byte inside the readers' bounds tests. That word sits at offset 8 of a
+`lean_sarray_object`, sharing its cache line with the reference count every decode worker
+updates atomically when it builds or drops a `BitReader`; the per-byte test therefore became
+a stream of coherence invalidations. It is **invisible at one thread**, where the line is
+L1-hot, so no single-thread profile and no timing gate can see it.
+
+The fix is to carry the size as a `USize` loop parameter under an erased `sz ≤ d.usize`
+hypothesis (`Flac.Bits.toNat_lt_of_lt_size`), so `uget` needs no size load at all. Applied to
+the Rice reader it took a 2.1 GB 16-thread decode from 2.24 s to 1.53 s (IPC 4.38, CPU
+26.6 → 15.7 s). The same bug was then found in the fixed-width reader — VERBATIM content and
+every subframe's warm-up samples — where `readSIntSeqGo` read the header *four times per
+sample*: on a 1 GB white-noise stream, 203.0 G → 84.5 G instructions and 7.54 → 4.79 s at one
+thread, 1.31 → 0.70 s at sixteen.
+
+`scripts/audit_ir.py` exists because of this: no theorem can state the property, and a grep
+over the generated C can.
+
+### Landed
+
+Decoder kernels, each an `@[csimp]` swap or a guarded dispatch with every branch proven equal
+to the specification reader:
+
+- `Lpc.restoreA`/`Fixed.restoreA → restoreFast` (`RestoreFastOk`: b ≤ 33, |c| < 2^15,
+  warm-up < 2^33, size < 2^32), with `restoreWin{1..12}`/`restoreRoll{1..12}` carrying the
+  last `K` outputs as `Int64` parameters — one residual load and one conversion per sample
+  instead of `K` bounds-checked history loads. Order 8: 18.6 → 4.4 ns/sample.
+- `Decode.readRiceSeqFast` dispatching on `RiceRunOk` into `riceRunU` (`USize` cursor,
+  `UInt64` fold, exact `Nat` path for quotients above 2^40), and `readSIntSeqFast` on
+  `SIntRunOk` into `readSIntSeqU`.
+- A byte-stepping unary scan (`nlz8Table`, `scanOneU`): mask the byte at the cursor down to
+  the bits at or after it and read `7 - log2` out of a 256-entry table, or skip eight bits
+  when the window is empty. `flac -8`-stream decode +5.9%, branch-miss rate 1.62% → 0.80%.
+- `Stereo.decode{LS,RS,MSL,MSR}A → …Fast` plus `decodeMSA`, one pass producing both channels.
+- `Crc.crc16Range → crc16RangeFast`, slicing-by-four, proved from the shift register's
+  linearity (`step_xor`, `tab_xor`, `update_xor`, `update4`). The byte loop was 22% of dense
+  single-thread decode; now 8%.
+- `Stream.pcm{Stereo,Mono}Go → …Fast`: the frame's bytes are copied out of a 256 KiB zero
+  block once and filled in place with `USize` stores.
+- `Decode.syncScan` as a `USize` walk (hints only, no theorem — a wrong guess costs work,
+  never correctness).
+
+Encoder kernels:
+
+- `Emit.lpcResGo{1..8} → …Fast` and `lpcResWin{1..8}`, the exact `Int64` residual with the
+  `small31` sample bound checked as each sample enters and the rest of the block handed to
+  the boxed loop on failure. Residual micro 19.0 → 5.5 ns/sample.
+- `Encode.pushRiceRangeF → …Fast` (`zigzag64`, `UInt64` counts, per-residual check with a
+  slow suffix), `channelSegO → channelSegU` (two `uget` loads and an `Int64` sign adjust per
+  sample), `Heuristics.riceParam → riceParamFast` (closed form
+  `min 14 (log2 ((sum-1)/n) + 1)` in place of up to fourteen add-and-compare steps).
+- MD5's block loop with unboxed state and word loads, and one `base + 64 ≤ size` per block
+  carried down `blocksIn` so its sixty-four reads are plain `uget`s: 1.58 → 1.09 ns/byte.
+
+Routing, gates and hygiene:
+
+- The public entry points were compiling to the reference shapes with their fast equalities
+  proven and unused — a `@[csimp]` only rewrites code generated *after* it is elaborated.
+  `Flac.encode` and friends now compile to `Emit.emitFast` and `Flac.decodePcm16` to
+  `decodePcm16A`. `--encode-slow` on 4 MB: 50 s → 1.80 s.
+- `scripts/audit_ir.py`: the compiled-path audit. Positive half — each shipped entry point's
+  module must call the kernel it should. Negative half — the generated bodies of the hot
+  loops must contain no `lean_sarray_size`/`lean_byte_array_size`.
+- `scripts/gen/check_gen.py`: every declaration the kernel generators emit must appear
+  verbatim in the module it was generated into. It immediately found two stale templates.
+- `scripts/check.sh` pins the swaps per file (`restoreA_eq_restoreFast` exists in both
+  `Lpc.lean` and `Fixed.lean`, and a repository-wide grep was satisfied by either) and pins
+  the residual-reader equalities by name.
+- `FlacTest` gains `kernelBoundaryTests`: the byte-stepping scan against the bit walk over
+  every byte value × start bit × fuel, CRC-8/16 over every offset and tail length, the Rice
+  reader at k = 0…17 including runs across byte boundaries, and the LPC restore at b = 33 and
+  orders 1/4/12/13/32.
+- `conformance/fuzz.sh`: rig 5 draws block sizes inside the encoder's cap (the 87 "ENCODE
+  REJECTED" results before that were the rig, not the encoder) and now draws **1–8 channels**
+  rather than 1–2, so the independent multichannel frame path is covered; rig 3 gained a
+  mid-stream slice case, which reaches the decoder through the sync scan rather than the
+  metadata reader.
+- `Bits.lean` absorbed the shared machine-word lemmas (`p2_eq`, `wrapSInt_eq_of_fits`,
+  `small31`, `sar_eq_shiftRight`, `toInt_toInt64_of_fits{16,34}`); `Stereo` no longer imports
+  `Lpc`; the kernel generators live in `scripts/gen/`; `ARCHITECTURE.md` records the
+  swap/compiled-path rule; `docs/int-width-cliff.md` writes up the 24-bit `Int` incident.
+- `Stream.pcm{Stereo,Mono}GoFast`'s guard was frame-scale on the decode path but whole-file
+  on the reference encode path, so a large input allocated and filled a whole-file zero
+  buffer. Capped at 65536 samples per call; peak RSS on `--encode-slow` at 128 MB input
+  7243 → 6066 MB. That path still costs ≈47× the input in RSS, which is now its own limit.
+
+### Discovered
+
+- **A `@[csimp]` only rewrites code generated after it is elaborated**, so a swap proved in
+  `Flac/Spec/` never reaches the module that defined the function. Two shipped entry points
+  sat on the wrong side of that line for months with their equalities proven.
+- **`Nat` literals ≥ 2^32 compile to a per-use `lean_cstr_to_nat`** — a string parse per
+  sample. Hoist them into guards or use `Bits.p2`.
+- **A hot lookup table is a `ByteArray` if its entries fit a byte.** The leading-zero table
+  started as an `Array USize`: every lookup is a pointer load *plus* `lean_unbox_usize`, over
+  2 KB. That cost 3–6% of decode and turned the byte-stepping scan into a net regression; the
+  identical code over a 256-byte `ByteArray` is 5.9% ahead on `flac -8` streams.
+- **Measure the obvious middle variant too.** "Test the cursor bit first, then byte-step" was
+  worse than *both* alternatives.
+- **Per-order micro numbers do not say whether an order is worth specialising.** Restore reads
+  2.6 / 2.9 / 3.5 / 4.3 ns per sample at orders 1 / 4 / 8 / 12, which makes orders 9–12 look
+  like they buy little — but that compares specialisations with each other. Against the generic
+  `Int64` walk they buy 1.71× on an order-12 stream and 1.40× on `flac -8` material. Twelve is
+  where `flac -8` stops, so it is the common case.
+- **A closure's free `Int64` variables are re-unboxed per iteration**; route them through a
+  separate `def` with `Int64` parameters. Likewise `Float`-typed `let mut` across a `for`
+  loop, and `Array.all`, which compiles to the generic monadic fold.
+- A proof argument of the form `sz = d.usize` makes the equation compiler substitute and then
+  fail to generate equational theorems; `sz ≤ d.usize` does not. So the safety hypothesis is
+  the inequality and the spec lemmas carry the equality separately.
+- `lake build` did not relink the `vinyl` executable, so a first measurement showed no change; `vinyl`
+  is now a default target in `lakefile.toml`.
+- `Nat.log2_self_le` + `Nat.lt_log2_self` + `Nat.mod_mul_right_div_self` reduce "the masked
+  window's highest set bit is the run length" to ten lines, against a 2048-case `decide`.
+- `set`, `split_ifs`, `by_contra` and `swap` are Mathlib-only. `decide` settles 256-case
+  `UInt8` facts instantly but hits the recursion limit at `UInt16` — use `BitVec` lemmas.
+- MD5 is latency-bound on its state chain: re-associating `step` so the late-arriving `f` is
+  added last measured 1.10 against 1.09 ns/byte. clang already emits one `rol` per step and
+  merges each four-byte read into a single 32-bit load. Recorded in `Md5.lean` so it is not
+  re-attempted.
+
+### Fuzzing
+
+`fuzz/` (27 targets, in tree) builds clean against this work: `make`, `make check` and
+`scripts/regress.sh` all green, both filed detectors still fire. Its guard-boundary coverage
+is already adequate — `vinyl_checks.c`'s byte lane compares `decodeBytes` against `pcmBytes`
+of the decoded `Audio` **at any bit depth**, and `fz_proven_pairs` compares `decodeOption`
+against `decodeReference` with no depth gate, so the readers behind `SIntRunOk` and
+`RiceRunOk` are exercised.
+
+`conformance/fuzz.sh` was widened: rig 5 draws 1–8 channels rather than 1–2, so the
+independent multichannel frame path is covered, and rig 3 gained a mid-stream slice, which
+reaches the decoder through the sync scan rather than the metadata reader.
+
+### Next
+
+The decoder's remaining per-field readers still read the header (`bitFast`, `accBytes`,
+`extractBits3`, `readUnaryGo`, `scanOne`); the Rice reader is still 26–30% of decode and
+wants a fused four-byte window; `lean_array_push` is 9% of decode and wants pre-sized
+outputs. On the encode side the exact residual can be computed once and the partition sums
+folded off it, which would delete the float fold entirely — but it changes Rice parameters in
+marginal partitions, so the compression ratio must be re-measured before it lands. Coverage
+gaps worth closing first: 24- and 32-bit VERBATIM, RICE2 parameters above 17, LPC order 32,
+8-channel, and a large-input `--encode-slow`.

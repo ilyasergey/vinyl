@@ -13,7 +13,6 @@ cd "$(dirname "$0")/.."
 
 CORPUS="${1:?usage: ietf.sh <path-to-flac-test-files>}"
 command -v flac >/dev/null || { echo "flac CLI required"; exit 1; }
-command -v metaflac >/dev/null || { echo "metaflac required"; exit 1; }
 lake build vinyl >/dev/null
 
 WORK=$(mktemp -d)

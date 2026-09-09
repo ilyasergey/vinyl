@@ -36,6 +36,14 @@ def pow2Table : Array Nat := Array.ofFn (n := 64) fun i => 2 ^ i.val
     pow2Table[n]'(by simp only [pow2Table, Array.size_ofFn]; exact h)
   else 2 ^ n
 
+/-- The table-driven power of two computes `2 ^ ·` — the bridge that lets
+    every hot path use `p2` under the unchanged round-trip theorems. -/
+@[simp] theorem p2_eq (n : Nat) : p2 n = 2 ^ n := by
+  unfold p2
+  split
+  · simp only [pow2Table, Array.getElem_ofFn]
+  · rfl
+
 /-- Write the low `n` bits of `v`, most significant bit first. -/
 def writeBits : (n : Nat) → (v : Nat) → BitStream
   | 0, _ => []
@@ -200,6 +208,164 @@ def readSInt (n : Nat) (s : BitStream) : Option (Int × BitStream) :=
   else
     let m := x % P
     if 2 * m < P then m else m - P
+
+/-- `wrapSInt` is the identity exactly where the value already fits —
+    what makes the decoder's wrap invisible on every stream the encoder
+    can produce. -/
+theorem wrapSInt_eq_of_fits (n : Nat) (x : Int) (h : FitsSInt n x) :
+    wrapSInt n x = x := by
+  obtain ⟨h1, h2⟩ := h
+  simp only [wrapSInt, p2_eq]
+  rw [if_pos ⟨h1, h2⟩]
+
+/-- The wrapped value always fits: the decoder-side bound that keeps
+    predictor feedback from diverging on adversarial streams. -/
+theorem fitsSInt_wrapSInt (n : Nat) (x : Int) : FitsSInt n (wrapSInt n x) := by
+  have hP : (0 : Int) < ((2 ^ n : Nat) : Int) := by
+    have := Nat.two_pow_pos n
+    omega
+  simp only [wrapSInt, p2_eq]
+  split
+  · next h => exact h
+  · have h0 : 0 ≤ x % ((2 ^ n : Nat) : Int) := Int.emod_nonneg x (by omega)
+    have hlt : x % ((2 ^ n : Nat) : Int) < ((2 ^ n : Nat) : Int) :=
+      Int.emod_lt_of_pos x hP
+    split <;> exact ⟨by omega, by omega⟩
+
+/-- `wrapSInt` is the balanced residue: the `[-2^(n-1), 2^(n-1))`
+    representative of `x mod 2^n`, i.e. `Int.bmod` at a power of two. This is
+    the form the machine-word restore kernels reason through: a value
+    computed mod `2^64` and found in range is the wrap itself. -/
+theorem wrapSInt_eq_bmod (n : Nat) (x : Int) : wrapSInt n x = x.bmod (2 ^ n) := by
+  simp only [wrapSInt, p2_eq]
+  cases n with
+  | zero =>
+    simp only [Nat.pow_zero, Int.bmod_one, Int.natCast_one]
+    split
+    · omega
+    · simp
+  | succ n =>
+    rw [Int.bmod_def]
+    have hQ : (0 : Int) < ((2 ^ n : Nat) : Int) := Int.natCast_pos.mpr (Nat.two_pow_pos n)
+    have hM : ((2 ^ (n + 1) : Nat) : Int) = 2 * ((2 ^ n : Nat) : Int) := by
+      rw [Nat.pow_succ, Int.natCast_mul]; omega
+    rw [hM]
+    generalize ((2 ^ n : Nat) : Int) = Q at hQ ⊢
+    have hr0 : 0 ≤ x % (2 * Q) := Int.emod_nonneg x (by omega)
+    have hrlt : x % (2 * Q) < 2 * Q := Int.emod_lt_of_pos x (by omega)
+    have hdiv : (2 * Q + 1) / 2 = Q := by omega
+    rw [hdiv]
+    split
+    · next h =>
+      rcases Int.lt_or_le x 0 with hneg | hnn
+      · have h1 := Int.add_mul_emod_self_left x (2 * Q) 1
+        rw [Int.emod_eq_of_lt (by omega) (by omega)] at h1
+        rw [← h1]
+        omega
+      · rw [Int.emod_eq_of_lt hnn (by omega)]
+        omega
+    · split <;> omega
+
+/-- `FitsSInt` is monotone in the width. -/
+theorem fitsSInt_mono {m n : Nat} (h : m ≤ n) {x : Int} (hx : FitsSInt m x) :
+    FitsSInt n x := by
+  obtain ⟨h1, h2⟩ := hx
+  have hle : (2 ^ m : Nat) ≤ 2 ^ n := Nat.pow_le_pow_right (by omega) h
+  exact ⟨by omega, by omega⟩
+
+/-! ## Word-sized byte access
+
+`i < d.usize` puts `i` inside the buffer on every platform: the machine-word
+size is the true size reduced mod the word, never more. The kernels index
+`ByteArray`s with `USize` behind this one comparison instead of a proof. -/
+
+/-- `USize` addition below a bound that fits the word is exact. -/
+theorem usize_add_toNat (i : USize) (k n : Nat) (h : i.toNat + k ≤ n) (hn : n < USize.size) :
+    (i + USize.ofNat k).toNat = i.toNat + k := by
+  simp only [USize.size_eq_two_pow] at hn ⊢
+  rw [USize.toNat_add, USize.toNat_ofNat', Nat.mod_eq_of_lt (a := k) (by omega),
+    Nat.mod_eq_of_lt (by omega)]
+
+theorem toNat_lt_of_lt_usize {d : ByteArray} {i : USize} (h : i < d.usize) :
+    i.toNat < d.size := by
+  have := USize.lt_iff_toNat_lt.1 h
+  simp only [ByteArray.usize, Nat.toUSize_eq, USize.toNat_ofNat'] at this
+  exact Nat.lt_of_lt_of_le this (Nat.mod_le _ _)
+
+/-- The same bound with the buffer's size carried as a *word parameter*
+    rather than read from the object header.
+
+    The distinction is invisible single-threaded and decisive with several
+    decoding threads: a `ByteArray`'s size word sits in the same cache line
+    as its reference count, and every worker that builds or drops a reader
+    over the shared input updates that count atomically. A hot loop that
+    bounds-checks against `d.usize` therefore reloads a line other cores keep
+    invalidating — one coherence miss per byte read. Hoisting the size into a
+    loop parameter (this hypothesis is what keeps the access safe) leaves the
+    loop reading nothing but the data itself. -/
+theorem toNat_lt_of_lt_size {d : ByteArray} {sz i : USize} (hsz : sz ≤ d.usize)
+    (h : i < sz) : i.toNat < d.size :=
+  toNat_lt_of_lt_usize (USize.lt_iff_toNat_lt.2
+    (Nat.lt_of_lt_of_le (USize.lt_iff_toNat_lt.1 h) (USize.le_iff_toNat_le.1 hsz)))
+
+theorem floatArray_toNat_lt_of_lt_usize {d : FloatArray} {i : USize} (h : i < d.usize) :
+    i.toNat < d.size := by
+  have := USize.lt_iff_toNat_lt.1 h
+  simp only [FloatArray.usize, Nat.toUSize_eq, USize.toNat_ofNat'] at this
+  exact Nat.lt_of_lt_of_le this (Nat.mod_le _ _)
+
+/-! ## Machine-word bridges
+
+Facts relating `Int64` operations to the exact `Int` ones. They belong here
+rather than in one kernel's module: the LPC restore, the residual emitter,
+the stereo decorrelations and the bit writer all reason through them, and
+having them here is what lets `Stereo` stop importing `Lpc` for two generic
+arithmetic lemmas. -/
+
+/-- `Bits.sar` is `Int`'s arithmetic shift. -/
+theorem sar_eq_shiftRight (x : Int) (s : Nat) : sar x s = x >>> s := by
+  cases x <;> rfl
+
+/-- An `Int64` arithmetic shift by a word-sized count is the `Int` shift. -/
+theorem toInt_shiftRight_ofNat (a : Int64) (s : Nat) (hs : s < 64) :
+    (a >>> Int64.ofNat s).toInt = a.toInt >>> s := by
+  show (a >>> Int64.ofNat s).toBitVec.toInt = _
+  rw [Int64.toBitVec_shiftRight, BitVec.toInt_sshiftRight']
+  have hmsb : (BitVec.ofNat 64 s).msb = false := by
+    rw [BitVec.msb_eq_decide, BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]
+    simp only [decide_eq_false_iff_not, Nat.not_le]
+    omega
+  change a.toBitVec.toInt >>> ((BitVec.ofNat 64 s).smod 64).toNat = a.toInt >>> s
+  simp only [BitVec.toNat_smod, hmsb, show (64 : BitVec 64).msb = false from by decide]
+  change a.toBitVec.toInt >>> ((BitVec.ofNat 64 s).toNat % (64 : BitVec 64).toNat) = a.toInt >>> s
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (show s < 2 ^ 64 by omega),
+    show (64 : BitVec 64).toNat = 64 from by decide, Nat.mod_eq_of_lt hs]
+  rfl
+
+theorem toInt_toInt64_of_fits16 {c : Int} (h : FitsSInt 16 c) : c.toInt64.toInt = c := by
+  obtain ⟨h1, h2⟩ := h
+  simp only [Nat.reducePow] at h1 h2
+  exact Int64.toInt_ofInt_of_le (by omega) (by omega)
+
+theorem toInt_toInt64_of_fits34 {x : Int} (h : FitsSInt 34 x) : x.toInt64.toInt = x := by
+  obtain ⟨h1, h2⟩ := h
+  simp only [Nat.reducePow] at h1 h2
+  exact Int64.toInt_ofInt_of_le (by omega) (by omega)
+
+/-- `FitsSInt 31` with the bound as a literal: two scalar compares per sample
+    where `2 ^ 31` would be a `Nat.pow` call. The encoder tests it per residual
+    and the stereo decorrelation per sample, so it is here rather than in either
+    of them. -/
+@[inline] def small31 (x : Int) : Bool := decide (-1073741824 ≤ x ∧ x < 1073741824)
+
+theorem fitsSInt31_of_small31 {x : Int} (h : small31 x = true) : FitsSInt 31 x := by
+  simp only [small31, decide_eq_true_eq] at h
+  simp only [FitsSInt, Nat.reducePow]
+  omega
+
+theorem toInt_toInt64_of_small31 {x : Int} (h : small31 x = true) : x.toInt64.toInt = x := by
+  simp only [small31, decide_eq_true_eq] at h
+  exact Int64.toInt_ofInt_of_le (by omega) (by omega)
 
 /-! ## Bytes ↔ bits -/
 

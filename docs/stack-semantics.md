@@ -119,7 +119,7 @@ applied", both spot-verified once at the IR level
 the old loop's non-tail self-call becomes a `goto` loop).
 
 Route 3 landed in its grep approximation only: `scripts/check.sh` pins
-the five `@[csimp]` swap names, so *dropping a swap* fails the gate, but
+the `@[csimp]` swap names, so *dropping a swap* fails the gate, but
 nothing yet rejects a *new* non-tail input-driven loop at elaboration
 time — the `@[tail_shape]` certifier is still the open mechanization.
 Route 2 remains the research direction, tracked as "stack as a resource"

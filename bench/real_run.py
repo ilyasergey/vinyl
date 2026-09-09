@@ -24,14 +24,12 @@ them measurable:
   libFLAC's *decoder* has no threading option and is measured at one.
 """
 
-from __future__ import annotations
 
 import csv
 import os
 import random
 import statistics
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,7 +37,6 @@ from pathlib import Path
 from flacsize import audio_bytes
 
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 ROOT = Path(__file__).resolve().parent.parent
 BENCH = ROOT / "bench"
@@ -55,7 +52,6 @@ SWEEP = sorted({
     for n in os.environ.get("BENCH_THREAD_SWEEP", "1,2,4,8").split(",")
     if n.strip()
 })
-THREADS = SWEEP[-1]       # the headline thread count
 
 
 @dataclass(frozen=True)
@@ -176,7 +172,9 @@ def main() -> None:
         raw = pcm.read_bytes()
         cases = cases_for(unit)
         vinyl_flac = cases[0].output
-        flac8 = next(c.output for c in cases if c.label == "flac -8 -j1")
+        # The `-j1` case exists only when 1 is in the sweep; fall back to any
+        # `flac -8` output, since every thread count produces the same bytes.
+        flac8 = next(c.output for c in cases if c.label.startswith("flac -8"))
 
         # Materialize decoder input before the warmups, then warm each process.
         run(cases[0].command, cases[0].env)

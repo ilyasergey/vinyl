@@ -3,12 +3,19 @@ import Flac.Native.Stream
 import Flac.Spec.Stream
 
 /-!
-# The heuristics' single proof obligation
+# Validity certificates for the default heuristics
 
-`defaultChooser` always returns a valid subframe configuration — the only
-fact the kernel ever needs about the heuristic layer.
-With it, the reference capstone specializes to the corollary
-`decodeReference_encode_default`.
+Each default chooser returns a configuration satisfying the corresponding
+`Valid` predicate, on the domain it is called with: `riceCfg_valid`,
+`fixedCfg_valid`, `lpcCfg_valid`, `defaultChooser_valid` (which needs a
+nonempty block and fitting samples), `defaultSubCfg_valid`,
+`defaultAsgChooser_valid`.
+
+None of them is *needed* for the round trip. `decodeReference_encode_default`
+below specializes the reference capstone directly, because the reference
+encoder wraps every chooser in `Frame.ChannelAsg.orVerbatim` and so is correct
+for an arbitrary one — see `Flac.Spec.Stream`. These certificates say the
+defaults never trigger that fallback, which is a *compression* property.
 -/
 
 namespace Flac.Heuristics

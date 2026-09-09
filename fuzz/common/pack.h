@@ -16,7 +16,7 @@
  * 65535 here would waste the entire corpus on inputs the checked API rejects
  * outright. The out-of-envelope region (blockSize > 4608, sampleRate == 0,
  * oversized geometry) is the job of the encode/edge bundle and the UNCHECKED
- * target (fz_unchecked_encode / common/vinyl_unchecked_api.c), which drives
+ * target (fz_unchecked_encode / common/vinyl_modes.c), which drives
  * Stream.Unchecked.encode directly.
  */
 #ifndef PACK_H

@@ -58,38 +58,29 @@ the proposed research would actually do for it:
 
 ## Formal-methods coverage
 
-**What research would buy, per issue.** Four directions surfaced, each
-with its own note:
+**What research would buy, per issue.** Four directions surfaced, one note
+each, and the *Research* column above says which applies where:
 
-- *Provable heap and time bounds* ([cost semantics](cost-semantics.md))
-  would upgrade **#3** (the capacity hint becomes a charged allocation),
-  **#4** (spawning and candidate gathering become charges the storm
-  cannot pay), and **#8** (deciding a guard is charged in evaluation
-  order, so guard-order bugs fail the budget proof). **#1**, **#2**, and
-  **#5** were cost bugs too — the reason they rate tier **T** with only
-  a *residue* role for research is that their fixes *reified the
-  resource into a value* the current logic can bound: samples wrapped to
-  their width (#1), output measured in sample count (#2), a read capped
-  at `lim := b` (#5). The property each attack needed is excluded by
-  theorem today; what remains for the cost model is only the
-  value-to-bytes constant — that a 33-bit-bounded sample occupies O(1)
-  memory, that `decode_size_le`'s sample count bounds resident bytes
-  (02's recorded residual: a bomb still costs the budget in memory
-  before its rejection) — and those value-bound theorems are precisely
-  the lemmas the cost proofs would consume.
-- *Provable stack depth* ([stack semantics](stack-semantics.md)) would
-  upgrade **#6**: today the accumulator rewrite is pinned by equalities,
-  but constant depth itself rests on syntax plus the compiler.
-- *Mechanized name-to-theorem coverage*
-  ([API contracts](api-contracts.md)) addresses **#7**'s class: a
-  `@[covered_by]` checker makes "the natural name carries the strongest
-  guarantee" a build failure instead of a review habit, and its
-  perimeter corollaries absorb the lessons of **#9**/**#10**.
-- *Validating the model against the standard*
-  ([spec validation](spec-validation.md)) addresses **#11**'s class (and
-  the accept-set half of **#5**): traceability matrix, must-reject
-  corpora, referee triangulation, and an explicit accept-set predicate,
-  so model-vs-RFC deviations surface at the gate instead of in audits.
+- [cost semantics](cost-semantics.md) would **upgrade #3, #4 and #8** —
+  the capacity hint becomes a charged allocation, spawning and candidate
+  gathering become charges the storm cannot pay, and deciding a guard is
+  charged in evaluation order, so a guard-order bug fails the budget proof.
+  **#1, #2 and #5** were cost bugs too, but their fixes *reified the resource
+  into a value* the current logic bounds — samples wrapped to their width,
+  output measured in sample count, a read capped at `lim := b` — so the
+  attack is excluded by theorem today and only the value-to-bytes constant
+  is left for a cost model.
+- [stack semantics](stack-semantics.md) would **upgrade #6**: the accumulator
+  rewrite is pinned by equalities, but constant depth itself rests on syntax
+  plus the compiler.
+- [API contracts](api-contracts.md) addresses **#7**'s class, and absorbs the
+  perimeter lessons of **#9** and **#10**: a `@[covered_by]` checker makes
+  "the natural name carries the strongest guarantee" a build failure rather
+  than a review habit.
+- [spec validation](spec-validation.md) addresses **#11**'s class and the
+  accept-set half of **#5**: a traceability matrix, must-reject corpora,
+  referee triangulation, and an explicit accept-set predicate, so
+  model-vs-RFC deviations surface at the gate instead of in an audit.
 
 **What formal methods cannot close, in principle.** No finding is beyond
 formal methods entirely — each can be moved from *silent* to *checked*.
@@ -105,25 +96,17 @@ compilation à la CakeML moves this boundary down to the hardware model,
 never past it. Everything else about all eleven findings is, in
 principle, theorem-shaped.
 
-**What needed no new theory at all.** **#1**, **#2**, and **#5** are
-fixed and theorem-secured with machinery the project already had:
-a bounding primitive plus an identity-on-valid lemma (#1), a budget
-bridged to the old loops by one equation each (#2), an accept-set guard
-carried through the existing simulation stack (#5). **#7** and **#11**
-proved to be the same kind — their fixes landed on existing theorems
-alone (the hypothesis-free checked capstone became the public `encode`'s
-guarantee, and the P11 clause tightened a guard under `some`-conditional
-statements). **#9** and **#10** need no theory either, but in the
-opposite sense: after the fix there is nothing left for a theorem to say
-about the instance; a total parser and a tested re-exec loop are correct
-by construction. Their research role is *class* only — the api-contracts
-perimeter rules prevent recurrence, they do not (and need not) make
-anything provable. **#6** landed one notch above what its note first
-planned: the
-bridging equalities carry `@[csimp]`, so the kernel checks the swap and
-no Spec proof moved — but constant depth itself still rests on syntax
-plus the compiler, which is exactly the *upgrade* stack-semantics
-proposes.
+**What needed no new theory at all.** **#1**, **#2**, **#5**, **#7** and
+**#11** are theorem-secured with machinery the project already had — a
+bounding primitive plus an identity-on-valid lemma, a budget bridged to the
+old loops by one equation each, an accept-set guard carried through the
+existing simulation stack, and two guard tightenings under `some`-conditional
+statements. **#9** and **#10** need no theory in the opposite sense: after the
+fix there is nothing left for a theorem to say, so their research role is
+*class* only. **#6** landed one notch above what its note planned — the
+bridging equalities carry `@[csimp]`, so the kernel checks the swap and no
+Spec proof moved — but constant depth still rests on syntax plus the compiler,
+which is exactly the *upgrade* stack semantics proposes.
 
 ## Incident notes
 
@@ -184,6 +167,14 @@ proposes.
   emission — theorems correct about a model laxer than RFC 9639; the
   guards tightened, `WellFormed` stayed, and the deviation is documented
   in `COVERAGE.md`; only an external referee can see model-level gaps.
+
+- [The 32-bit scalar-`Int` cliff](int-width-cliff.md): not an audit
+  finding — a performance incident, recorded because it is the same shape
+  as one. Lean's `Int` is exact, but its
+  *scalar* range is 32-bit, so every LPC tap on a 24-bit stream allocated a
+  GMP bignum: 17 k instructions and 290 GMP calls per sample, 7x the 16-bit
+  cost, invisible to a benchmark corpus that was entirely 16-bit. Fixed by
+  the `Int64` restore kernel (5.31 s → 0.21 s) with no theorem touched.
 
 ## Research notes
 
@@ -248,7 +239,11 @@ proposes.
 
 ## See also
 
-- [`PROGRESS.md`](../PROGRESS.md): per-session log; sessions 17+ cover
-  the audit fixes.
+- [`fuzz/`](../fuzz/README.md): the coverage-guided differential fuzzing rig
+  (27 targets against libFLAC, ffmpeg and Vinyl's own proven pairs). Its
+  [`findings/`](../fuzz/findings/) carries the reproducers and notes for
+  everything it has confirmed, including the C-numbered audit items the
+  `Flac/Native/` comments cite.
+- [`PROGRESS.md`](../PROGRESS.md): per-session log.
 - [`scripts/check.sh`](../scripts/check.sh): the merge gate enforcing the
   convention tier (proof hygiene, totality lint, pinned capstone names).

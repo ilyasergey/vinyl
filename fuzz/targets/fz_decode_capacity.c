@@ -3,7 +3,7 @@
  * `Decode.decodeBytes` pre-sizes its PCM output buffer with
  *   outCapacity (2 * si.channels * si.totalSamples + 64) br.data.size
  *   where  outCapacity declared inputBytes = min declared (16*inputBytes + 65536)
- * (Native/Decode.lean:1114-1116). The `2 *` hardcodes 16-bit (2 bytes/sample),
+ * (`Flac.Decode.outCapacity`). The `2 *` hardcodes 16-bit (2 bytes/sample),
  * but the serialized output is `ceil(bps/8)` bytes/sample -- 3 at 24-bit, 4 at
  * 32-bit. So on EVERY valid 24/32-bit fast decode with a correct totalSamples,
  * the initial buffer is short by ~(ceil(bps/8)-2)/ceil(bps/8) of the output and

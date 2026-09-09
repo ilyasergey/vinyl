@@ -2,8 +2,9 @@
 
 The audio is downloaded into `bench/real_data/` and is deliberately not
 committed.  The repository contains the fetcher, publisher checksums, licence
-notes, and preparation rules needed to reproduce it.  No real-audio timing
-results have been collected yet.  [`real_corpora.lock.json`](real_corpora.lock.json)
+notes, and preparation rules needed to reproduce it.  The results themselves
+are committed: [`real_results.csv`](real_results.csv) and
+[`real_summary.md`](real_summary.md).  [`real_corpora.lock.json`](real_corpora.lock.json)
 records the exact archives fetched for this preparation, including locally
 observed SHA-256 digests.
 
@@ -96,7 +97,7 @@ curl -fLO 'https://zenodo.org/records/4060432/files/FSD50K.eval_audio.z01?downlo
 curl -fLO 'https://zenodo.org/records/4060432/files/FSD50K.eval_audio.zip?download=1'
 curl -fLO 'https://zenodo.org/records/4060432/files/FSD50K.ground_truth.zip?download=1'
 curl -fLO 'https://zenodo.org/records/4060432/files/FSD50K.metadata.zip?download=1'
-md5 FSD50K.eval_audio.z01 FSD50K.eval_audio.zip
+md5sum FSD50K.eval_audio.z01 FSD50K.eval_audio.zip
 zip -s 0 FSD50K.eval_audio.zip --out FSD50K.eval_audio.unsplit.zip
 unzip FSD50K.eval_audio.unsplit.zip
 ```

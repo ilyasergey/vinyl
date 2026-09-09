@@ -138,7 +138,7 @@ the reference decoder, and a megabit unary run through `Bits.readUnary`.
 That the compiled loops run in constant stack. The logic cannot state it
 (erasure 2 above), so the guarantee rests on: definitions in syntactic
 tail form, the Lean compiler's tail-call compilation, and the merge gate —
-which now grep-pins the five `@[csimp]` swap names, so a refactor cannot
+which now grep-pins the `@[csimp]` swap names, so a refactor cannot
 silently drop one and revert a loop to stack-frame-per-frame. A real
 syntactic tail *certifier* (elaborator-level, rejecting non-tail
 recursion in decode paths at build time) remains the open mechanization,

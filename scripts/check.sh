@@ -85,6 +85,77 @@ for thm in "readUnary_eq_readUnaryTR" "readFrames_eq_readFramesTR" "readFramesB_
 done
 echo "ok"
 
+echo "== machine-word kernel swaps present (csimp-pinned, per file)"
+# The hot loops ship as Int64/USize kernels behind kernel-checked @[csimp]
+# equations.  Pin them so a refactor cannot drop a swap and silently revert a
+# loop to boxed arithmetic.  The LPC and fixed restores are both named
+# restoreA_eq_restoreFast, so the pins are per file: a repository-wide grep
+# would be satisfied by either one alone.
+while read -r file thm; do
+  [ -z "$file" ] && continue
+  if ! grep -q "@\[csimp\] theorem $thm" "$file"; then
+    echo "FAIL: missing csimp swap $thm in $file"; fail=1
+  fi
+done <<'EOF'
+Flac/Native/Lpc.lean restoreA_eq_restoreFast
+Flac/Native/Fixed.lean restoreA_eq_restoreFast
+Flac/Native/Emit.lean lpcResGo1_eq_fast
+Flac/Native/Emit.lean lpcResGo2_eq_fast
+Flac/Native/Emit.lean lpcResGo3_eq_fast
+Flac/Native/Emit.lean lpcResGo4_eq_fast
+Flac/Native/Emit.lean lpcResGo5_eq_fast
+Flac/Native/Emit.lean lpcResGo6_eq_fast
+Flac/Native/Emit.lean lpcResGo7_eq_fast
+Flac/Native/Emit.lean lpcResGo8_eq_fast
+Flac/Native/Encode.lean pushRiceRangeF_eq_fast
+Flac/Native/Encode.lean channelSegO_eq_fast
+Flac/Native/Stereo.lean decodeLSA_eq_fast
+Flac/Native/Stereo.lean decodeRSA_eq_fast
+Flac/Native/Stereo.lean decodeMSLA_eq_fast
+Flac/Native/Stereo.lean decodeMSRA_eq_fast
+Flac/Native/Stereo.lean decodeMSA_eq_fast
+Flac/Native/Stream.lean pcmStereoGo_eq_fast
+Flac/Native/Stream.lean pcmMonoGo_eq_fast
+Flac/Native/Crc.lean crc16Range_eq_fast
+Flac/Native/Heuristics.lean riceParam_eq_fast
+Flac/Spec/PcmBytes.lean decodePcm16_eq_decodePcm16A
+Flac/Spec/Emit.lean Unchecked_encode_eq_emitFast
+EOF
+echo "ok"
+
+echo "== residual-reader equalities present (not csimp: they justify the guarded dispatch)"
+# readRiceSeqFast and readSIntSeqFast are not @[csimp] swaps: they *are* the
+# shipped definitions and dispatch on a decidable domain guard, with every
+# branch proven equal to the specification reader.  Pin those equalities by
+# name so a branch cannot be added or a guard widened without one.
+for thm in "riceRunU_eq" "readRiceSeqFast_eq_scanFast" "scanOneU_toNat" "readRiceSeqScan3_eq" \
+           "readSIntSeqU_eq" "readSIntSeqFast_eq_go" "readSIntSeqFast_eq"; do
+  if ! grep -rq "theorem $thm" Flac/Spec/Decode.lean; then
+    echo "FAIL: missing $thm"; fail=1
+  fi
+done
+echo "ok"
+
+echo "== compiled-path audit: the kernels reach the shipped binary, and the hot loops stay header-free"
+# Two properties of the generated C that no theorem can state:
+#   positive — each shipped entry point's module calls the kernel it should.
+#              A @[csimp] only rewrites code generated after it is declared,
+#              and the public Flac.encode/decodePcm16 once did not;
+#   negative — the Rice reader, unary scan, byteU, sync scan and MD5 block loop
+#              contain no ByteArray-header read.  That load cost ~32% of the
+#              16-thread decode wall and is invisible at one thread, so this
+#              grep is the only mechanical guard against a repeat.
+# Both live in scripts/audit_ir.py, which matches function bodies by brace depth
+# so a legitimate header read elsewhere in the same file does not trip it.
+python3 scripts/audit_ir.py || fail=1
+
+echo "== kernel generators match the code they generated"
+# The per-order kernels are templates instantiated per order; nothing
+# regenerates them at build time, so without this they drift and the next
+# order added by hand reintroduces the index-arithmetic error class the
+# templates exist to prevent.
+python3 scripts/gen/check_gen.py || fail=1
+
 echo "== proof-level trust holes: no native_decide/implemented_by/unsafe/extern in Flac/"
 if grep -rn --include='*.lean' -E '\bnative_decide\b|@\[implemented_by|\bunsafe def\b|@\[extern' Flac/; then
   echo "FAIL: proof or compilation trust hole in Flac/"; fail=1
@@ -92,15 +163,26 @@ else
   echo "ok"
 fi
 
+# One token list for both panic lints below, so the decode tier cannot end up
+# narrower than the executable tier by omission.  `sed 's|--.*||'` strips Lean
+# line comments *from the line* rather than dropping the whole line: discarding
+# any line containing `--` would hide a real `a[i]!` that carries a trailing
+# comment.
+PANIC='\]!\|get!\|set!\|head!\|tail!\|toNat!\|toInt!\|panic!'
+panic_grep () { grep -n "$PANIC" "$@" 2>/dev/null | sed 's|--.*||' | grep "$PANIC"; }
+
 echo "== decoder totality: no 'partial', no panicking indexing in decode paths"
-# decode paths: everything in Flac/ except the encoder-only modules
+# decode paths: everything in Flac/ except the two modules that are deliberately
+# outside the tier -- Md5 (tested, not verified) and Heuristics (unverified by
+# design; its choices change which valid stream is emitted, never whether the
+# round trip holds).
 DECODE_FILES=$(ls Flac/Native/*.lean | grep -v -e Md5.lean -e Heuristics.lean)
 if grep -n 'partial def' $DECODE_FILES Flac/Spec/*.lean; then
   echo "FAIL: partial def in decode path"; fail=1
 else
   echo "ok: no partial"
 fi
-if grep -n '\]!\|\[i\]!\|get!\|headD?!' $DECODE_FILES | grep -v '\-\-'; then
+if panic_grep $DECODE_FILES Flac/Spec/*.lean; then
   echo "FAIL: panicking access in decode path"; fail=1
 else
   echo "ok: no panicking access"
@@ -113,7 +195,7 @@ echo "== shipped-binary panic lint: every module a lake exe links"
 # directory it lives in; keep this list in step with the [[lean_exe]] roots
 # in lakefile.toml and their imports.
 BIN_FILES="FlacTest/Cli.lean FlacTest/Capstones.lean FlacTest/Main.lean Vinyl.lean FlacTest.lean"
-if grep -n '\]!\|get!\|headD?!\|head!\|tail!\|toNat!\|toInt!\|panic!' $BIN_FILES | grep -v '\-\-'; then
+if panic_grep $BIN_FILES; then
   echo "FAIL: panicking call in a shipped executable's modules"; fail=1
 else
   echo "ok: no panicking calls in executable modules"

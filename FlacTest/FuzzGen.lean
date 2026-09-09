@@ -83,7 +83,7 @@ def hostileFixed : List (List Int) → ChannelAsg := fun fr =>
   .independent (fr.map fun _ =>
     (⟨0, .fixed 1 { method := .rice5, po := 0, choices := [.rice 28] }⟩ : SubCfg))
 
-/-! ## Parameterized hostile choosers (Phase B3)
+/-! ## Parameterized hostile choosers
 
 Captured-`Nat` variants of the fixed choosers above so the C harness can sweep
 the parameter space (LPC order, partition order, RICE2 `k`, stereo mode) from
@@ -136,13 +136,13 @@ def hostileInvalid : List (List Int) → ChannelAsg := fun fr =>
 /-- Re-export the SHIPPED fast encoder's chooser (out of the proof surface, in
     `FlacTest/`) so the C harness can build the exact `EncoderCfg` the
     `encodePcm16_eq` proven pair quantifies over: `Encode.encodePcm16` vs
-    `Unchecked.encode ⟨bs, false, fastChooser 16⟩` (Phase 6G/7A). Exported
+    `Unchecked.encode ⟨bs, false, fastChooser 16⟩`. Exported
     uncurried: `vinyl_fastChooser(b, fr)`. -/
 @[export vinyl_fastChooser]
 def fuzzFastChooser (b : Nat) (fr : List (List Int)) : ChannelAsg :=
   Flac.Encode.fastChooser b fr
 
-/-! ## Stable C entry-point names (Phase 7A)
+/-! ## Stable C entry-point names
 
 The harness C used to `extern` the mangled `lp_vinyl_Flac_*` names directly, so a
 Lean-internal rename broke the rig at link. These `@[export vinyl_*]` re-exports
@@ -169,9 +169,13 @@ no theorem, `Flac/` untouched. -/
 @[export vinyl_encode]           def fzEncode          := Flac.encode
 @[export vinyl_encode_pcm16_fast] def fzEncodePcm16Fast := Flac.encodePcm16Fast
 @[export vinyl_encode_pcm16_cfg] def fzEncodePcm16Cfg  := Flac.encodePcm16Cfg
--- vlean_ prefix for these two: the harness already owns C API functions named
--- `vinyl_md5` / `vinyl_unchecked_encode` (vinyl_modes.h) with different signatures.
-@[export vlean_unchecked_encode] def fzUncheckedEncode := Flac.Stream.Unchecked.encode
+-- `vlean_unchecked_encode` is NOT here: this module imports `Flac.Native.Codec`,
+-- which imports the `@[csimp]` swap, so the reference writer would compile to
+-- `Emit.emitFast` and the harness's reference-vs-emitter pair would compare
+-- `emitFast` with itself. It lives in `FlacTest.FuzzRef`, which imports
+-- `Flac.Native.Stream` alone. The `vlean_` prefix on the MD5 exports below is
+-- unrelated: the harness already owns C functions named `vinyl_md5` and
+-- `vinyl_unchecked_encode` (vinyl_modes.h) with different signatures.
 @[export vinyl_default_chooser]  def fzDefaultChooser  := Flac.Heuristics.defaultAsgChooser
 @[export vlean_md5]              def fzMd5             := Flac.Md5.md5
 @[export vlean_md5_hex]          def fzMd5Hex          := Flac.Md5.md5Hex
@@ -192,7 +196,7 @@ no theorem, `Flac/` untouched. -/
 @[export vinyl_utf8_write]       def fzUtf8Write       := Flac.Utf8Num.write
 @[export vinyl_utf8_read]        def fzUtf8Read        := Flac.Utf8Num.read
 
--- A3e / C5: stable ABI for the emit writer and the pcm16 encode pipeline, so
+-- Stable ABI for the emit writer and the pcm16 encode pipeline, so
 -- `fz_encode_pcm16_eq.c` and `vinyl_gen.c` can drop the mangled `lp_vinyl_*`
 -- names. Same arity/shape as the wrapped defs (emitFast: cfg, audio;
 -- encodePcm16: blockSize, ch, sr, bytes; deinterleave: ch, samples;

@@ -14,7 +14,7 @@ works). Three rigs live in this directory, one more in `scripts/`:
   usage: `conformance/ietf.sh <path-to-flac-test-files>`. The
   must-decode `subset/` set is a merge gate; results are summarized in
   [`COVERAGE.md`](../COVERAGE.md).
-- [`fuzz.sh`](fuzz.sh) — PLAN.md §9 rigs 3–5, `fuzz.sh [iterations]`
+- [`fuzz.sh`](fuzz.sh) — PLAN.md §6 rigs 3–5, `fuzz.sh [iterations]`
   (default 200): random bytes and truncations must never crash or hang
   the decoder (totality); bit-flipped valid streams must be cleanly
   rejected or decoded, with CRCs catching most corruptions; and random

@@ -31,4 +31,4 @@ import Flac.Spec.Stream
 import Flac.Spec.Subframe
 import Flac.Spec.Utf8Num
 
-/-! # Soundproof — a formally verified FLAC codec in pure Lean 4 -/
+/-! # Vinyl — a formally verified FLAC codec in pure Lean 4 -/

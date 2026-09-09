@@ -818,6 +818,40 @@ theorem decodeBytes_spec (bytes out : ByteArray) (bps : Nat) :
           simp [emptyCap_eq]
     · rw [if_neg hmk] at h; exact absurd h (by simp)
 
-
-
 end Flac.Stream
+
+namespace Flac
+
+/-- The array-side byte decoder computes exactly what the list-side one
+    does. On the fused branch `Stream.decodeBytes_spec` identifies the
+    bytes with the serialized samples; the fallback is the sample path,
+    `decodePcm16A_samples_eq`. -/
+theorem decodePcm16A_eq (flac : ByteArray) :
+    decodePcm16A flac = decodePcm16 flac := by
+  unfold decodePcm16A
+  rw [← decodePcm16A_samples_eq flac]
+  split
+  · next pcm hd =>
+    obtain ⟨chs, sr, harr, hpcm⟩ := Stream.decodeBytes_spec flac pcm 16 hd
+    simp only [harr, hpcm, pcm16FastPar_eq, Stream.pcm16FastA_eq_range, if_true]
+  · next val hne hd =>
+    obtain ⟨pcm, bps⟩ := val
+    obtain ⟨chs, sr, harr, _⟩ := Stream.decodeBytes_spec flac pcm bps hd
+    rw [harr]
+    exact (if_neg fun h => hne pcm (by rw [h])).symm
+  · rfl
+
+/-- Swap the compiled `decodePcm16` for the array/byte path. The two are
+    value-identical (`decodePcm16A_eq`), so every theorem — the byte-level
+    capstone `decodePcm16_encodePcm16` included — keeps the list-shaped
+    definition while the executable runs the fused byte decoder.
+
+    A `@[csimp]` reaches the definitions elaborated after it, so this swap
+    lands in every module that imports `Flac` (the CLI among them); it does
+    not rewrite `Codec`'s own compiled body of `decodePcm16`, which is why
+    the CLI also names `decodePcm16A` directly (`scripts/check.sh`). -/
+@[csimp] theorem decodePcm16_eq_decodePcm16A : @decodePcm16 = @decodePcm16A := by
+  funext flac
+  exact (decodePcm16A_eq flac).symm
+
+end Flac

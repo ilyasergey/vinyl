@@ -31,7 +31,7 @@ vinyl/
 ├── PROGRESS.md          # per-session log: what landed, what's blocked, next
 ├── ARCHITECTURE.md      # this file
 ├── lean-toolchain       # pinned Lean version (4.33.0)
-├── lakefile.toml        # lake package: lib Flac, lib FlacTest, exe flactest
+├── lakefile.toml        # lake package: libs Flac/FlacTest, exes flactest/vinyl
 ├── references/
 │   └── rfc9639.txt      # the normative FLAC specification (IETF, Dec 2024)
 ├── Flac.lean            # library root; imports the public modules
@@ -54,6 +54,7 @@ vinyl/
 │   │   ├── Reader.lean     # BitReader: buffered ByteArray bit reader
 │   │   │                   #   (word-level fast paths proven = the spec)
 │   │   ├── Decode.lean     # the shipped production decoder, Flac.decode
+│   │   ├── Emit.lean       # the byte-buffer stream writer (Emit.emitFast)
 │   │   ├── Encode.lean     # the fast encoder (arrays/Task-parallel frames);
 │   │   │                   #   proven to compute Stream.Unchecked.encode
 │   │   └── Codec.lean      # Flac.encode (checked) + Unchecked + fast,
@@ -69,17 +70,25 @@ vinyl/
 │       ├── Frame.lean      # multichannel frame round-trip
 │       ├── Stream.lean     # the reference capstone: decodeReference_encode
 │       ├── Heuristics.lean # chooser certificates + default corollary
+│       ├── Emit.lean       # emitFast writes the reference encoder's bytes
 │       ├── Encode.lean     # the shipped encoder computes the reference one
+│       ├── PcmBytes.lean   # the serialization loops and decodeBytes_spec
 │       ├── Reader.lean     # BitReader simulates the List Bool model
 │       └── Decode.lean     # production ≡ reference; the shipped capstones
 ├── FlacTest.lean, FlacTest/
 │   ├── Cli.lean         # unit tests + the vinyl CLI (encode/decode)
+│   ├── Capstones.lean   # each capstone restated in full, discharged
+│   ├── FuzzGen.lean     # generators for the round-trip fuzz rig
 │   └── Main.lean        # entry point
 ├── conformance/
 │   ├── smoke.sh         # Rigs 1–2 vs `flac` CLI, both directions
-│   └── ietf.sh          # RFC 9639 companion test-file corpus (merge gate)
+│   ├── ietf.sh          # RFC 9639 companion test-file corpus (merge gate)
+│   └── fuzz.sh          # Rigs 3–5: totality, bit-flip, round-trip
 ├── scripts/
-│   └── check.sh         # the ratchet: build + hygiene + pins + tests
+│   ├── check.sh         # the ratchet: build + hygiene + pins + tests
+│   ├── audit_ir.py      # what the generated C must and must not contain
+│   └── gen/             # per-order kernel templates + drift check
+├── docs/                # hardening notes, one per audit finding (see README)
 └── bench/               # corpus generator, runner, plots (see README)
 ```
 
@@ -95,9 +104,10 @@ Three kinds of code, three different obligations:
    capstone is proven the entire heuristic layer is free optimization
    territory.
 
-2. **The reference decoder** (`Stream.decodeReference` and the readers it
-   is built from) — written over the `List Bool` bit model for clean
-   induction rather than speed. The capstone is first proven against it,
+2. **The reference decoder** (`Stream.decodeReference` in
+   `Flac/Native/Stream.lean`, and the readers it is built from) — written over
+   the `List Bool` bit model for clean induction rather than speed. The
+   capstone is first proven against it,
    then transferred to the shipped decoder via the equivalence
    `decodeOption_eq_reference` / `decode_ok_iff_reference`
    (`Flac/Spec/Decode.lean`).
@@ -231,10 +241,13 @@ yet, and the reason is its *plumbing*, not its emission: `W.pushFrames`
 folds serially over `Stream.chunkChannels cfg.blockSize a.channels`, and
 `Stream.Audio` carries `List (List Int)` channels, so driving it means
 materializing the whole file as cons cells. That is exactly what
-`--encode-slow` does, and it measures **113× slower** than the fast
-encoder on the same input for byte-identical output (7.89 s vs 0.07 s on
-4 MB) — roughly 7× from the missing frame parallelism and ~16× from
-lists-and-`Int` instead of arrays-and-`Float`.
+`--encode-slow` does, and at one thread it measures **~40× slower** than the
+fast encoder for byte-identical output (2.01 s against 0.05 s on 4 MB) — all
+of it lists-and-`Int` against arrays-and-`Float`, since neither side is
+parallel in that comparison. It also costs **≈47× the input in resident
+memory**, so it is not an option on large files: 4 MB of PCM peaks at 203 MB,
+128 MB at 6.1 GB. The channel representation is what does that, not the
+emitter.
 
 The fast *encoder* (`Flac/Native/Encode.lean`) used the other sound
 pattern until session 10: unverified by design, like the heuristics, with
@@ -257,7 +270,7 @@ trust in `Flac.Encode`. Its statement did not change by a character — the
 moved. Retiring the certificate was worth 30% of encode on the 32 MB mono
 probe the bench history uses (68.5 → 97.7 MB/s, taking encode from 1.35×
 *single-threaded* `flac -8` to **0.94×**; thread-matched on real audio the
-encoder is still 3.4× behind — see [`bench/README.md`](bench/README.md)) and
+encoder is 1.6× behind — see [`bench/README.md`](bench/README.md)) and
 23% on a 47 MB stereo one (0.564 s → 0.434 s). Compression is unchanged: the
 output is byte-identical.
 
@@ -364,6 +377,58 @@ is not something a type can express:
 Both negative tests are checked to fire: repointing `--encode` at the
 uncertified `Flac.Encode.encodePcm16` fails the gate, and weakening
 `pin_encode_fast` fails the build.
+
+**Kernel swaps have the same problem one level down, and the same answer.**
+Most hot loops ship as a `@[csimp]` equation: a kernel-checked theorem
+`f = fFast` that leaves every statement about `f` alone and changes only what
+the compiler emits. Two things follow, and the gate checks both.
+
+*Where the equality lives.* A swap must be co-located with the definition it
+replaces, so `Flac/Native/` now holds equalities as well as code (the LPC and
+fixed restores, the Rice writer, the stereo decorrelations, the serializers,
+the CRC). That is not a break in the layering discipline: these theorems are
+about two definitions in the same module and prove nothing about the codec —
+`Flac/Spec/` remains where every statement *about the format* lives.
+
+*Where the swap applies.* A `@[csimp]` only rewrites code generated after it
+is elaborated, so a swap proved in `Flac/Spec/` reaches importers but not the
+module that defined the function. Two shipped entry points sat on the wrong
+side of that line for months (`Flac.encode` compiled to the `List Bool`
+reference writer, `Flac.decodePcm16` to the list decoder, both with the fast
+equality proven and unused). So the rule is: **a swap is either co-located with
+a Native-provable equality, or accompanied by a compiled-path audit of every
+caller module** — `scripts/check.sh` greps the generated C in
+`.lake/build/ir/` for the kernel symbols the shipped entry points must call. A
+theorem cannot state that; the generated C can be read.
+
+*Not every kernel is a swap, and the difference is worth naming.* Four
+mechanisms put a fast path on the shipped binary and they carry different
+guarantees. **(a)** A `@[csimp]` swap, as above. **(b)** A *guarded dispatch*:
+the shipped definition itself branches on a decidable domain guard, with every
+branch proven equal to the specification reader — that is what
+`readRiceSeqFast` (on `RiceRunOk`) and `readSIntSeqFast` (on `SIntRunOk`) are,
+and the guarantee is as strong as (a), with `riceRunU_eq` / `readSIntSeqU_eq`
+pinned by name instead of a swap. **(c)** *Tested, not verified*: MD5 has no
+equality theorem and no second implementation; RFC 1321 vectors and corpus
+digests are what check it, and it sits outside the decoder-totality lint for
+the same reason. **(d)** *Proof-free by construction*: the sync scan only
+guesses frame offsets, and `stepAt` builds a `Step` by matching on
+`readFrameAt`'s own result, so a `Step` exists only where a frame really
+parsed. A wrong guess therefore costs a failed parse and never a wrong result;
+what bounds the *work* it costs is separate, the candidate-density floor and
+the task cap. Documentation that calls all four "csimp swaps" overstates (c)
+and (d), which is a claim about the trusted base, not a wording preference.
+
+*The audit has a negative half too.* Several hot loops carry the input
+buffer's size as an erased-proof parameter specifically so that `uget` needs no
+size load — that word shares a cache line with the object's reference count, so
+reading it per byte turns into repeated coherence invalidations once several
+decode workers hold the same input. It cost ≈32% of the sixteen-thread decode
+wall. The pathology is **invisible at one thread**, where the line is L1-hot,
+so no timing gate and no single-thread profile can catch a regression.
+`scripts/audit_ir.py` therefore also requires that the generated bodies of the
+Rice reader, the unary scan, `byteU`, the sync scan, the fixed-width reader and
+MD5's block loop contain no `lean_sarray_size`/`lean_byte_array_size` at all.
 
 What is trusted regardless. The proofs rest on Lean's kernel and, per
 `#print axioms`, only on `propext`, `Classical.choice` and `Quot.sound`.

@@ -9,8 +9,8 @@ import Flac.Spec.Lpc
 
 `readSubframe ∘ writeSubframe = id` for every valid subframe configuration,
 including wasted bits: the content round-trips at the reduced bit depth
-`b - w` (the width bookkeeping of), and the scale-down /
-scale-up pair cancels by `Flac.Bits.map_shiftUp_shiftDown`.
+`b - w`, and the scale-down / scale-up pair cancels by
+`Flac.Bits.map_shiftUp_shiftDown`.
 -/
 
 namespace Flac.Subframe

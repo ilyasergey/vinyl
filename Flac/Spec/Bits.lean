@@ -10,14 +10,6 @@ opaquely.
 
 namespace Flac.Bits
 
-/-- The table-driven power of two computes `2 ^ ·` — the bridge that lets
-    every hot path use `p2` under the unchanged round-trip theorems. -/
-@[simp] theorem p2_eq (n : Nat) : p2 n = 2 ^ n := by
-  unfold p2
-  split
-  · simp only [pow2Table, Array.getElem_ofFn]
-  · rfl
-
 @[simp] theorem length_writeBits (n v : Nat) : (writeBits n v).length = n := by
   induction n generalizing v with
   | zero => rfl
@@ -258,29 +250,6 @@ theorem readSInt_writeSInt (n : Nat) (x : Int) (h : FitsSInt n x)
     omega
   · rw [Nat.mod_eq_of_lt (by omega), if_neg (by omega)]
     omega
-
-/-- `wrapSInt` is the identity exactly where the value already fits —
-    what makes the decoder's wrap invisible on every stream the encoder
-    can produce. -/
-theorem wrapSInt_eq_of_fits (n : Nat) (x : Int) (h : FitsSInt n x) :
-    wrapSInt n x = x := by
-  obtain ⟨h1, h2⟩ := h
-  simp only [wrapSInt, p2_eq]
-  rw [if_pos ⟨h1, h2⟩]
-
-/-- The wrapped value always fits: the decoder-side bound that keeps
-    predictor feedback from diverging on adversarial streams. -/
-theorem fitsSInt_wrapSInt (n : Nat) (x : Int) : FitsSInt n (wrapSInt n x) := by
-  have hP : (0 : Int) < ((2 ^ n : Nat) : Int) := by
-    have := Nat.two_pow_pos n
-    omega
-  simp only [wrapSInt, p2_eq]
-  split
-  · next h => exact h
-  · have h0 : 0 ≤ x % ((2 ^ n : Nat) : Int) := Int.emod_nonneg x (by omega)
-    have hlt : x % ((2 ^ n : Nat) : Int) < ((2 ^ n : Nat) : Int) :=
-      Int.emod_lt_of_pos x hP
-    split <;> exact ⟨by omega, by omega⟩
 
 /-- Pointwise wrap is the identity on lists of fitting values. -/
 theorem map_wrapSInt_of_fits (n : Nat) (xs : List Int)

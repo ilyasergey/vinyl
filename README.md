@@ -143,21 +143,23 @@ decoder reproduces **libFLAC's `flac -8` output byte-for-byte**.
 
 ## Benchmarks
 
-**Per thread, Vinyl is ~2× slower than libFLAC 1.5.0 on encode and 2–4×
-slower on decode, and compresses 2–5% worse. It parallelises better than
-libFLAC, so the encode gap narrows as threads are added — to 1.2× on the
-synthetic corpus and 1.8× on real audio at eight threads — and the decoder
-passes libFLAC by eight threads.**
+**Per thread, Vinyl is 1.9–2.3× slower than libFLAC 1.5.0 on encode and
+1.8–1.9× slower on decode, and compresses 4–5% worse. It parallelises better
+than libFLAC, so the encode gap narrows as threads are added — to 1.7× on the
+synthetic corpus and 1.6× on real audio at eight threads — and on real audio the
+decoder passes libFLAC's single-threaded decoder between two and four threads.
+On the synthetic corpus it does not pass it in the swept range: those files are
+1 MB, where per-file fixed cost bounds the gain.**
 
 Wall-clock throughput at equal thread counts, as a ratio against libFLAC
 (corpus totals; first figure the synthetic corpus, second the real-audio one;
-measured 2026-08-27 on an 18-core Apple M5 Max):
+measured 2026-09-09 on a 16-core AMD Ryzen 9 9950X):
 
 | threads | encode vs `flac -8` | decode vs `flac -d` |
 |---:|---|---|
-| 1 | 1.9× / 2.2× slower | 2.1× / 3.7× slower |
-| 4 | 1.4× / 2.1× slower | 1.05× / 1.08× slower |
-| 8 | **1.2× / 1.8× slower** | **1.07× / 1.46× faster** |
+| 1 | 2.3× / 1.9× slower | 1.9× / 1.8× slower |
+| 4 | 2.0× / 1.9× slower | 1.1× slower / 1.5× faster |
+| 8 | **1.7× / 1.6× slower** | **1.04× slower / 1.8× faster** |
 
 | compression, coded frames | Vinyl | `flac -5` | `flac -8` |
 |---|---|---|---|
@@ -166,18 +168,18 @@ measured 2026-08-27 on an 18-core Apple M5 Max):
 
 Three things worth taking from that:
 
-- **Per thread the gap is 2.2× on encode and 3.7× on decode** (real audio).
-  Two comparable factors rather than one bad path point at per-operation
+- **Per thread the gap is 1.9× on encode and 1.8× on decode** (real audio).
+  Two near-equal factors rather than one bad path point at per-operation
   cost — pure Lean against `int32` SIMD — rather than anything structural
   about one path. `flac -8` also compresses better on both corpora, and so
   does `flac -5`, so there is no libFLAC preset Vinyl beats on both speed
   and ratio.
 - **Vinyl scales better with threads than libFLAC.** From 1 to 8 threads it
-  gains 3.4× (synthetic) and 6.4× (real audio) on encode, against libFLAC's
-  2.1× and 5.1×. Both codecs take a thread count — `vinyl -j N` and
+  gains 3.0× (synthetic) and 5.5× (real audio) on encode, against libFLAC's
+  2.3× and 4.6×. Both codecs take a thread count — `vinyl -j N` and
   `flac -j N` — so the comparison can be made at parity.
 - **Decoding gets faster with more threads, and that is where Vinyl wins on
-  wall clock**: 369 MB/s against libFLAC's 252 MB/s on real audio at eight
+  wall clock**: 502 MB/s against libFLAC's 273 MB/s on real audio at eight
   threads. libFLAC has no threaded decoder to answer with, so its decode row
   is a single value at any thread count.
 
@@ -200,20 +202,20 @@ What the curves say:
   have a step near unit 70, and that step is the corpus boundary — SQAM's
   stereo 44.1 kHz music is `flac -8`'s slow group, because stereo is where it
   pays an exhaustive mid/side decision that Vinyl's heuristic decides directly.
-  So the gap is ~1.4× on SQAM against ~2.0× on LibriSpeech's mono speech, and
-  the ×1.8 aggregate is a mixture rather than a factor that holds pointwise
-  (quantile against quantile it runs 1.2–1.9). The upturn at the right edge of
-  Vinyl's curves is the handful of artificial and alignment units, where all
-  implementations speed up together.
+  So the gap is ~1.5× on SQAM against ~1.7× on LibriSpeech's mono speech, and
+  the ×1.6 aggregate is a mixture rather than a factor that holds pointwise. The
+  upturn at the right edge of Vinyl's curves is the handful of artificial and
+  alignment units, where all implementations speed up together.
 - **Decode at eight threads is the one place Vinyl is ahead on wall clock.**
-  Its curve sits above `flac -d`'s over the whole corpus — ×1.46,
-  369 MB/s against 252 MB/s — and libFLAC has nothing to answer with: its
+  Its curve sits above `flac -d`'s over the whole corpus — ×1.84,
+  502 MB/s against 273 MB/s — and libFLAC has nothing to answer with: its
   decoder takes no `-j`, which is why it appears once rather than twice.
-- **Per core it is ~2.2× behind on encode and ~3.7× on decode.** Decode
-  sits a near-constant 3.5–3.7× below libFLAC over most of the corpus,
-  narrowing to ~2.2× at the fast end; encode is the mixture above. Two
-  comparable factors rather than one bad path points at per-operation cost,
-  pure Lean against `int32` SIMD.
+- **Per core it is ~1.9× behind on encode and ~1.8× on decode.** The decode
+  figure was 3.7× when this corpus was first published, on different hardware;
+  optimization work and the machine change both contributed and these rows
+  cannot separate them. Encode is the mixture above. Two near-equal factors
+  rather than one bad path point at per-operation cost, pure Lean against
+  `int32` SIMD.
 
 Thread-scaling curves and speedup-against-ideal plots, per-corpus tables, the
 corpus descriptions, the optimization history, and regeneration instructions:
@@ -221,59 +223,31 @@ corpus descriptions, the optimization history, and regeneration instructions:
 
 ### What is proven, and what the benchmark tests instead
 
-Every decoder fast path is proven equal to its bit-level specification —
-frame-parallel decoding ([`readFramesFast_eq`](Flac/Spec/Decode.lean#L2119)),
-parallel PCM serialization
-([`pcm16FastPar_eq`](Flac/Spec/Decode.lean#L2638)), and frame-parallel
-*serialization*, where each worker emits its own frame's bytes and
-[`decodeBytes_spec`](Flac/Spec/PcmBytes.lean#L702) proves the result is exactly
-the interleaved PCM of the decoded samples. So the parallel scaling above is
-not bought with trust: the workers are proven to compute what the serial loop
-would. That last step also *narrowed* the trusted surface — the window
-concatenation the previous serializer performed was asserted in prose and
-unprovable, because it reasons through `Task`.
-
-Interoperability is not proven, so it is measured. On all 143 real-audio units,
-at every thread count, outside the timed intervals: `flac -t` accepts Vinyl's
-stream and its MD5; Vinyl's decoder reproduces the input exactly; and **Vinyl's
-decoder reproduces libFLAC's `-8` output byte-for-byte** — 1.73 GiB of real
-audio encoded at libFLAC's widest search, decoded by the verified decoder with
-no mismatch.
-
-**The runtime certificate is gone.** The fast encoder used to decode its own
-output with the verified decoder and compare, falling back to the verified
-encoder on any mismatch — which is what made
-`decodePcm16_encodePcm16Fast` hypothesis-free without proving anything
-about the encoder. That cost 30% of encode time on a 32 MB probe, and it is now
-a theorem instead: `Flac.Encode.encodePcm16_eq`. The capstone's *statement* did
-not change by a character; only its proof did, and what it rests on shrank.
-
-What made that possible is that `Float` never had to be characterised.
-Float operations are opaque but *deterministic*, so the search and the
-chooser the reference is instantiated with need only be the same function
-on equal inputs — `f x = f x` needs no lemma about `f`. What `Float` does
-forbid is a float reaching the *bytes*, and it used to: residuals were
-folded into the stream straight off the search's `FloatArray`s. Emission
-now goes through the exact `Int` residual, which cost 6% and bought
-provability. [`ARCHITECTURE.md`](ARCHITECTURE.md) has the whole chain.
+The parallel scaling above is not bought with trust. Every decoder fast path,
+frame-parallel decoding and serialization included, is proven equal to its
+bit-level specification (see [Status](#status)), so the workers compute what the
+serial loop would. Interoperability is not proven, so it is measured — the
+143-unit cross-decode above, at every thread count.
 
 **Where the ratio gap comes from.** libFLAC's `-8` evaluates exactly one LPC
 order per apodization window and one fixed order, buying its ratio with several
-*windows*; Vinyl uses one window and costs three LPC orders plus all five fixed
-orders exactly, computing its nine autocorrelation lags three per pass. That is
-a more expensive search than libFLAC runs at any preset, and on synthetic
-signals it came close — but on real audio the several windows win, which is the
-4.7% on the median unit. `Flac.Heuristics.lpcCandidates` carries the whole
-measured tradeoff curve.
+*windows*; Vinyl uses one window and one LPC order — the Levinson estimate
+winner — plus all five fixed orders, costed exactly, over six autocorrelation
+lags computed three per pass. Several windows beat one on real audio: on the
+median unit Vinyl's coded frames are **5.3%** larger than `flac -8`'s and 3.8%
+larger than `flac -5`'s. `Flac.Heuristics.lpcCandidates` carries the measured
+tradeoff curve.
 
-Both searches run in exact `Float` arithmetic over unboxed `FloatArray`:
-every value they compute is an integer well inside 2^53, so doubles
-represent them exactly and the subframe *chosen* is the one the `Int` form
-would choose, at one hardware `fmul`/`fadd` per tap instead of
-`lean_int_mul` on a boxed `Array Int`. That claim is about what `Float`
-computes, so it is not a theorem and cannot be one; it is a compression
-question, and a differential test pins it against the verified encoder on
-every session. The *bytes* do not depend on it.
+Both searches run in exact `Float` arithmetic over unboxed `FloatArray`: every
+value they compute is an integer well inside 2^53, so doubles represent them
+exactly and the subframe *chosen* is the one the `Int` form would choose, at one
+hardware `fmul`/`fadd` per tap instead of `lean_int_mul` on a boxed `Array Int`.
+That is a claim about what `Float` computes, so it is not a theorem and cannot
+be one; it is a compression question, pinned by a differential test against the
+verified encoder. The *bytes* do not depend on it — emission goes through the
+exact `Int` residual, which is what made the encoder provable and let the
+runtime certificate be retired. [`ARCHITECTURE.md`](ARCHITECTURE.md) has the
+whole chain.
 
 ## Building
 

@@ -131,7 +131,7 @@ gate once a fix lands):**
   reach and are not corpus-fixable.
 - **`fz_float_exact` windowing lane — DONE (2026-08-31).** `run_windowed_lane` calls
   Vinyl's `welchF` (`lp_vinyl_Flac_Heuristics_welchF`) then `autocorrF`, i.e. the actual
-  production search input `autocorrF (welchF s)` (Heuristics.lean:387), and validates the
+  production search input `autocorrF (welchF s)` (`Flac.Heuristics.lpcChoiceF`), and validates the
   selected quantized coefficients against a long-double windowed recompute. The window
   makes the samples non-integer, so there is no integer-exact anchor; instead a
   bit-exact C-`double` replica of `welchF`+autocorr is the faithfulness self-test (a

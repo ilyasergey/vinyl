@@ -1,7 +1,7 @@
 /* fz_encode_validity — does Vinyl's OWN output pass a strict `flac -t`
  * equivalent? The rest of the fleet only asks whether libFLAC's library layer
  * can read Vinyl's stream back with MD5 checking OFF; nothing catches a wrong
- * STREAMINFO MD5 or a frame-vs-STREAMINFO inconsistency. common/flac_validate.c
+ * STREAMINFO MD5 or a frame-vs-STREAMINFO inconsistency. common/flac_api.c
  * turns MD5 checking ON and asserts the decoded audio equals the input PCM. A
  * failure is the client's bug class (b): corrupted output the reference
  * rejects. Severity V. Input packing: common/pack.h (checked-encode domain). */

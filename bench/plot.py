@@ -19,7 +19,6 @@ is about a third of the measurement, so the per-core reading here is much
 noisier than the real-audio suite's — that suite is where to read it.
 """
 import csv
-import math
 import os
 import re
 import sys

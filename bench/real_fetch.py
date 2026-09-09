@@ -35,7 +35,6 @@ are decoded losslessly to S16LE.  Consumers must use the manifest sample rate
 rather than assuming every input is 44.1 kHz.
 """
 
-from __future__ import annotations
 
 import argparse
 import csv

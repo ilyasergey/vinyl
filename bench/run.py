@@ -19,19 +19,16 @@ compression claim can rest on, because libFLAC writes 8.8 kB of padding,
 seektable and vendor comment per file where Vinyl writes 42 bytes.
 """
 
-from __future__ import annotations
 
 import csv
 import os
 import random
 import statistics
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from flacsize import audio_bytes
 

@@ -350,7 +350,6 @@ theorem emits_pushRice (k : Nat) (x : Int) :
   rw [h2.1, h1.1, List.append_assoc, Nat.shiftRight_eq_div_pow, p2_eq,
     Nat.and_two_pow_sub_one_eq_mod, ← writeBits_mod]
 
-
 /-! ## Sequence and partition emissions -/
 
 private theorem getD_lt (xs : Array Int) {i : Nat} (h : i < xs.size) :
@@ -603,7 +602,6 @@ theorem lpcResGo_toList (cs : List Int) (shift : Nat) (xs : Array Int) :
     rw [getD_lt xs hi, hpred, drop_toList_cons xs hi, List.take_succ_cons,
       take_succ_reverse xs hi]
     rfl
-
 
 /-! ### The tap-specialised residual loops are `lpcResGo` at a fixed list -/
 

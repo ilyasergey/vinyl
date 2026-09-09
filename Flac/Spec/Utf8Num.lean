@@ -43,10 +43,9 @@ theorem readConts_writeConts (k acc n : Nat) (rest : BitStream) :
     have hd : 0x80 + n / 64 ^ k % 64 - 0x80 = n / 64 ^ k % 64 := by omega
     rw [if_pos hcond, hd, ih, mod_pow_succ n 64 k, Nat.pow_succ, digit_step]
 
-/-- Discharge the minimality gate over `write`'s output: `write` only reaches the
-    `k`-continuation form for values at/above `contsFloor k`, so the decoded value
-    clears the floor and reads back exactly. Inlined per branch below (the concrete
-    `k`/`acc` let `omega` evaluate `contsFloor k` and the positional identity). -/
+/-- Coded-number round-trip: reading back `write n` returns `n`, for every
+    `n < 2 ^ 36`. `write` only reaches the `k`-continuation form at or above
+    `contsFloor k`, so the decoded value clears the minimality gate. -/
 theorem read_write (n : Nat) (h : n < 2 ^ 36) (rest : BitStream) :
     read (write n ++ rest) = some (n, rest) := by
   unfold write read

@@ -18,7 +18,7 @@ rules every session must follow.
   becomes a minimized statement recorded in `PROGRESS.md` (and an issue once a
   remote exists), not a hole.
 - **Decoder totality by construction**: no `partial def`, no panicking (`!`)
-  indexing anywhere in decode paths in `Flac/Native/` or `Flac/Reference/`.
+  indexing anywhere in decode paths in `Flac/Native/`.
 - `Flac/Spec/` contains theorems only; keep one file per lemma cluster.
 - Heuristics (`Flac/Native/Heuristics.lean`) are unverified *by design*; only
   output-format lemmas may depend on them.
@@ -36,9 +36,10 @@ rules every session must follow.
 
 ## Layout map (see PLAN.md §3 for the full tree)
 
-- `Flac/Native/` — executable production code.
-- `Flac/Reference/` — verified reference decoder/model, structured for proofs.
+- `Flac/Native/` — executable production code, including the reference
+  decoder/model (`Stream.decodeReference`) that the proofs are phrased over.
 - `Flac/Spec/` — all theorems; no `sorry`, no axioms.
 - `FlacTest/` — unit + golden tests wired into `lake exe flactest`.
-- `conformance/`, `bench/` — separate packages, later milestones.
+- `conformance/`, `fuzz/`, `bench/` — differential rigs and benchmarks,
+  driven by shell/Python against the built binary; outside the trusted base.
 - `PROGRESS.md` — per-session log, one entry per session.

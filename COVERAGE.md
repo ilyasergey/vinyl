@@ -61,10 +61,10 @@ a scan.
 
 ## Known deviations from RFC MUSTs
 
-The deviation table [`docs/spec-validation.md`](docs/spec-validation.md)
-calls for: places where the verified model (`Audio.WellFormed` and the
-readers) is knowingly laxer than RFC 9639's normative text, what covers
-the gap, and why the model was left alone.
+The table [`docs/spec-validation.md`](docs/spec-validation.md) calls for:
+places where the verified model (`Audio.WellFormed` and the readers) is
+knowingly laxer than RFC 9639's normative text, what covers the gap, and why
+the model was left alone.
 
 | RFC clause | model behavior | covered by | why the model stays lax |
 |---|---|---|---|

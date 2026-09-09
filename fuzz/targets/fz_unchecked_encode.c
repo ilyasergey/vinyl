@@ -2,7 +2,7 @@
  *
  * P7 split the raw, precondition-free encoders under an `Unchecked` namespace
  * and made the public encoders check their preconditions. This target drives
- * the raw path directly (common/vinyl_unchecked_api.c) and:
+ * the raw path directly (`vinyl_unchecked_encode`, common/vinyl_modes.c) and:
  *
  *  1. On the domain the CHECKED encoder accepts (blockSize <= 4608, well-shaped
  *     geometry), the unchecked encoder with the same cfg must produce

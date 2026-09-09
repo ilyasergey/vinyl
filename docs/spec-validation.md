@@ -95,15 +95,15 @@ hold in mind at once.
 
 ## Adoption path for Vinyl
 
-1. ~~Start the deviation table now~~ — started in the P11 round:
-   [`COVERAGE.md`](../COVERAGE.md) "Known deviations from RFC MUSTs"
-   holds it (P5 and P11 are its first rows, both fixed at the guards
-   with `WellFormed` deliberately unchanged).
-2. Wire a `must-reject/` corpus into `conformance/` seeded with the P5
-   and P11 reproducers; grow it row-by-row from the matrix.
-3. Add ffmpeg as a second referee in `smoke.sh`; report disagreements
-   between referees even where Vinyl agrees with one of them.
-4. The characterization theorem (Route 4) as the research contribution,
+The deviation table exists: [`COVERAGE.md`](../COVERAGE.md) "Known
+deviations from RFC MUSTs", with P5 and P11 as its first rows, both fixed
+at the guards and `WellFormed` deliberately unchanged. A must-reject corpus
+exists too, in [`fuzz/`](../fuzz/README.md) rather than `conformance/`
+(`fuzz/conformance/mustreject.py`), and `fuzz/` also supplies the
+multi-referee triangulation this note asked for, ffmpeg included. What is
+left:
+
+1. The characterization theorem (Route 4) as the research contribution,
    in dialogue with the existing `decode_ok_iff_reference` — the
    accept-set transfer already proves production = model; what remains
    is model = readable grammar.

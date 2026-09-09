@@ -346,23 +346,23 @@ cost model is immediately tested against code that cheats for speed.
 
 ## 8. A concrete starting path for Vinyl
 
-1. ~~Land the value-level fixes for #2/#3 first~~ — done:
-   [`02-output-size-bounds.md`](02-output-size-bounds.md) (the frame-loop
-   budget and `Flac.decode_size_le`) and
-   [`03-untrusted-sizes.md`](03-untrusted-sizes.md) (the capacity clamp).
-   The value lemmas the cost proofs will consume exist
-   (`frameCostTotal_le`, `encode_cost_le_budget`), and needed no new
-   machinery.
-2. Build `Flac/Cost/` : `CostM`, `charge`, charged wrappers for
+The value-level fixes for #2/#3 are in place —
+[`02-output-size-bounds.md`](02-output-size-bounds.md) (the frame-loop budget
+and `Flac.decode_size_le`) and
+[`03-untrusted-sizes.md`](03-untrusted-sizes.md) (the capacity clamp) — so the
+lemmas the cost proofs would consume (`frameCostTotal_le`,
+`encode_cost_le_budget`) already exist. From there:
+
+1. Build `Flac/Cost/` : `CostM`, `charge`, charged wrappers for
    `ByteArray`/`Array` allocation and `Int` arithmetic; extend
    `scripts/check.sh` with the wrapper-only lint.
-3. Instrument one leaf first — `Lpc.restoreA` is ideal: small, has the
+2. Instrument one leaf first — `Lpc.restoreA` is ideal: small, has the
    value-bound lemma ready, and is the P1 site. Prove its pin and a
    per-block linear budget from `fitsSInt_wrapSInt`.
-4. Grow outward along the existing sim-proof chain (`readContent` →
+3. Grow outward along the existing sim-proof chain (`readContent` →
    `readSubframe` → frame loop → `decodeBytes`), reusing its structure;
    state `decodeBytesC_linear` last.
-5. Only then consider the research items of §7, each of which by that
+4. Only then consider the research items of §7, each of which by that
    point has a concrete failing or trusted spot in the development to
    point at.
 
@@ -512,6 +512,6 @@ certificate-producing compilation.)
 Project-internal starting points: `docs/01-robustness-theorems.md` (the
 taxonomy this note extends),
 [issues #1–#12](https://github.com/ilyasergey/vinyl/issues?q=label%3Aaudit)
-(the audit), `Flac/Spec/Bits.lean`
+(the audit), `Flac/Native/Bits.lean`
 (`wrapSInt_eq_of_fits`, `fitsSInt_wrapSInt` — the value-bound lemmas §5
 connects to), and `scripts/check.sh` (the merge-gate lint that §6 extends).

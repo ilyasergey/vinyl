@@ -185,7 +185,7 @@ which compiled twin the export binds to.
 ```
 build/bin/mut_bench rate corpus/decode/gen 20000   # CRC-aware/plain accept ratio (~12x)
 build/bin/mut_bench selftest                        # CRC vectors + generator N/N via libFLAC
-build/bin/mut_bench gen corpus/decode/gen 400       # 16-bit CRC-correct decode seeds (the multi-depth
+build/bin/mut_bench gen /tmp/gen 400                # 16-bit CRC-correct decode seeds (the multi-depth
                                                     #   decode/wide seeds are committed data)
 build/bin/measure_decode corpus/decode/gen          # decode: bytes->samples amplification, peak RSS
 build/bin/measure_encode                             # encode: blockSize task-storm sweep + RSS/time
@@ -255,7 +255,9 @@ the many "catalogue, don't abort" branches are the garbage-in discipline
   surfaced a **NEW** finding — `decode-sample-divergence-highbps`: on CRC-valid
   **bps=31** streams Vinyl decodes different PCM than a libFLAC+ffmpeg *consensus*
   (one repro also parses a different frame sample-rate). Pre-existing Vinyl behaviour
-  the previously-masked gate hid; root cause not yet localized (`findings/`).
+  the previously-masked gate hid. Triaged 2026-08-31 as accept-set differences on
+  invalid input, not Vinyl defects (two independent analyses; see `findings/` and
+  `TODO.md`).
 - 12/20-bit reference material comes from the IETF corpus (`--hires`): ffmpeg's
   *encoder* clamps `-bits_per_raw_sample` to 16/24 and the `flac` CLI to 8/16/24/32,
   so 20-bit exists only as a decode seed, not a generated one.

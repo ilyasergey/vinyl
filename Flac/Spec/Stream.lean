@@ -428,9 +428,7 @@ theorem chunkFrames_count_mul (n : Nat) (chs : List (List Int)) (hn : 0 < n) :
     simp only [List.length_cons, Nat.mul_succ]
     omega
 
-/-- **What a frame sequence costs to decode**: with every channel at most
-    `n` samples and exactly `ch` channels per frame, at most `2·ch·n` per
-    frame. -/
+/-- Channel lengths sum to at most `length * n` when each is at most `n`. -/
 private theorem sum_lengths_le (fr : List (List Int)) (n : Nat)
     (hle : ∀ c ∈ fr, c.length ≤ n) :
     (fr.map (·.length)).sum ≤ fr.length * n := by
@@ -442,6 +440,9 @@ private theorem sum_lengths_le (fr : List (List Int)) (n : Nat)
     simp only [List.map_cons, List.sum_cons, List.length_cons, Nat.succ_mul]
     omega
 
+/-- **What a frame sequence costs to decode**: with every channel at most
+    `n` samples and exactly `ch` channels per frame, at most `2·ch·n` per
+    frame. -/
 theorem frameCostTotal_le (frs : List (List (List Int))) (ch n : Nat)
     (h : ∀ fr ∈ frs, fr.length = ch ∧ ∀ c ∈ fr, c.length ≤ n) :
     frameCostTotal frs ≤ frs.length * (2 * ch * n) := by

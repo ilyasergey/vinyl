@@ -14,7 +14,6 @@ Writes `bench/real_data/units.csv`; re-running is incremental (an existing
 stream of the expected size and hash is kept).
 """
 
-from __future__ import annotations
 
 import csv
 import hashlib

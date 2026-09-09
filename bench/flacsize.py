@@ -6,7 +6,6 @@ comparison that includes those bytes is measuring metadata policy, so both
 dashboards report the coded frames separately.
 """
 
-from __future__ import annotations
 
 from pathlib import Path
 

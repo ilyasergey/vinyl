@@ -170,15 +170,11 @@ Before merging a function that consumes untrusted bits, answer for it:
   returns has all elements `FitsSInt (bps + 2)` (subframe wrap at
   `b`/`b+1`, plus one bit of headroom through stereo reconstruction), for
   arbitrary input bytes. All local pieces now exist.
-- ~~Output-size theorems for the amplification findings~~ — done for P2:
-  `Flac.decode_size_le` bounds decoded samples linearly in input size for
-  arbitrary bytes; the fix pattern (a budget threaded through the frame
-  loop, bridged to the unbudgeted loop by one equation per loop) is
-  [`02-output-size-bounds.md`](02-output-size-bounds.md). P3's
-  header-driven allocation is also fixed
-  ([`03-untrusted-sizes.md`](03-untrusted-sizes.md)) — proof-free by
-  necessity, which is its own lesson; P8's early-validation gap is
-  fixed the same tier ([`08-late-guards.md`](08-late-guards.md)).
+- Output-size theorems for the amplification findings landed:
+  [`02`](02-output-size-bounds.md) bounds decoded samples linearly in input
+  size for arbitrary bytes, [`03`](03-untrusted-sizes.md) covers the
+  header-driven allocation (proof-free by necessity, which is its own
+  lesson), and [`08`](08-late-guards.md) the early-validation gap.
 - Making resource consumption itself provable: value-level theorems bound
   what the decoder *returns*, never what it *spends* computing it (the
   P3 capacity hint was definitionally invisible to the logic, and its fix

@@ -37,3 +37,6 @@ bench/real_out/
 
 # Python bytecode from the bench scripts
 __pycache__/
+
+# Session scratch (profiles, prototypes, one-off drivers)
+/.tmp/

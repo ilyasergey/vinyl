@@ -1,6 +1,6 @@
 /* fz_self_consistent -- the decoder output-CONTRACT oracle. No referee,
  * no Lean shim, ANY bit depth. Every stream the PRODUCTION decoder accepts is
- * split against the two halves of Audio.WellFormed (Stream.lean:502):
+ * split against the two halves of Flac.Stream.Audio.WellFormed:
  *
  *   ABORT (robust, garbage-INDEPENDENT decoder guarantees):
  *     - structurally-invalid output: channel count outside [1,8], bps outside

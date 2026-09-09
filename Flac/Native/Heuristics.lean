@@ -13,8 +13,8 @@ configuration satisfies `SubframeCfg.Valid`, so the keystone theorem
 applies to it. Beyond that, this file is free optimization territory.
 
 Current strategy: detect constant blocks; search fixed orders 0–4 and
-Welch-windowed Levinson–Durbin LPC (orders 1–8, 12-bit coefficients) by
-exact Rice bit cost, partition order 0; fall back to VERBATIM when
+Welch-windowed Levinson–Durbin LPC (up to `lpcMaxOrder`, 12-bit coefficients)
+by exact Rice bit cost, partition order 0; fall back to VERBATIM when
 prediction does not pay.
 -/
 
@@ -37,6 +37,76 @@ where
   go : Nat → Nat → Nat → Nat
     | 0, k, _ => k
     | fuel + 1, k, bound => if sum ≤ bound then k else go fuel (k + 1) (bound + bound)
+
+/-- `riceParam` in closed form: the smallest `k` with `sum ≤ n · 2^k` is
+    `log2 ((sum - 1) / n) + 1` once `n < sum`, capped at 14. One `clz`
+    instead of up to fourteen add-and-compare steps, on a call the
+    partition search makes about a hundred times per candidate. -/
+def riceParamFast (sum n : Nat) : Nat :=
+  if sum ≤ n then 0
+  else if n = 0 then 14
+  else min 14 (Nat.log2 ((sum - 1) / n) + 1)
+
+/-- `go` reaches `T` when `T` is the first parameter that fits (or the cap). -/
+theorem riceParam_go_eq (sum n T : Nat) (hlt : ∀ k, k < T → n * 2 ^ k < sum)
+    (hfit : T < 14 → sum ≤ n * 2 ^ T) :
+    ∀ (fuel k bound : Nat), bound = n * 2 ^ k → k ≤ T → T ≤ k + fuel → k + fuel ≤ 14 →
+      riceParam.go sum fuel k bound = T := by
+  intro fuel
+  induction fuel with
+  | zero => intro k bound _ h1 h2 _; simp only [riceParam.go]; omega
+  | succ fuel ih =>
+    intro k bound hb h1 h2 h3
+    simp only [riceParam.go]
+    split
+    · next h =>
+      rcases Nat.lt_or_ge k T with hk | hk
+      · exact absurd h (Nat.not_le.2 (hb ▸ hlt k hk))
+      · omega
+    · next h =>
+      have hk : k < T := by
+        rcases Nat.lt_or_ge k T with hk | hk
+        · exact hk
+        · exfalso
+          have hkT : k = T := by omega
+          subst hkT
+          exact h (hb ▸ hfit (by omega))
+      exact ih (k + 1) (bound + bound) (by rw [hb, Nat.pow_succ, ← Nat.mul_assoc, Nat.mul_two]) hk
+        (by omega) (by omega)
+
+/-- **The closed form is the loop.** -/
+@[csimp] theorem riceParam_eq_fast : @riceParam = @riceParamFast := by
+  funext sum n
+  unfold riceParam riceParamFast
+  have h0 : n = n * 2 ^ 0 := by simp
+  by_cases hsn : sum ≤ n
+  · rw [if_pos hsn]
+    exact riceParam_go_eq sum n 0 (fun k hk => absurd hk (Nat.not_lt_zero k))
+      (fun _ => by simpa using hsn) 14 0 n h0 (Nat.le_refl 0) (by omega) (by omega)
+  · rw [if_neg hsn]
+    by_cases hn : n = 0
+    · rw [if_pos hn]
+      exact riceParam_go_eq sum n 14 (fun k _ => by subst hn; simp; omega)
+        (fun h => absurd h (Nat.lt_irrefl 14)) 14 0 n h0 (by omega) (by omega) (by omega)
+    · rw [if_neg hn]
+      have hq : (sum - 1) / n ≠ 0 := by
+        intro hz
+        have := (Nat.div_eq_zero_iff_lt (Nat.pos_of_ne_zero hn)).1 hz
+        omega
+      apply riceParam_go_eq sum n _ _ _ 14 0 n h0 (by omega) (by omega) (by omega)
+      · intro k hk
+        have hk' : k ≤ Nat.log2 ((sum - 1) / n) := by omega
+        have h2 := (Nat.le_log2 hq).1 hk'
+        have h3 : n * 2 ^ k ≤ n * ((sum - 1) / n) := Nat.mul_le_mul_left n h2
+        have h4 : n * ((sum - 1) / n) ≤ sum - 1 := Nat.mul_div_le (sum - 1) n
+        omega
+      · intro hT
+        have hT' : min 14 (Nat.log2 ((sum - 1) / n) + 1) = Nat.log2 ((sum - 1) / n) + 1 := by omega
+        rw [hT']
+        have h1 := @Nat.lt_log2_self ((sum - 1) / n)
+        have h2 := (Nat.div_lt_iff_lt_mul (Nat.pos_of_ne_zero hn)).1 h1
+        rw [Nat.mul_comm] at h2
+        omega
 
 /-- Estimated bit cost of Rice-coding a partition with parameter `k`,
     from its folded sum alone (the libFLAC-style estimate:
@@ -130,7 +200,7 @@ def partitionSearch (bs ord : Nat) (us : List Nat) : Nat × List Nat × Nat := I
   -- `List.sum` compiles to a non-tail `foldr`, so summing a whole partition
   -- (length = block size, unbounded via the unchecked encoder) recursed one
   -- native stack frame per sample and overflowed (audit finding C04, the encode
-  -- heuristic analogue). `foldl` is tail-recursive with the same value; this is
+  -- heuristic analogue -- `fuzz/findings/encoder-stack-overflow-CONFIRMED`). `foldl` is tail-recursive with the same value; this is
   -- unverified heuristic code, so no theorem reads the fold shape.
   let (k0, c0) := bestParamSum (us.foldl (· + ·) 0) us.length
   let mut best : Nat × List Nat × Nat := (0, [k0], 6 + 4 + c0)

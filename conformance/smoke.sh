@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Conformance smoke test (Rigs 1-2 of PLAN.md §6, M2/M3 profile: mono 16-bit).
+# Conformance smoke test (Rigs 1-2 of PLAN.md §6): mono and stereo 16-bit.
 #
 # Rig 1 (our encoder -> their decoder): every stream we emit must pass
 #   `flac -t` (which verifies frame CRCs and the STREAMINFO MD5) and decode
 #   via `flac -d` to byte-identical PCM.
-# Rig 2 (their encoder -> our decoder): a libFLAC-encoded stream inside our
-#   current feature envelope (fixed predictors, no wasted bits) must decode
-#   byte-identically with `decodeReference`.
+# Rig 2 (their encoder -> our decoder): a libFLAC-encoded stream must decode
+#   byte-identically. The `--decode` branch runs `Flac.Decode.decodeOption`,
+#   proven pointwise equal to `decodeReference`.
 #
 # Oracle: flac CLI (libFLAC). Pin: any >= 1.4 works; developed against 1.5.0.
 set -euo pipefail
@@ -38,7 +38,8 @@ for f in "$WORK"/*.flac; do
 done
 
 echo "== Rig 2: libFLAC encoder -> vinyl reference decoder"
-# parity-mixed noise (no wasted bits; wasted-bits support lands with M4)
+# parity-mixed noise: the low bit is forced set, so no wasted-bits subframe
+# is emitted and this case stays a fixed-predictor test
 python3 - "$WORK/rig2.pcm" <<'EOF'
 import struct, sys
 vals = [((((i*i*2654435761 + i*40503) % 65536) - 32768) | (i & 1)) for i in range(20000)]

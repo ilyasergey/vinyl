@@ -42,19 +42,30 @@ decreasing_by
 
 /-- `chunkChannels` accumulating frames in reverse, so the recursive call is in
     tail position: frame count is attacker-chosen, so the cons-after-return form
-    kept one native stack frame alive per frame (audit finding C04). -/
+    kept one native stack frame alive per frame (audit finding C04,
+    `fuzz/findings/encoder-stack-overflow-CONFIRMED`).
+
+    The loop test is emptiness, not `length = 0`: the structural definition's
+    `(chs.headD []).length = 0` walks the whole remaining first channel on
+    *every* frame, which makes the reference encoder quadratic in the sample
+    count. `List.isEmpty` is one pattern match. -/
 def chunkChannelsAcc (n : Nat) (acc : List (List (List Int)))
     (chs : List (List Int)) : List (List (List Int)) :=
-  if _h : (chs.headD []).length = 0 ∨ n = 0 then acc.reverse
+  if _h : (chs.headD []).isEmpty ∨ n = 0 then acc.reverse
   else chunkChannelsAcc n (takeAll n chs :: acc) (dropAll n chs)
 termination_by (chs.headD []).length
 decreasing_by
   rcases chs with _ | ⟨c, t⟩
   · simp at _h
   · simp only [dropAll, List.map_cons, List.headD_cons, List.length_drop]
-    simp only [List.headD_cons] at _h
+    simp only [List.headD_cons, List.isEmpty_iff] at _h
     rw [not_or] at _h
-    omega
+    have : c ≠ [] := _h.1
+    cases c with
+    | nil => exact absurd rfl this
+    | cons a as =>
+      simp only [List.length_cons]
+      omega
 
 /-- The bridging equation: the accumulator loop prepends the already-collected
     (reversed) frames onto the structural `chunkChannels`. -/
@@ -65,11 +76,16 @@ theorem chunkChannelsAcc_eq (n : Nat) :
   fun_induction chunkChannels n chs with
   | case1 chs h =>
     intro acc
-    rw [chunkChannelsAcc, dif_pos h]
+    rw [chunkChannelsAcc, dif_pos (by
+      rcases h with h | h
+      · exact Or.inl (List.isEmpty_iff.2 (List.eq_nil_of_length_eq_zero h))
+      · exact Or.inr h)]
     simp
   | case2 chs h ih =>
     intro acc
-    rw [chunkChannelsAcc, dif_neg h, ih (takeAll n chs :: acc)]
+    rw [chunkChannelsAcc, dif_neg (by
+      rw [not_or] at h ⊢
+      exact ⟨fun he => h.1 (by rw [List.isEmpty_iff.1 he]; rfl), h.2⟩), ih (takeAll n chs :: acc)]
     simp [List.reverse_cons, List.append_assoc]
 
 def chunkChannelsTR (n : Nat) (chs : List (List Int)) : List (List (List Int)) :=
@@ -174,6 +190,514 @@ def pcmStereoGo (a c : Array Int) : (i stop : Nat) → ByteArray → ByteArray
           (v >>> 8).toUInt8)
     else out
   termination_by i stop => stop - i
+
+/-! ### Pre-sized serialization
+
+`pcmMonoGo`/`pcmStereoGo` above push one byte at a time — an out-of-line
+runtime call per byte, four per stereo sample, a fifth of decode once the
+predictors ran on machine words. The `…Fast` twins below (`@[csimp]`) grow
+the buffer once (a copy out of a zero block) and fill it in place with
+`USize`-indexed stores. The bridging lemmas characterise both loops byte by
+byte (`pcmStereoGo_get`, `pcmStereoFill_get`) and meet in
+`ByteArray.ext_getElem`. -/
+
+/-- 256 KiB of zeroes, built once: a frame's worth of 16-bit PCM (up to
+    65536 stereo samples) is copied out of it rather than pushed. -/
+private def zeroBlock : ByteArray := ⟨Array.replicate 262144 0⟩
+
+/-- `n` zero bytes. -/
+private def zeros (n : Nat) : ByteArray :=
+  if n ≤ 262144 then zeroBlock.extract 0 n else ⟨Array.replicate n 0⟩
+
+theorem size_zeros (n : Nat) : (zeros n).size = n := by
+  unfold zeros
+  split
+  · simp [zeroBlock, ByteArray.size_extract, ByteArray.size]
+    omega
+  · simp [ByteArray.size]
+
+theorem getElem_zeros (n k : Nat) (hk : k < (zeros n).size) : (zeros n)[k] = 0 := by
+  by_cases h : n ≤ 262144
+  · simp only [zeros, h, if_true] at hk ⊢
+    rw [ByteArray.getElem_extract]
+    exact Array.getElem_replicate _
+  · simp only [zeros, h, if_false] at hk ⊢
+    exact Array.getElem_replicate _
+
+private theorem usize_step (j : USize) (k n : Nat) (hj : j.toNat + k ≤ n) (hn : n < 4294967296) :
+    (j + USize.ofNat k).toNat = j.toNat + k := by
+  have hs : 4294967296 ≤ 2 ^ System.Platform.numBits := by
+    have := USize.le_size
+    rwa [USize.size_eq_two_pow] at this
+  rw [USize.toNat_add, USize.toNat_ofNat', Nat.mod_eq_of_lt (a := k) (by omega),
+    Nat.mod_eq_of_lt (by omega)]
+
+private theorem toNat_toUSize_of_lt (n : Nat) (hn : n < 4294967296) : n.toUSize.toNat = n := by
+  rw [Nat.toUSize_eq, USize.toNat_ofNat']
+  exact Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le hn (by
+    have := USize.le_size; rwa [USize.size_eq_two_pow] at this))
+
+private theorem size_uset' (a : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < a.size) :
+    (a.uset i v h).size = a.size := by
+  cases a with
+  | mk bs => simp [ByteArray.uset, ByteArray.size, Array.size_uset]
+
+private theorem getElem_uset' (a : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < a.size)
+    (k : Nat) (hk : k < (a.uset i v h).size) (hk' : k < a.size) :
+    (a.uset i v h)[k] = if i.toNat = k then v else a[k] := by
+  cases a with
+  | mk bs =>
+    simp only [ByteArray.uset, Array.uset_eq_set]
+    show (bs.set i.toNat v h)[k]'_ = if i.toNat = k then v else bs[k]'_
+    simp only [Array.getElem_set]
+
+private theorem getElem_push' (a : ByteArray) (b : UInt8) (k : Nat) (hk : k < (a.push b).size) :
+    (a.push b)[k] = if h : k < a.size then a[k] else b := by
+  cases a with
+  | mk bs =>
+    show (bs.push b)[k]'_ = if h : k < bs.size then bs[k] else b
+    rw [Array.getElem_push]
+
+/-- Split every `if` in the goal; each leaf is either syntactic or arithmetically impossible. -/
+local macro "ifs_omega" : tactic => `(tactic| (repeat' split) <;> first | rfl | omega)
+
+private theorem getElem_push2 (out : ByteArray) (b0 b1 : UInt8) (k : Nat)
+    (hk : k < ((out.push b0).push b1).size) :
+    ((out.push b0).push b1)[k]
+      = if h : k < out.size then out[k] else if k = out.size then b0 else b1 := by
+  simp only [ByteArray.size_push] at hk
+  simp only [getElem_push', ByteArray.size_push]
+  ifs_omega
+
+private theorem getElem_push4 (out : ByteArray) (b0 b1 b2 b3 : UInt8) (k : Nat)
+    (hk : k < ((((out.push b0).push b1).push b2).push b3).size) :
+    ((((out.push b0).push b1).push b2).push b3)[k]
+      = if h : k < out.size then out[k]
+        else if k = out.size then b0 else if k = out.size + 1 then b1
+        else if k = out.size + 2 then b2 else b3 := by
+  simp only [ByteArray.size_push] at hk
+  simp only [getElem_push', ByteArray.size_push]
+  ifs_omega
+
+private theorem getElem_append_left' (a b : ByteArray) (k : Nat) (hk : k < a.size) :
+    (a ++ b)[k]'(by rw [ByteArray.size_append]; omega) = a[k] :=
+  ByteArray.getElem_append_left hk
+
+/-- Byte `r` (of four) of stereo sample `i`. -/
+def stereoByte (a c : Array Int) (i r : Nat) : UInt8 :=
+  let u : UInt64 := (a.getD i 0).toInt64.toUInt64
+  let v : UInt64 := (c.getD i 0).toInt64.toUInt64
+  if r = 0 then u.toUInt8 else if r = 1 then (u >>> 8).toUInt8
+  else if r = 2 then v.toUInt8 else (v >>> 8).toUInt8
+
+/-- Byte `r` (of two) of mono sample `i`. -/
+def monoByte (a : Array Int) (i r : Nat) : UInt8 :=
+  let u : UInt64 := (a.getD i 0).toInt64.toUInt64
+  if r = 0 then u.toUInt8 else (u >>> 8).toUInt8
+
+/-- Stereo sample `i` stored at byte offset `j`: four in-place stores. -/
+@[inline] def stereoStore (a c : Array Int) (i : Nat) (j : USize) (out : ByteArray)
+    (hj : j.toNat + 4 ≤ out.size) (hs : out.size < 4294967296) : ByteArray :=
+  have e1 := usize_step j 1 out.size (by omega) hs
+  have e2 := usize_step j 2 out.size (by omega) hs
+  have e3 := usize_step j 3 out.size (by omega) hs
+  let u : UInt64 := (a.getD i 0).toInt64.toUInt64
+  let v : UInt64 := (c.getD i 0).toInt64.toUInt64
+  let o1 := out.uset j u.toUInt8 (by omega)
+  let o2 := o1.uset (j + USize.ofNat 1) (u >>> 8).toUInt8 (by rw [size_uset']; omega)
+  let o3 := o2.uset (j + USize.ofNat 2) v.toUInt8 (by rw [size_uset', size_uset']; omega)
+  o3.uset (j + USize.ofNat 3) (v >>> 8).toUInt8 (by rw [size_uset', size_uset', size_uset']; omega)
+
+/-- Mono sample `i` stored at byte offset `j`: two in-place stores. -/
+@[inline] def monoStore (a : Array Int) (i : Nat) (j : USize) (out : ByteArray)
+    (hj : j.toNat + 2 ≤ out.size) (hs : out.size < 4294967296) : ByteArray :=
+  have e1 := usize_step j 1 out.size (by omega) hs
+  let u : UInt64 := (a.getD i 0).toInt64.toUInt64
+  let o1 := out.uset j u.toUInt8 (by omega)
+  o1.uset (j + USize.ofNat 1) (u >>> 8).toUInt8 (by rw [size_uset']; omega)
+
+theorem size_stereoStore (a c : Array Int) (i : Nat) (j : USize) (out : ByteArray) hj hs :
+    (stereoStore a c i j out hj hs).size = out.size := by
+  simp only [stereoStore, size_uset']
+
+theorem size_monoStore (a : Array Int) (i : Nat) (j : USize) (out : ByteArray) hj hs :
+    (monoStore a i j out hj hs).size = out.size := by
+  simp only [monoStore, size_uset']
+
+theorem getElem_stereoStore (a c : Array Int) (i : Nat) (j : USize) (out : ByteArray) hj hs
+    (k : Nat) (hk : k < (stereoStore a c i j out hj hs).size) (hk' : k < out.size) :
+    (stereoStore a c i j out hj hs)[k]
+      = if j.toNat ≤ k ∧ k < j.toNat + 4 then stereoByte a c i (k - j.toNat) else out[k] := by
+  have e1 := usize_step j 1 out.size (by omega) hs
+  have e2 := usize_step j 2 out.size (by omega) hs
+  have e3 := usize_step j 3 out.size (by omega) hs
+  simp only [stereoStore, stereoByte]
+  rw [getElem_uset' _ _ _ _ k _ (by simp only [size_uset']; exact hk'),
+    getElem_uset' _ _ _ _ k _ (by simp only [size_uset']; exact hk'),
+    getElem_uset' _ _ _ _ k _ (by simp only [size_uset']; exact hk'),
+    getElem_uset' _ _ _ _ k _ hk', e3, e2, e1]
+  ifs_omega
+
+theorem getElem_monoStore (a : Array Int) (i : Nat) (j : USize) (out : ByteArray) hj hs
+    (k : Nat) (hk : k < (monoStore a i j out hj hs).size) (hk' : k < out.size) :
+    (monoStore a i j out hj hs)[k]
+      = if j.toNat ≤ k ∧ k < j.toNat + 2 then monoByte a i (k - j.toNat) else out[k] := by
+  have e1 := usize_step j 1 out.size (by omega) hs
+  simp only [monoStore, monoByte]
+  rw [getElem_uset' _ _ _ _ k _ (by simp only [size_uset']; exact hk'),
+    getElem_uset' _ _ _ _ k _ hk', e1]
+  ifs_omega
+
+/-- The stereo fill: four stores per sample into a pre-sized buffer. -/
+def pcmStereoFill (a c : Array Int) : (i stop : Nat) → (j : USize) → (out : ByteArray) →
+    j.toNat + 4 * (stop - i) ≤ out.size → out.size < 4294967296 → ByteArray
+  | i, stop, j, out, hj, hs =>
+    if h : i < stop then
+      pcmStereoFill a c (i + 1) stop (j + USize.ofNat 4) (stereoStore a c i j out (by omega) hs)
+        (by rw [size_stereoStore, usize_step j 4 out.size (by omega) hs]; omega)
+        (by rw [size_stereoStore]; exact hs)
+    else out
+  termination_by i stop => stop - i
+
+/-- The mono fill: two stores per sample. -/
+def pcmMonoFill (a : Array Int) : (i stop : Nat) → (j : USize) → (out : ByteArray) →
+    j.toNat + 2 * (stop - i) ≤ out.size → out.size < 4294967296 → ByteArray
+  | i, stop, j, out, hj, hs =>
+    if h : i < stop then
+      pcmMonoFill a (i + 1) stop (j + USize.ofNat 2) (monoStore a i j out (by omega) hs)
+        (by rw [size_monoStore, usize_step j 2 out.size (by omega) hs]; omega)
+        (by rw [size_monoStore]; exact hs)
+    else out
+  termination_by i stop => stop - i
+
+/-- `pcmStereoGo` verbatim: the swap's fallback must not be the swapped name. -/
+def pcmStereoGoSlow (a c : Array Int) : (i stop : Nat) → ByteArray → ByteArray
+  | i, stop, out =>
+    if _h : i < stop then
+      let u : UInt64 := (a.getD i 0).toInt64.toUInt64
+      let v : UInt64 := (c.getD i 0).toInt64.toUInt64
+      pcmStereoGoSlow a c (i + 1) stop
+        ((((out.push u.toUInt8).push (u >>> 8).toUInt8).push v.toUInt8).push
+          (v >>> 8).toUInt8)
+    else out
+  termination_by i stop => stop - i
+
+def pcmMonoGoSlow (a : Array Int) : (i stop : Nat) → ByteArray → ByteArray
+  | i, stop, out =>
+    if _h : i < stop then
+      let u : UInt64 := (a.getD i 0).toInt64.toUInt64
+      pcmMonoGoSlow a (i + 1) stop ((out.push u.toUInt8).push (u >>> 8).toUInt8)
+    else out
+  termination_by i stop => stop - i
+
+private theorem fill_bounds (out : ByteArray) (m : Nat) (hs : out.size + m < 4294967296) :
+    out.size.toUSize.toNat + m ≤ (out ++ zeros m).size ∧ (out ++ zeros m).size < 4294967296 := by
+  rw [ByteArray.size_append, size_zeros, toNat_toUSize_of_lt out.size (by omega)]
+  omega
+
+def pcmStereoGoFast (a c : Array Int) (i stop : Nat) (out : ByteArray) : ByteArray :=
+  if h : i < stop ∧ out.size + 4 * (stop - i) < 4294967296 ∧ stop - i ≤ 65536 then
+    pcmStereoFill a c i stop out.size.toUSize (out ++ zeros (4 * (stop - i)))
+      (fill_bounds out _ h.2.1).1 (fill_bounds out _ h.2.1).2
+  else pcmStereoGoSlow a c i stop out
+
+def pcmMonoGoFast (a : Array Int) (i stop : Nat) (out : ByteArray) : ByteArray :=
+  if h : i < stop ∧ out.size + 2 * (stop - i) < 4294967296 ∧ stop - i ≤ 65536 then
+    pcmMonoFill a i stop out.size.toUSize (out ++ zeros (2 * (stop - i)))
+      (fill_bounds out _ h.2.1).1 (fill_bounds out _ h.2.1).2
+  else pcmMonoGoSlow a i stop out
+
+/-! #### The fills compute the pushes -/
+
+theorem pcmStereoGoSlow_eq (a c : Array Int) :
+    ∀ (n i stop : Nat) (out : ByteArray), stop - i = n →
+      pcmStereoGoSlow a c i stop out = pcmStereoGo a c i stop out := by
+  intro n
+  induction n with
+  | zero =>
+    intro i stop out hn
+    rw [pcmStereoGoSlow, pcmStereoGo, dif_neg (by omega), dif_neg (by omega)]
+  | succ n ih =>
+    intro i stop out hn
+    rw [pcmStereoGoSlow, pcmStereoGo, dif_pos (by omega), dif_pos (by omega)]
+    exact ih (i + 1) stop _ (by omega)
+
+theorem pcmMonoGoSlow_eq (a : Array Int) :
+    ∀ (n i stop : Nat) (out : ByteArray), stop - i = n →
+      pcmMonoGoSlow a i stop out = pcmMonoGo a i stop out := by
+  intro n
+  induction n with
+  | zero =>
+    intro i stop out hn
+    rw [pcmMonoGoSlow, pcmMonoGo, dif_neg (by omega), dif_neg (by omega)]
+  | succ n ih =>
+    intro i stop out hn
+    rw [pcmMonoGoSlow, pcmMonoGo, dif_pos (by omega), dif_pos (by omega)]
+    exact ih (i + 1) stop _ (by omega)
+
+theorem pcmStereoGo_size (a c : Array Int) :
+    ∀ (n i stop : Nat) (out : ByteArray), stop - i = n →
+      (pcmStereoGo a c i stop out).size = out.size + 4 * (stop - i) := by
+  intro n
+  induction n with
+  | zero => intro i stop out hn; rw [pcmStereoGo, dif_neg (by omega)]; omega
+  | succ n ih =>
+    intro i stop out hn
+    rw [pcmStereoGo, dif_pos (by omega), ih (i + 1) stop _ (by omega)]
+    simp only [ByteArray.size_push]
+    omega
+
+theorem pcmMonoGo_size (a : Array Int) :
+    ∀ (n i stop : Nat) (out : ByteArray), stop - i = n →
+      (pcmMonoGo a i stop out).size = out.size + 2 * (stop - i) := by
+  intro n
+  induction n with
+  | zero => intro i stop out hn; rw [pcmMonoGo, dif_neg (by omega)]; omega
+  | succ n ih =>
+    intro i stop out hn
+    rw [pcmMonoGo, dif_pos (by omega), ih (i + 1) stop _ (by omega)]
+    simp only [ByteArray.size_push]
+    omega
+
+theorem pcmStereoGo_get (a c : Array Int) :
+    ∀ (n i stop : Nat) (out : ByteArray), stop - i = n →
+      ∀ (k : Nat) (hk : k < (pcmStereoGo a c i stop out).size),
+        (pcmStereoGo a c i stop out)[k]
+          = if h : k < out.size then out[k]
+            else stereoByte a c (i + (k - out.size) / 4) ((k - out.size) % 4) := by
+  intro n
+  induction n with
+  | zero =>
+    intro i stop out hn k hk
+    have hsz := pcmStereoGo_size a c 0 i stop out hn
+    have hk' : k < out.size := by rw [hsz] at hk; omega
+    have heq : pcmStereoGo a c i stop out = out := by
+      rw [pcmStereoGo, dif_neg (show ¬ i < stop by omega)]
+    rw [dif_pos hk']
+    simp only [heq]
+  | succ n ih =>
+    intro i stop out hn k hk
+    have hlt : i < stop := by omega
+    have heq : pcmStereoGo a c i stop out = pcmStereoGo a c (i + 1) stop
+        ((((out.push ((a.getD i 0).toInt64.toUInt64).toUInt8).push
+          (((a.getD i 0).toInt64.toUInt64) >>> 8).toUInt8).push
+          ((c.getD i 0).toInt64.toUInt64).toUInt8).push
+          (((c.getD i 0).toInt64.toUInt64) >>> 8).toUInt8) := by
+      rw [pcmStereoGo, dif_pos hlt]
+    simp only [heq]
+    rw [ih (i + 1) stop _ (by omega) k]
+    simp only [getElem_push4, ByteArray.size_push]
+    by_cases hko : k < out.size
+    · rw [dif_pos (show k < out.size + 1 + 1 + 1 + 1 by omega), dif_pos hko, dif_pos hko]
+    · rw [dif_neg hko]
+      by_cases hk4 : k < out.size + 4
+      · rw [dif_pos (show k < out.size + 1 + 1 + 1 + 1 by omega), dif_neg hko]
+        simp only [stereoByte]
+        have hd : (k - out.size) / 4 = 0 := by omega
+        rw [hd, Nat.add_zero]
+        ifs_omega
+      · rw [dif_neg (show ¬ k < out.size + 1 + 1 + 1 + 1 by omega)]
+        have h1 : (k - (out.size + 1 + 1 + 1 + 1)) / 4 = (k - out.size) / 4 - 1 := by omega
+        have h2 : (k - (out.size + 1 + 1 + 1 + 1)) % 4 = (k - out.size) % 4 := by omega
+        have h3 : i + 1 + ((k - out.size) / 4 - 1) = i + (k - out.size) / 4 := by omega
+        rw [h1, h2, h3, dif_neg hko]
+
+theorem pcmMonoGo_get (a : Array Int) :
+    ∀ (n i stop : Nat) (out : ByteArray), stop - i = n →
+      ∀ (k : Nat) (hk : k < (pcmMonoGo a i stop out).size),
+        (pcmMonoGo a i stop out)[k]
+          = if h : k < out.size then out[k]
+            else monoByte a (i + (k - out.size) / 2) ((k - out.size) % 2) := by
+  intro n
+  induction n with
+  | zero =>
+    intro i stop out hn k hk
+    have hsz := pcmMonoGo_size a 0 i stop out hn
+    have hk' : k < out.size := by rw [hsz] at hk; omega
+    have heq : pcmMonoGo a i stop out = out := by
+      rw [pcmMonoGo, dif_neg (show ¬ i < stop by omega)]
+    rw [dif_pos hk']
+    simp only [heq]
+  | succ n ih =>
+    intro i stop out hn k hk
+    have hlt : i < stop := by omega
+    have heq : pcmMonoGo a i stop out = pcmMonoGo a (i + 1) stop
+        ((out.push ((a.getD i 0).toInt64.toUInt64).toUInt8).push
+          (((a.getD i 0).toInt64.toUInt64) >>> 8).toUInt8) := by
+      rw [pcmMonoGo, dif_pos hlt]
+    simp only [heq]
+    rw [ih (i + 1) stop _ (by omega) k]
+    simp only [getElem_push2, ByteArray.size_push]
+    by_cases hko : k < out.size
+    · rw [dif_pos (show k < out.size + 1 + 1 by omega), dif_pos hko, dif_pos hko]
+    · rw [dif_neg hko]
+      by_cases hk2 : k < out.size + 2
+      · rw [dif_pos (show k < out.size + 1 + 1 by omega), dif_neg hko]
+        simp only [monoByte]
+        have hd : (k - out.size) / 2 = 0 := by omega
+        rw [hd, Nat.add_zero]
+        ifs_omega
+      · rw [dif_neg (show ¬ k < out.size + 1 + 1 by omega)]
+        have h1 : (k - (out.size + 1 + 1)) / 2 = (k - out.size) / 2 - 1 := by omega
+        have h2 : (k - (out.size + 1 + 1)) % 2 = (k - out.size) % 2 := by omega
+        have h3 : i + 1 + ((k - out.size) / 2 - 1) = i + (k - out.size) / 2 := by omega
+        rw [h1, h2, h3, dif_neg hko]
+
+theorem pcmStereoFill_succ (a c : Array Int) (i stop : Nat) (j : USize) (out : ByteArray) hj hs
+    (h : i < stop) (hj4 : j.toNat + 4 ≤ out.size) hj' hs' :
+    pcmStereoFill a c i stop j out hj hs
+      = pcmStereoFill a c (i + 1) stop (j + USize.ofNat 4) (stereoStore a c i j out hj4 hs) hj' hs' := by
+  rw [pcmStereoFill, dif_pos h]
+
+theorem pcmMonoFill_succ (a : Array Int) (i stop : Nat) (j : USize) (out : ByteArray) hj hs
+    (h : i < stop) (hj2 : j.toNat + 2 ≤ out.size) hj' hs' :
+    pcmMonoFill a i stop j out hj hs
+      = pcmMonoFill a (i + 1) stop (j + USize.ofNat 2) (monoStore a i j out hj2 hs) hj' hs' := by
+  rw [pcmMonoFill, dif_pos h]
+
+theorem pcmStereoFill_size (a c : Array Int) :
+    ∀ (n i stop : Nat) (j : USize) (out : ByteArray) hj hs, stop - i = n →
+      (pcmStereoFill a c i stop j out hj hs).size = out.size := by
+  intro n
+  induction n with
+  | zero => intro i stop j out hj hs hn; rw [pcmStereoFill, dif_neg (by omega)]
+  | succ n ih =>
+    intro i stop j out hj hs hn
+    rw [pcmStereoFill, dif_pos (by omega), ih (i + 1) stop _ _ _ _ (by omega), size_stereoStore]
+
+theorem pcmMonoFill_size (a : Array Int) :
+    ∀ (n i stop : Nat) (j : USize) (out : ByteArray) hj hs, stop - i = n →
+      (pcmMonoFill a i stop j out hj hs).size = out.size := by
+  intro n
+  induction n with
+  | zero => intro i stop j out hj hs hn; rw [pcmMonoFill, dif_neg (by omega)]
+  | succ n ih =>
+    intro i stop j out hj hs hn
+    rw [pcmMonoFill, dif_pos (by omega), ih (i + 1) stop _ _ _ _ (by omega), size_monoStore]
+
+theorem pcmStereoFill_get (a c : Array Int) :
+    ∀ (n i stop : Nat) (j : USize) (out : ByteArray) hj hs, stop - i = n →
+      ∀ (k : Nat) (hk : k < (pcmStereoFill a c i stop j out hj hs).size) (hk' : k < out.size),
+        (pcmStereoFill a c i stop j out hj hs)[k]
+          = if j.toNat ≤ k ∧ k < j.toNat + 4 * (stop - i)
+            then stereoByte a c (i + (k - j.toNat) / 4) ((k - j.toNat) % 4)
+            else out[k] := by
+  intro n
+  induction n with
+  | zero =>
+    intro i stop j out hj hs hn k hk hk'
+    have heq : pcmStereoFill a c i stop j out hj hs = out := by
+      rw [pcmStereoFill, dif_neg (show ¬ i < stop by omega)]
+    rw [if_neg (by omega)]
+    simp only [heq]
+  | succ n ih =>
+    intro i stop j out hj hs hn k hk hk'
+    have hlt : i < stop := by omega
+    have e4 := usize_step j 4 out.size (by omega) hs
+    have heq := pcmStereoFill_succ a c i stop j out hj hs hlt (by omega)
+      (by rw [size_stereoStore, e4]; omega) (by rw [size_stereoStore]; exact hs)
+    simp only [heq]
+    rw [ih (i + 1) stop _ _ _ _ (by omega) k _ (by rw [size_stereoStore]; exact hk'),
+      getElem_stereoStore _ _ _ _ _ _ _ k _ hk', e4]
+    by_cases hin : j.toNat + 4 ≤ k ∧ k < j.toNat + 4 + 4 * (stop - (i + 1))
+    · rw [if_pos hin, if_pos (by omega)]
+      have h1 : (k - (j.toNat + 4)) / 4 = (k - j.toNat) / 4 - 1 := by omega
+      have h2 : (k - (j.toNat + 4)) % 4 = (k - j.toNat) % 4 := by omega
+      have h3 : i + 1 + ((k - j.toNat) / 4 - 1) = i + (k - j.toNat) / 4 := by omega
+      rw [h1, h2, h3]
+    · rw [if_neg hin]
+      by_cases hk4 : j.toNat ≤ k ∧ k < j.toNat + 4
+      · rw [if_pos hk4, if_pos (by omega)]
+        have hd : (k - j.toNat) / 4 = 0 := by omega
+        have hm : (k - j.toNat) % 4 = k - j.toNat := by omega
+        rw [hd, hm, Nat.add_zero]
+      · rw [if_neg hk4, if_neg (by omega)]
+
+theorem pcmMonoFill_get (a : Array Int) :
+    ∀ (n i stop : Nat) (j : USize) (out : ByteArray) hj hs, stop - i = n →
+      ∀ (k : Nat) (hk : k < (pcmMonoFill a i stop j out hj hs).size) (hk' : k < out.size),
+        (pcmMonoFill a i stop j out hj hs)[k]
+          = if j.toNat ≤ k ∧ k < j.toNat + 2 * (stop - i)
+            then monoByte a (i + (k - j.toNat) / 2) ((k - j.toNat) % 2)
+            else out[k] := by
+  intro n
+  induction n with
+  | zero =>
+    intro i stop j out hj hs hn k hk hk'
+    have heq : pcmMonoFill a i stop j out hj hs = out := by
+      rw [pcmMonoFill, dif_neg (show ¬ i < stop by omega)]
+    rw [if_neg (by omega)]
+    simp only [heq]
+  | succ n ih =>
+    intro i stop j out hj hs hn k hk hk'
+    have hlt : i < stop := by omega
+    have e2 := usize_step j 2 out.size (by omega) hs
+    have heq := pcmMonoFill_succ a i stop j out hj hs hlt (by omega)
+      (by rw [size_monoStore, e2]; omega) (by rw [size_monoStore]; exact hs)
+    simp only [heq]
+    rw [ih (i + 1) stop _ _ _ _ (by omega) k _ (by rw [size_monoStore]; exact hk'),
+      getElem_monoStore _ _ _ _ _ _ k _ hk', e2]
+    by_cases hin : j.toNat + 2 ≤ k ∧ k < j.toNat + 2 + 2 * (stop - (i + 1))
+    · rw [if_pos hin, if_pos (by omega)]
+      have h1 : (k - (j.toNat + 2)) / 2 = (k - j.toNat) / 2 - 1 := by omega
+      have h2 : (k - (j.toNat + 2)) % 2 = (k - j.toNat) % 2 := by omega
+      have h3 : i + 1 + ((k - j.toNat) / 2 - 1) = i + (k - j.toNat) / 2 := by omega
+      rw [h1, h2, h3]
+    · rw [if_neg hin]
+      by_cases hk2 : j.toNat ≤ k ∧ k < j.toNat + 2
+      · rw [if_pos hk2, if_pos (by omega)]
+        have hd : (k - j.toNat) / 2 = 0 := by omega
+        have hm : (k - j.toNat) % 2 = k - j.toNat := by omega
+        rw [hd, hm, Nat.add_zero]
+      · rw [if_neg hk2, if_neg (by omega)]
+
+/-- **The stereo fill computes the pushes.** -/
+@[csimp] theorem pcmStereoGo_eq_fast : @pcmStereoGo = @pcmStereoGoFast := by
+  funext a c i stop out
+  unfold pcmStereoGoFast
+  split
+  · next h =>
+    obtain ⟨hlt, hs, _⟩ := h
+    have hj := toNat_toUSize_of_lt out.size (by omega)
+    apply ByteArray.ext_getElem
+    · rw [pcmStereoGo_size a c _ i stop out rfl, pcmStereoFill_size a c _ i stop _ _ _ _ rfl,
+        ByteArray.size_append, size_zeros]
+    · intro k hk hk'
+      have hk'' : k < (out ++ zeros (4 * (stop - i))).size := by
+        rw [pcmStereoFill_size a c _ i stop _ _ _ _ rfl] at hk'; exact hk'
+      rw [pcmStereoGo_get a c _ i stop out rfl k hk,
+        pcmStereoFill_get a c _ i stop _ _ _ _ rfl k hk' hk'', hj]
+      by_cases hko : k < out.size
+      · rw [dif_pos hko, if_neg (by omega), getElem_append_left' out _ k hko]
+      · rw [dif_neg hko, if_pos (by
+          have := hk
+          rw [pcmStereoGo_size a c _ i stop out rfl] at this
+          omega)]
+  · exact (pcmStereoGoSlow_eq a c _ i stop out rfl).symm
+
+/-- **The mono fill computes the pushes.** -/
+@[csimp] theorem pcmMonoGo_eq_fast : @pcmMonoGo = @pcmMonoGoFast := by
+  funext a i stop out
+  unfold pcmMonoGoFast
+  split
+  · next h =>
+    obtain ⟨hlt, hs, _⟩ := h
+    have hj := toNat_toUSize_of_lt out.size (by omega)
+    apply ByteArray.ext_getElem
+    · rw [pcmMonoGo_size a _ i stop out rfl, pcmMonoFill_size a _ i stop _ _ _ _ rfl,
+        ByteArray.size_append, size_zeros]
+    · intro k hk hk'
+      have hk'' : k < (out ++ zeros (2 * (stop - i))).size := by
+        rw [pcmMonoFill_size a _ i stop _ _ _ _ rfl] at hk'; exact hk'
+      rw [pcmMonoGo_get a _ i stop out rfl k hk,
+        pcmMonoFill_get a _ i stop _ _ _ _ rfl k hk' hk'', hj]
+      by_cases hko : k < out.size
+      · rw [dif_pos hko, if_neg (by omega), getElem_append_left' out _ k hko]
+      · rw [dif_neg hko, if_pos (by
+          have := hk
+          rw [pcmMonoGo_size a _ i stop out rfl] at this
+          omega)]
+  · exact (pcmMonoGoSlow_eq a _ i stop out rfl).symm
 
 /-- Any bit depth, any channel count. -/
 def pcmRowsGo (w : Nat) (arrs : List (Array Int)) :
@@ -344,8 +868,9 @@ def writeFrames (b : Nat) (varBlk : Bool) (blockSize : Nat)
 /-- `writeFrames` with the serialized bits collected in an accumulator, so the
     recursive call is in tail position: frame count is attacker-chosen (a frame
     can be ~13 bytes), so the append-after-return form kept one native stack
-    frame alive per frame and overflowed on ordinary inputs (audit finding C04,
-    the encode-side analogue of the P6 decode-loop swaps). -/
+    frame alive per frame and overflowed on ordinary inputs (audit finding C04 —
+    `fuzz/findings/encoder-stack-overflow-CONFIRMED` — the encode-side analogue
+    of the P6 decode-loop swaps). -/
 def writeFramesAcc (b : Nat) (varBlk : Bool) (blockSize : Nat)
     (chooser : List (List Int) → Frame.ChannelAsg) (acc : BitStream) :
     Nat → List (List (List Int)) → BitStream

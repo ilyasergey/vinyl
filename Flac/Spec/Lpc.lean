@@ -114,12 +114,6 @@ theorem dotA_take (out : Array Int) :
     rw [dotAGo_eq]
     simp
 
-/-- PROBE -/
-private theorem dotAGo_unfold1 (out : Array Int) (c0 : Int) (m : Nat)
-    (h : m + 1 ≤ out.size) (acc : Int) :
-    dotAGo out [c0] (m + 1) h acc = acc + c0 * out[m]'(by omega) := by
-  simp only [dotAGo]
-
 private theorem dotA_unfold1 (xs : Array Int) (c0 : Int) (m : Nat)
     (h : m + 1 ≤ xs.size) :
     dotA [c0] xs (m) = 0 + c0 * xs[m]'(by omega) := by
@@ -139,11 +133,6 @@ theorem dot1At_eq (xs : Array Int) (c0 : Int) (i : Nat) :
     split
     · next h => rw [dotA_unfold1 xs c0 m h]
     · rfl
-
-private theorem dotAGo_unfold2 (out : Array Int) (c0 c1 : Int) (m : Nat)
-    (h : m + 2 ≤ out.size) (acc : Int) :
-    dotAGo out [c0, c1] (m + 2) h acc = acc + c0 * out[m + 1]'(by omega) + c1 * out[m]'(by omega) := by
-  simp only [dotAGo]
 
 private theorem dotA_unfold2 (xs : Array Int) (c0 c1 : Int) (m : Nat)
     (h : m + 2 ≤ xs.size) :
@@ -166,11 +155,6 @@ theorem dot2At_eq (xs : Array Int) (c0 c1 : Int) (i : Nat) :
     · next h => rw [dotA_unfold2 xs c0 c1 m h]
     · rfl
 
-private theorem dotAGo_unfold3 (out : Array Int) (c0 c1 c2 : Int) (m : Nat)
-    (h : m + 3 ≤ out.size) (acc : Int) :
-    dotAGo out [c0, c1, c2] (m + 3) h acc = acc + c0 * out[m + 2]'(by omega) + c1 * out[m + 1]'(by omega) + c2 * out[m]'(by omega) := by
-  simp only [dotAGo]
-
 private theorem dotA_unfold3 (xs : Array Int) (c0 c1 c2 : Int) (m : Nat)
     (h : m + 3 ≤ xs.size) :
     dotA [c0, c1, c2] xs (m + 2) = 0 + c0 * xs[m + 2]'(by omega) + c1 * xs[m + 1]'(by omega) + c2 * xs[m]'(by omega) := by
@@ -192,11 +176,6 @@ theorem dot3At_eq (xs : Array Int) (c0 c1 c2 : Int) (i : Nat) :
     split
     · next h => rw [dotA_unfold3 xs c0 c1 c2 m h]
     · rfl
-
-private theorem dotAGo_unfold4 (out : Array Int) (c0 c1 c2 c3 : Int) (m : Nat)
-    (h : m + 4 ≤ out.size) (acc : Int) :
-    dotAGo out [c0, c1, c2, c3] (m + 4) h acc = acc + c0 * out[m + 3]'(by omega) + c1 * out[m + 2]'(by omega) + c2 * out[m + 1]'(by omega) + c3 * out[m]'(by omega) := by
-  simp only [dotAGo]
 
 private theorem dotA_unfold4 (xs : Array Int) (c0 c1 c2 c3 : Int) (m : Nat)
     (h : m + 4 ≤ xs.size) :
@@ -221,11 +200,6 @@ theorem dot4At_eq (xs : Array Int) (c0 c1 c2 c3 : Int) (i : Nat) :
     · next h => rw [dotA_unfold4 xs c0 c1 c2 c3 m h]
     · rfl
 
-private theorem dotAGo_unfold5 (out : Array Int) (c0 c1 c2 c3 c4 : Int) (m : Nat)
-    (h : m + 5 ≤ out.size) (acc : Int) :
-    dotAGo out [c0, c1, c2, c3, c4] (m + 5) h acc = acc + c0 * out[m + 4]'(by omega) + c1 * out[m + 3]'(by omega) + c2 * out[m + 2]'(by omega) + c3 * out[m + 1]'(by omega) + c4 * out[m]'(by omega) := by
-  simp only [dotAGo]
-
 private theorem dotA_unfold5 (xs : Array Int) (c0 c1 c2 c3 c4 : Int) (m : Nat)
     (h : m + 5 ≤ xs.size) :
     dotA [c0, c1, c2, c3, c4] xs (m + 4) = 0 + c0 * xs[m + 4]'(by omega) + c1 * xs[m + 3]'(by omega) + c2 * xs[m + 2]'(by omega) + c3 * xs[m + 1]'(by omega) + c4 * xs[m]'(by omega) := by
@@ -249,11 +223,6 @@ theorem dot5At_eq (xs : Array Int) (c0 c1 c2 c3 c4 : Int) (i : Nat) :
     split
     · next h => rw [dotA_unfold5 xs c0 c1 c2 c3 c4 m h]
     · rfl
-
-private theorem dotAGo_unfold6 (out : Array Int) (c0 c1 c2 c3 c4 c5 : Int) (m : Nat)
-    (h : m + 6 ≤ out.size) (acc : Int) :
-    dotAGo out [c0, c1, c2, c3, c4, c5] (m + 6) h acc = acc + c0 * out[m + 5]'(by omega) + c1 * out[m + 4]'(by omega) + c2 * out[m + 3]'(by omega) + c3 * out[m + 2]'(by omega) + c4 * out[m + 1]'(by omega) + c5 * out[m]'(by omega) := by
-  simp only [dotAGo]
 
 private theorem dotA_unfold6 (xs : Array Int) (c0 c1 c2 c3 c4 c5 : Int) (m : Nat)
     (h : m + 6 ≤ xs.size) :
@@ -280,11 +249,6 @@ theorem dot6At_eq (xs : Array Int) (c0 c1 c2 c3 c4 c5 : Int) (i : Nat) :
     · next h => rw [dotA_unfold6 xs c0 c1 c2 c3 c4 c5 m h]
     · rfl
 
-private theorem dotAGo_unfold7 (out : Array Int) (c0 c1 c2 c3 c4 c5 c6 : Int) (m : Nat)
-    (h : m + 7 ≤ out.size) (acc : Int) :
-    dotAGo out [c0, c1, c2, c3, c4, c5, c6] (m + 7) h acc = acc + c0 * out[m + 6]'(by omega) + c1 * out[m + 5]'(by omega) + c2 * out[m + 4]'(by omega) + c3 * out[m + 3]'(by omega) + c4 * out[m + 2]'(by omega) + c5 * out[m + 1]'(by omega) + c6 * out[m]'(by omega) := by
-  simp only [dotAGo]
-
 private theorem dotA_unfold7 (xs : Array Int) (c0 c1 c2 c3 c4 c5 c6 : Int) (m : Nat)
     (h : m + 7 ≤ xs.size) :
     dotA [c0, c1, c2, c3, c4, c5, c6] xs (m + 6) = 0 + c0 * xs[m + 6]'(by omega) + c1 * xs[m + 5]'(by omega) + c2 * xs[m + 4]'(by omega) + c3 * xs[m + 3]'(by omega) + c4 * xs[m + 2]'(by omega) + c5 * xs[m + 1]'(by omega) + c6 * xs[m]'(by omega) := by
@@ -310,11 +274,6 @@ theorem dot7At_eq (xs : Array Int) (c0 c1 c2 c3 c4 c5 c6 : Int) (i : Nat) :
     split
     · next h => rw [dotA_unfold7 xs c0 c1 c2 c3 c4 c5 c6 m h]
     · rfl
-
-private theorem dotAGo_unfold8 (out : Array Int) (c0 c1 c2 c3 c4 c5 c6 c7 : Int) (m : Nat)
-    (h : m + 8 ≤ out.size) (acc : Int) :
-    dotAGo out [c0, c1, c2, c3, c4, c5, c6, c7] (m + 8) h acc = acc + c0 * out[m + 7]'(by omega) + c1 * out[m + 6]'(by omega) + c2 * out[m + 5]'(by omega) + c3 * out[m + 4]'(by omega) + c4 * out[m + 3]'(by omega) + c5 * out[m + 2]'(by omega) + c6 * out[m + 1]'(by omega) + c7 * out[m]'(by omega) := by
-  simp only [dotAGo]
 
 private theorem dotA_unfold8 (xs : Array Int) (c0 c1 c2 c3 c4 c5 c6 c7 : Int) (m : Nat)
     (h : m + 8 ≤ xs.size) :

@@ -121,7 +121,7 @@ theorem toStream_cons (br : BitReader) (h : br.pos < br.size) :
 
 `bitFast` and `extractBitsFast` are what the reader runs; `bit` and
 `extractBits` are what the simulation lemmas below reason about. These
-equalities are the entire trusted bridge. -/
+equalities are the whole bridge, and they are proved, not assumed. -/
 
 theorem bitFast_eq (d : ByteArray) (i : Nat) : bitFast d i = bit d i := by
   unfold bitFast bit
@@ -371,6 +371,53 @@ theorem scanOne_bounds (d : ByteArray) : ∀ (fuel pos : Nat),
     · rw [if_neg h]
       have hb := ih (pos + 1)
       omega
+
+/-! ### Skipping known-zero bits
+
+The shipped scan (`Flac.Decode.scanOneU`) decides a whole byte at a time,
+so its correctness argument is: bits already known to be zero can be
+stepped over in one go, and a bit known to be one ends the search. Both
+are inductions on the number of bits skipped. -/
+
+/-- A run of `s` zero bits is skipped in one step. -/
+theorem scanOne_skip (d : ByteArray) : ∀ (s pos n : Nat), s ≤ n →
+    (∀ j, j < s → bitFast d (pos + j) = false) →
+    scanOne d pos n = scanOne d (pos + s) (n - s) := by
+  intro s
+  induction s with
+  | zero => intro pos n _ _; rfl
+  | succ s ih =>
+    intro pos n hs hz
+    cases n with
+    | zero => omega
+    | succ n =>
+      have h0 : bitFast d pos = false := by
+        have := hz 0 (by omega); rwa [Nat.add_zero] at this
+      have hstep : scanOne d pos (n + 1) = scanOne d (pos + 1) n := by
+        show (if bitFast d pos then pos else scanOne d (pos + 1) n) = _
+        rw [if_neg (by rw [h0]; exact Bool.false_ne_true)]
+      rw [hstep, ih (pos + 1) n (by omega) (fun j hj => by
+          have := hz (j + 1) (by omega)
+          rwa [show pos + (j + 1) = pos + 1 + j by omega] at this),
+        show pos + 1 + s = pos + (s + 1) by omega, show n - s = n + 1 - (s + 1) by omega]
+
+/-- Nothing to find: the scan runs out at the end of its interval. -/
+theorem scanOne_all_zero (d : ByteArray) (pos n : Nat)
+    (hz : ∀ j, j < n → bitFast d (pos + j) = false) :
+    scanOne d pos n = pos + n := by
+  rw [scanOne_skip d n pos n (Nat.le_refl _) hz, Nat.sub_self]
+  rfl
+
+/-- The first one bit is where the scan stops. -/
+theorem scanOne_hit (d : ByteArray) (pos n t : Nat) (ht : t < n)
+    (hz : ∀ j, j < t → bitFast d (pos + j) = false) (h1 : bitFast d (pos + t) = true) :
+    scanOne d pos n = pos + t := by
+  rw [scanOne_skip d t pos n (Nat.le_of_lt ht) hz]
+  cases hnt : n - t with
+  | zero => omega
+  | succ m =>
+    show (if bitFast d (pos + t) then pos + t else scanOne d (pos + t + 1) m) = _
+    rw [if_pos (by rw [h1])]
 
 /-- `scanOne` is `readUnaryGo` with the quotient recovered from the
     terminating-bit position.  Its right-hand side allocates only in this

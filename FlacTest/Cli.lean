@@ -285,6 +285,91 @@ def fusedDecodeTests : TestM Unit := do
   checkEq "fused decode = original PCM: 200k samples"
     (Flac.Decode.decodeBytes bigFlac) (some (Stream.pcmBytes 16 [big], 16))
 
+/-! ## Kernel boundaries
+
+The machine-word kernels are pinned by theorems, but their *guards* choose
+between the kernel and a boxed fallback, and a guard is where a proof stops
+helping. These tests walk the boundaries directly: every byte
+value and start bit through the byte-stepping unary scan, every offset and
+tail length through the slicing-by-four CRC, the Rice reader at `k = 0` and
+at the `k ≤ 17` window limit with runs that cross byte boundaries, and the
+LPC restore at the bit depth (33) and orders (12/13) where the specialised
+kernels hand over to the generic one. -/
+
+def kernelBoundaryTests : TestM Unit := do
+  -- `scanOneU` decides a whole byte at a time (leading-zero table); the model
+  -- walks one bit at a time. Every byte value, every start bit, and fuels
+  -- that stop inside, at, and past the end of the buffer.
+  let szle (d : ByteArray) : d.usize ≤ d.usize := USize.le_iff_toNat_le.2 (Nat.le_refl _)
+  check "scanOneU = scanOne (256 bytes x 24 start bits x 26 fuels)" <|
+    (List.range 256).all fun b =>
+      let d : ByteArray := ⟨#[UInt8.ofNat b, 0, 1]⟩
+      (List.range 24).all fun p =>
+        (List.range 26).all fun f =>
+          (Flac.Decode.scanOneU d d.usize (szle d) (USize.ofNat p) (USize.ofNat f)).toNat
+            == Flac.Bits.BitReader.scanOne d p f
+  -- a run of zero bytes: the scan must step, not walk
+  check "scanOneU over an all-zero buffer" <|
+    let z : ByteArray := ⟨#[0, 0, 0, 0, 0, 0, 0, 1]⟩
+    (List.range 64).all fun p =>
+      (Flac.Decode.scanOneU z z.usize (szle z) (USize.ofNat p) (USize.ofNat (64 - p))).toNat
+        == Flac.Bits.BitReader.scanOne z p (64 - p)
+  -- CRC-16 over every start/stop pair of a 37-byte buffer: odd offsets and
+  -- 0-3 tail bytes are exactly where slicing-by-four hands over to the byte
+  -- loop.
+  let cbs : ByteArray := ⟨(List.range 37).map (fun i => UInt8.ofNat (i * 37 % 256)) |>.toArray⟩
+  check "crc16Range = crc16 of the slice (all offsets and lengths)" <|
+    (List.range 39).all fun a =>
+      (List.range 39).all fun b =>
+        Crc.crc16Range cbs a b == Crc.crc16 (cbs.extract a b)
+  check "crc8Range = crc8 of the slice (all offsets and lengths)" <|
+    (List.range 39).all fun a =>
+      (List.range 39).all fun b =>
+        Crc.crc8Range cbs a b == Crc.crc8 (cbs.extract a b)
+  -- the Rice reader against its specification form, at every parameter the
+  -- three-byte window covers and at start positions inside every byte
+  let rbs : ByteArray := ⟨(List.range 96).map (fun i => UInt8.ofNat ((i * i * 31 + i * 7) % 256)) |>.toArray⟩
+  let shape (r : Option (Array Int × Flac.Bits.BitReader)) : Option (List Int × Nat) :=
+    r.map fun p => (p.1.toList, p.2.pos)
+  check "readRiceSeqFast = readRiceSeqA (k = 0..17, 8 start bits)" <|
+    (List.range 18).all fun k =>
+      (List.range 8).all fun p =>
+        shape (Flac.Decode.readRiceSeqFast k 6 ⟨rbs, p⟩ #[])
+          == shape (Flac.Decode.readRiceSeqA k 6 ⟨rbs, p⟩ #[])
+  -- long unary runs: a buffer of zero bytes with a single terminating one bit
+  let zbs : ByteArray := ⟨(List.range 40).map (fun i => if i % 10 == 9 then (1 : UInt8) else 0) |>.toArray⟩
+  check "readRiceSeqFast = readRiceSeqA (runs across byte boundaries)" <|
+    (List.range 18).all fun k =>
+      shape (Flac.Decode.readRiceSeqFast k 3 ⟨zbs, 0⟩ #[])
+        == shape (Flac.Decode.readRiceSeqA k 3 ⟨zbs, 0⟩ #[])
+  -- reads that run out of buffer must be refused, not truncated
+  check "readRiceSeqFast refuses a truncated remainder" <|
+    (List.range 18).all fun k =>
+      shape (Flac.Decode.readRiceSeqFast k 40 ⟨rbs, 8 * rbs.size - 4⟩ #[]) == none
+  -- the LPC restore: `b = 33` is the widest depth the guard admits, orders
+  -- 12 and 13 straddle the specialised kernels, and a warmup shorter than the
+  -- order takes the entry fallback.
+  let naive (b : Nat) (cs : List Int) (sh : Nat) (warmup res : List Int) : List Int :=
+    res.foldl (fun out r =>
+      let hist := out.reverse
+      let p := (cs.zipIdx.map fun (c, j) => c * (hist.getD j 0)).sum
+      out ++ [Flac.Bits.wrapSInt b (r + Flac.Bits.sar p sh)]) warmup
+  let res : List Int := (List.range 40).map fun i => (((i * 7919) % 4001 : Nat) : Int) - 2000
+  for ord in [1, 4, 12, 13, 32] do
+    let cs : List Int := (List.range ord).map fun j => ((j * 331 % 4096 : Nat) : Int) - 2048
+    for b in [16, 33] do
+      let warmup : List Int := (List.range ord).map fun j =>
+        (((j * 1237) % (2 * 4096) : Nat) : Int) - 4096
+      checkEq s!"restoreA = model (order {ord}, b {b})"
+        (Flac.Lpc.restoreA b cs 12 warmup res.toArray).toList
+        (naive b cs 12 warmup res)
+    -- warmup shorter than the order: the entry falls back, the result must
+    -- still be the model's
+    let short : List Int := (List.range (ord - 1)).map fun j => ((j * 91 : Nat) : Int)
+    checkEq s!"restoreA = model (order {ord}, short warmup)"
+      (Flac.Lpc.restoreA 16 cs 12 short res.toArray).toList
+      (naive 16 cs 12 short res)
+
 /-! ## Interleaved PCM bytes at every bit depth
 
 `Stream.pcmBytesRange` is deliberately outside every theorem
@@ -658,8 +743,8 @@ def encodeSlowMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
 
 The audit's three probes each violate one `Audio.WellFormed` clause; the
 total reference encoder mod-wraps them into valid-looking streams denoting
-*different* audio. Since the P7 round the natural name `Flac.encode` is
-the checked form, so each probe gets `none`; the raw form lives under
+*different* audio. The natural name `Flac.encode` is the checked form
+(audit finding P7), so each probe gets `none`; the raw form lives under
 `Unchecked` and its wrong-value behavior is pinned here as the reason. -/
 
 def apiSurfaceTests : TestM Unit := do
@@ -827,7 +912,7 @@ def cliMain (rawArgs : List String) : IO UInt32 := do
     IO.eprintln s!"unrecognized or malformed arguments: {String.intercalate " " args}\n"
     IO.eprintln usage
     return 2
-  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; encoderGuardTests; apiSurfaceTests; recursionShapeTests; threadFlagTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests).run {}
+  let ((), st) ← (do crcTests; md5Tests; utf8NumTests; riceTests; bitsTests; wrapTests; bombTests; encoderGuardTests; apiSurfaceTests; recursionShapeTests; threadFlagTests; e2eTests; fastMirrorTests; pcmBytesTests; fusedDecodeTests; kernelBoundaryTests).run {}
   if st.failures == 0 then
     IO.println s!"ALL TESTS PASSED ({st.count} checks)"
     return 0

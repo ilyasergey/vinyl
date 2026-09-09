@@ -34,8 +34,8 @@ to be `Stream.pcmBytesRange` of the samples `decodeArrays` returns
 byte-level decode of the reference pipeline is `--decode-pcm16`. See
 `ARCHITECTURE.md`.
 
-Since the P6 round, `--decode` decodes with `Flac.Decode.decodeOption`
-rather than executing `Stream.decodeReference` directly: `pin_reference`
+`--decode` decodes with `Flac.Decode.decodeOption` rather than executing
+`Stream.decodeReference` directly: `pin_reference`
 (`decodeOption_eq_reference`) proves them *pointwise equal*, and the
 reference decoder — which materializes the input as `List Bool` and
 rescans it per frame — stays what it always was, the specification-shaped

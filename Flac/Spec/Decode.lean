@@ -276,13 +276,466 @@ theorem readRiceSeqScan3_eq (d : ByteArray) (k pk total : Nat) (hk : k ≤ 17) :
     unfold readRiceSeqScan3 readRiceSeqScan
     simp only [hx, ih]
 
-/-- The shipped Rice run is the byte-addressed one on either branch. -/
+/-! ### The machine-word Rice run computes the three-byte loop
+
+`riceRunU` mirrors `readRiceSeqScan3` step for step; the proof rewrites
+every machine-word value to its `Nat` reading, which is exact because the
+guard keeps every position below the word (`RiceRunOk`). -/
+
+private theorem numBits_ge : 32 ≤ System.Platform.numBits := by
+  rcases System.Platform.numBits_eq with h | h <;> omega
+
+private theorem word_eq :
+    2 ^ System.Platform.numBits = 16 * 2 ^ (System.Platform.numBits - 4) := by
+  rcases System.Platform.numBits_eq with h | h <;> rw [h] <;> rfl
+
+private theorem quarter_word_bounds :
+    2 ^ 28 ≤ 2 ^ (System.Platform.numBits - 4) ∧ 2 ^ (System.Platform.numBits - 4) ≤ 2 ^ 60 := by
+  rcases System.Platform.numBits_eq with h | h <;> rw [h] <;> decide
+
+private theorem byteU_toNat (d : ByteArray) (hs : d.size < 2 ^ System.Platform.numBits)
+    (sz : USize) (hsz : sz ≤ d.usize) (heq : sz = d.usize) (i : USize) :
+    (byteU d sz i hsz).toNat = (if h : i.toNat < d.size then d[i.toNat] else 0).toNat := by
+  subst heq
+  have hus : i < d.usize ↔ i.toNat < d.size := by
+    rw [USize.lt_iff_toNat_lt]
+    simp only [ByteArray.usize, Nat.toUSize_eq, USize.toNat_ofNat', Nat.mod_eq_of_lt hs]
+  unfold byteU
+  by_cases h : i.toNat < d.size
+  · rw [dif_pos (hus.2 h), dif_pos h]
+    rfl
+  · rw [dif_neg (fun h' => h (hus.1 h')), dif_neg h]
+    rfl
+
+private theorem byte_toNat_lt (d : ByteArray) (j : Nat) :
+    (if h : j < d.size then d[j] else 0).toNat < 256 := by
+  split
+  · exact UInt8.toNat_lt_size _
+  · decide
+
+private theorem and7_toNat (i : USize) : (i &&& 7).toNat = i.toNat % 8 := by
+  rw [USize.toNat_and]
+  simp only [USize.reduceToNat]
+  show i.toNat &&& (2 ^ 3 - 1) = i.toNat % 2 ^ 3
+  exact Nat.and_two_pow_sub_one_eq_mod _ _
+
+private theorem shr3_toNat (i : USize) : (i >>> 3).toNat = i.toNat / 8 := by
+  rw [USize.toNat_shiftRight]
+  have h : (3 : USize).toNat % System.Platform.numBits = 3 := by
+    rcases System.Platform.numBits_eq with h | h <;> simp [h]
+  rw [h, Nat.shiftRight_eq_div_pow]
+
+private theorem bitU_eq (d : ByteArray) (hs : d.size < 2 ^ System.Platform.numBits)
+    (sz : USize) (hsz : sz ≤ d.usize) (heq : sz = d.usize) (i : USize) :
+    bitU d sz i hsz = bitFast d i.toNat := by
+  unfold bitU bitFast
+  have h7 : (7 : USize).toNat = 7 := by simp
+  have hsh : (7 - (i &&& 7)).toNat = 7 - i.toNat % 8 := by
+    rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.2 (by rw [and7_toNat, h7]; omega)),
+      and7_toNat, h7]
+  apply decide_eq_decide.2
+  rw [← USize.toNat_inj, USize.toNat_and, USize.toNat_shiftRight, hsh,
+    Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le (by omega) numBits_ge), byteU_toNat d hs sz hsz heq, shr3_toNat]
+  simp only [USize.reduceToNat]
+
+private theorem extract3U_toNat (d : ByteArray) (hs : d.size < 2 ^ System.Platform.numBits)
+    (sz : USize) (hsz : sz ≤ d.usize) (heq : sz = d.usize) (pos n mask : USize) (hn : n.toNat ≤ 17)
+    (hpos : pos.toNat + 24 < 2 ^ System.Platform.numBits) :
+    (extract3U d sz pos n mask hsz).toNat = extractBits3 d pos.toNat n.toNat mask.toNat := by
+  unfold extract3U extractBits3
+  have h1 : (pos >>> 3 + 1).toNat = pos.toNat / 8 + 1 := by
+    rw [USize.toNat_add, shr3_toNat, USize.toNat_one]
+    exact Nat.mod_eq_of_lt (by omega)
+  have h2 : (pos >>> 3 + 2).toNat = pos.toNat / 8 + 2 := by
+    rw [USize.toNat_add, shr3_toNat]
+    simp only [USize.reduceToNat]
+    exact Nat.mod_eq_of_lt (by omega)
+  have hb0 := byte_toNat_lt d (pos.toNat / 8)
+  have hb1 := byte_toNat_lt d (pos.toNat / 8 + 1)
+  have hb2 := byte_toNat_lt d (pos.toNat / 8 + 2)
+  have hw : (byteU d sz (pos >>> 3) hsz * (256 : USize) + byteU d sz (pos >>> 3 + 1) hsz).toNat
+      = (if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat * 256
+        + (if h : pos.toNat / 8 + 1 < d.size then d[pos.toNat / 8 + 1] else 0).toNat := by
+    rw [USize.toNat_add, USize.toNat_mul, byteU_toNat d hs sz hsz heq, byteU_toNat d hs sz hsz heq, shr3_toNat, h1]
+    simp only [USize.reduceToNat]
+    have : 2 ^ 16 ≤ 2 ^ System.Platform.numBits := Nat.pow_le_pow_right (by omega) (by have := numBits_ge; omega)
+    generalize (if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat = g at hb0 ⊢
+    generalize (if h : pos.toNat / 8 + 1 < d.size then d[pos.toNat / 8 + 1] else 0).toNat = g1 at hb1 ⊢
+    rw [Nat.mod_eq_of_lt (show g * 256 < 2 ^ System.Platform.numBits by omega),
+      Nat.mod_eq_of_lt (show g * 256 + g1 < 2 ^ System.Platform.numBits by omega)]
+  have hw3 : ((byteU d sz (pos >>> 3) hsz * (256 : USize) + byteU d sz (pos >>> 3 + 1) hsz)
+        * (256 : USize) + byteU d sz (pos >>> 3 + 2) hsz).toNat
+      = ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat * 256
+        + (if h : pos.toNat / 8 + 1 < d.size then d[pos.toNat / 8 + 1] else 0).toNat) * 256
+        + (if h : pos.toNat / 8 + 2 < d.size then d[pos.toNat / 8 + 2] else 0).toNat := by
+    rw [USize.toNat_add, USize.toNat_mul, hw, byteU_toNat d hs sz hsz heq, h2]
+    simp only [USize.reduceToNat]
+    have : 2 ^ 24 ≤ 2 ^ System.Platform.numBits := Nat.pow_le_pow_right (by omega) (by have := numBits_ge; omega)
+    generalize (if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat = g at hb0 ⊢
+    generalize (if h : pos.toNat / 8 + 1 < d.size then d[pos.toNat / 8 + 1] else 0).toNat = g1 at hb1 ⊢
+    generalize (if h : pos.toNat / 8 + 2 < d.size then d[pos.toNat / 8 + 2] else 0).toNat = g2 at hb2 ⊢
+    rw [Nat.mod_eq_of_lt (show (g * 256 + g1) * 256 < 2 ^ System.Platform.numBits by omega),
+      Nat.mod_eq_of_lt (show (g * 256 + g1) * 256 + g2 < 2 ^ System.Platform.numBits by omega)]
+  have h7 : (7 : USize).toNat = 7 := by simp
+  have h24 : (24 : USize).toNat = 24 := by simp
+  have hsh : (24 - (pos &&& 7) - n).toNat = 24 - pos.toNat % 8 - n.toNat := by
+    rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.2 (by
+        rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.2 (by rw [and7_toNat, h24]; omega)),
+          and7_toNat, h24]; omega)),
+      USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.2 (by rw [and7_toNat, h24]; omega)),
+      and7_toNat, h24]
+  rw [USize.toNat_and, USize.toNat_shiftRight, hsh,
+    Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le (by omega) numBits_ge), hw3]
+
+/-! ### Deciding a whole byte of the unary prefix
+
+`scanOneU` masks the byte at the cursor down to the bits at or after it,
+and reads the position of the highest remaining set bit out of a table
+(`7 - log2`). `byte_bit_masked` is why the mask is harmless — bits at or
+after the cursor are exactly the masked value's bits — and the two `log2`
+bounds are why the table entry is the answer, so nothing here is a
+256-case evaluation. -/
+
+private theorem byte_bit_masked (B j i : Nat) (hj : j < 8) (hi : i ≤ 7 - j) :
+    B >>> i &&& 1 = (B % 2 ^ (8 - j)) / 2 ^ i % 2 := by
+  rw [Nat.shiftRight_eq_div_pow, Nat.and_one_is_mod]
+  have hsplit : (2 : Nat) ^ (8 - j) = 2 ^ i * 2 ^ (8 - j - i) := by
+    rw [← Nat.pow_add]; congr 1; omega
+  rw [hsplit, Nat.mod_mul_right_div_self,
+    Nat.mod_mod_of_dvd _ (by simpa using Nat.pow_dvd_pow 2 (show 1 ≤ 8 - j - i by omega))]
+
+/-- An empty window: every bit from the cursor to the end of the byte is zero. -/
+private theorem masked_zero_bit (B j i : Nat) (hj : j < 8) (hi : i ≤ 7 - j)
+    (h : B % 2 ^ (8 - j) = 0) : B >>> i &&& 1 = 0 := by
+  rw [byte_bit_masked B j i hj hi, h, Nat.zero_div]
+
+private theorem masked_log2_le (B j : Nat) (hj : j < 8) (h : B % 2 ^ (8 - j) ≠ 0) :
+    Nat.log2 (B % 2 ^ (8 - j)) ≤ 7 - j := by
+  have h1 : 2 ^ Nat.log2 (B % 2 ^ (8 - j)) ≤ B % 2 ^ (8 - j) := Nat.log2_self_le h
+  have h2 : B % 2 ^ (8 - j) < 2 ^ (8 - j) := Nat.mod_lt _ (Nat.two_pow_pos _)
+  have h3 := (Nat.pow_lt_pow_iff_right (a := 2) (by omega)).1
+    (show (2 : Nat) ^ Nat.log2 (B % 2 ^ (8 - j)) < 2 ^ (8 - j) by omega)
+  omega
+
+/-- The table entry names a one bit. -/
+private theorem masked_msb_one (B j : Nat) (hj : j < 8) (h : B % 2 ^ (8 - j) ≠ 0) :
+    B >>> Nat.log2 (B % 2 ^ (8 - j)) &&& 1 = 1 := by
+  rw [byte_bit_masked B j _ hj (masked_log2_le B j hj h)]
+  have h1 : 2 ^ Nat.log2 (B % 2 ^ (8 - j)) ≤ B % 2 ^ (8 - j) := Nat.log2_self_le h
+  have h2 : B % 2 ^ (8 - j) < 2 ^ (Nat.log2 (B % 2 ^ (8 - j)) + 1) := Nat.lt_log2_self
+  have hp : (2 : Nat) ^ (Nat.log2 (B % 2 ^ (8 - j)) + 1)
+      = 2 * 2 ^ Nat.log2 (B % 2 ^ (8 - j)) := by rw [Nat.pow_succ]; omega
+  rw [Nat.div_eq_of_lt_le (k := 1) (by omega) (by omega)]
+
+/-- Every bit strictly above the table entry, and inside the byte, is zero. -/
+private theorem masked_above_zero (B j i : Nat) (hj : j < 8) (h : B % 2 ^ (8 - j) ≠ 0)
+    (hi1 : Nat.log2 (B % 2 ^ (8 - j)) < i) (hi2 : i ≤ 7 - j) :
+    B >>> i &&& 1 = 0 := by
+  rw [byte_bit_masked B j i hj hi2]
+  have h2 : B % 2 ^ (8 - j) < 2 ^ (Nat.log2 (B % 2 ^ (8 - j)) + 1) := Nat.lt_log2_self
+  have hle : (2 : Nat) ^ (Nat.log2 (B % 2 ^ (8 - j)) + 1) ≤ 2 ^ i :=
+    Nat.pow_le_pow_right (by omega) (by omega)
+  rw [Nat.div_eq_of_lt (by omega), Nat.zero_mod]
+
+private theorem shr255 : ∀ j, j < 8 → 255 >>> j = 2 ^ (8 - j) - 1 := by decide
+
+set_option maxRecDepth 8000 in
+/-- The table holds `7 - log2`. -/
+private theorem nlz8_toNat (m : USize) (hm : m.toNat < 256) (h0 : m.toNat ≠ 0) :
+    (nlz8 m).toNat = 7 - Nat.log2 m.toNat := by
+  have hand : (m &&& 255).toNat = m.toNat := by
+    rw [USize.toNat_and, usize_toNat_255, Nat.and_two_pow_sub_one_eq_mod (n := 8) m.toNat]
+    exact Nat.mod_eq_of_lt hm
+  have hlt : (m &&& 255).toNat < (Array.ofFn (n := 256)
+      (fun i : Fin 256 => UInt8.ofNat (7 - Nat.log2 i.val))).size := by
+    rw [Array.size_ofFn, hand]; omega
+  have hval : nlz8 m = ((Array.ofFn (n := 256)
+      (fun i : Fin 256 => UInt8.ofNat (7 - Nat.log2 i.val)))[(m &&& 255).toNat]'hlt).toUSize := rfl
+  rw [hval, Array.getElem_ofFn hlt]
+  show (UInt8.ofNat (7 - Nat.log2 (m &&& 255).toNat)).toNat = _
+  rw [UInt8.toNat_ofNat', hand]
+  exact Nat.mod_eq_of_lt (by omega)
+
+/-- **The byte-stepping scan is the bit walk.** -/
+private theorem scanOneU_toNat (d : ByteArray) (hs : d.size < 2 ^ System.Platform.numBits)
+    (sz : USize) (hsz : sz ≤ d.usize) (heq : sz = d.usize) :
+    ∀ (n : Nat) (fuel pos : USize), fuel.toNat = n →
+      pos.toNat + n < 2 ^ System.Platform.numBits →
+      (scanOneU d sz hsz pos fuel).toNat = scanOne d pos.toNat n := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n ih =>
+    intro fuel pos hf hb
+    have hj8 : (pos.toNat % 8) < 8 := Nat.mod_lt _ (by omega)
+    have hjU : (pos &&& 7).toNat = (pos.toNat % 8) := and7_toNat pos
+    have hbyte : (byteU d sz (pos >>> 3) hsz).toNat = (if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat := by
+      rw [byteU_toNat d hs sz hsz heq, shr3_toNat]
+    have hmaskU : ((255 : USize) >>> (pos &&& 7)).toNat = 2 ^ (8 - (pos.toNat % 8)) - 1 := by
+      rw [USize.toNat_shiftRight, hjU, usize_toNat_255,
+        Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le (by omega) numBits_ge)]
+      exact shr255 _ hj8
+    have hmU : (byteU d sz (pos >>> 3) hsz &&& ((255 : USize) >>> (pos &&& 7))).toNat = (if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)) := by
+      rw [USize.toNat_and, hbyte, hmaskU, Nat.and_two_pow_sub_one_eq_mod]
+    have hbit : ∀ o, (pos.toNat % 8) + o ≤ 7 →
+        bitFast d (pos.toNat + o) = decide ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat >>> (7 - ((pos.toNat % 8) + o)) &&& 1 = 1) := by
+      intro o ho
+      show decide ((if h : (pos.toNat + o) / 8 < d.size then d[(pos.toNat + o) / 8]
+        else 0).toNat >>> (7 - (pos.toNat + o) % 8) &&& 1 = 1) = _
+      rw [show (pos.toNat + o) / 8 = pos.toNat / 8 by omega,
+        show (pos.toNat + o) % 8 = (pos.toNat % 8) + o by omega]
+    have hadd : ∀ (a b : USize), a.toNat + b.toNat < 2 ^ System.Platform.numBits →
+        (a + b).toNat = a.toNat + b.toNat := by
+      intro a b h
+      rw [USize.toNat_add]
+      exact Nat.mod_eq_of_lt h
+    have hsU : ((8 : USize) - (pos &&& 7)).toNat = 8 - (pos.toNat % 8) := by
+      rw [USize.toNat_sub_of_le _ _
+        (USize.le_iff_toNat_le.2 (by rw [hjU, usize_toNat_8]; omega)), usize_toNat_8, hjU]
+    rw [scanOneU]
+    by_cases hm0 : (byteU d sz (pos >>> 3) hsz &&& ((255 : USize) >>> (pos &&& 7))) = 0
+    · have hmz : (if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)) = 0 := by
+        rw [← hmU, hm0, USize.toNat_zero]
+      have hzero : ∀ o, o < 8 - (pos.toNat % 8) → bitFast d (pos.toNat + o) = false := by
+        intro o ho
+        rw [hbit o (by omega), masked_zero_bit _ (pos.toNat % 8) (7 - ((pos.toNat % 8) + o)) hj8 (by omega) hmz]
+        rfl
+      simp only [if_pos hm0]
+      by_cases hle : fuel ≤ (8 : USize) - (pos &&& 7)
+      · have hlen : n ≤ 8 - (pos.toNat % 8) := by
+          rw [← hsU, ← hf]; exact USize.le_iff_toNat_le.1 hle
+        rw [if_pos hle, hadd pos fuel (by rw [hf]; omega), hf,
+          scanOne_all_zero d pos.toNat n (fun o ho => hzero o (by omega))]
+      · have hgt : 8 - (pos.toNat % 8) < n := by
+          rcases Nat.lt_or_ge (8 - (pos.toNat % 8)) n with h | h
+          · exact h
+          · exact absurd (USize.le_iff_toNat_le.2 (by rw [hsU, hf]; omega)) hle
+        have hposs : (pos + ((8 : USize) - (pos &&& 7))).toNat = pos.toNat + (8 - (pos.toNat % 8)) := by
+          rw [hadd _ _ (by rw [hsU]; omega), hsU]
+        have hfs : (fuel - ((8 : USize) - (pos &&& 7))).toNat = n - (8 - (pos.toNat % 8)) := by
+          rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.2 (by rw [hsU, hf]; omega)),
+            hsU, hf]
+        rw [if_neg hle, ih (n - (8 - (pos.toNat % 8))) (by omega) _ _ hfs (by rw [hposs]; omega), hposs,
+          scanOne_skip d (8 - (pos.toNat % 8)) pos.toNat n (by omega) (fun o ho => hzero o ho)]
+    · have hmz : (if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)) ≠ 0 := by
+        intro h
+        exact hm0 (USize.toNat_inj.1 (by rw [hmU, h, USize.toNat_zero]))
+      have hL : (Nat.log2 ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)))) ≤ 7 - (pos.toNat % 8) := masked_log2_le _ (pos.toNat % 8) hj8 hmz
+      have hnlz : (nlz8 (byteU d sz (pos >>> 3) hsz &&& ((255 : USize) >>> (pos &&& 7)))).toNat = 7 - (Nat.log2 ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)))) := by
+        rw [nlz8_toNat (byteU d sz (pos >>> 3) hsz &&& ((255 : USize) >>> (pos &&& 7))) (by
+            rw [hmU]
+            have h1 : (if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)) < 2 ^ (8 - (pos.toNat % 8)) := Nat.mod_lt _ (Nat.two_pow_pos _)
+            have h2 : (2 : Nat) ^ (8 - (pos.toNat % 8)) ≤ 2 ^ 8 := Nat.pow_le_pow_right (by omega) (by omega)
+            omega)
+          (by rw [hmU]; exact hmz), hmU]
+      have htU : (nlz8 (byteU d sz (pos >>> 3) hsz &&& ((255 : USize) >>> (pos &&& 7))) - (pos &&& 7)).toNat = 7 - (Nat.log2 ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)))) - (pos.toNat % 8) := by
+        rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.2 (by rw [hnlz, hjU]; omega)),
+          hnlz, hjU]
+      have hzero : ∀ o, o < 7 - (Nat.log2 ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)))) - (pos.toNat % 8) → bitFast d (pos.toNat + o) = false := by
+        intro o ho
+        rw [hbit o (by omega),
+          masked_above_zero _ (pos.toNat % 8) (7 - ((pos.toNat % 8) + o)) hj8 hmz (by omega) (by omega)]
+        rfl
+      have hone : bitFast d (pos.toNat + (7 - (Nat.log2 ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)))) - (pos.toNat % 8))) = true := by
+        rw [hbit _ (by omega), show 7 - ((pos.toNat % 8) + (7 - (Nat.log2 ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)))) - (pos.toNat % 8))) = (Nat.log2 ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)))) by omega,
+          masked_msb_one _ (pos.toNat % 8) hj8 hmz]
+        rfl
+      simp only [if_neg hm0]
+      by_cases hle : fuel ≤ nlz8 (byteU d sz (pos >>> 3) hsz &&& ((255 : USize) >>> (pos &&& 7))) - (pos &&& 7)
+      · have hlen : n ≤ 7 - (Nat.log2 ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)))) - (pos.toNat % 8) := by
+          rw [← htU, ← hf]; exact USize.le_iff_toNat_le.1 hle
+        rw [if_pos hle, hadd pos fuel (by rw [hf]; omega), hf,
+          scanOne_all_zero d pos.toNat n (fun o ho => hzero o (by omega))]
+      · have hgt : 7 - (Nat.log2 ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)))) - (pos.toNat % 8) < n := by
+          rcases Nat.lt_or_ge (7 - (Nat.log2 ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)))) - (pos.toNat % 8)) n with h | h
+          · exact h
+          · exact absurd (USize.le_iff_toNat_le.2 (by rw [htU, hf]; omega)) hle
+        rw [if_neg hle, hadd _ _ (by rw [htU]; omega), htU,
+          scanOne_hit d pos.toNat n (7 - (Nat.log2 ((if h : pos.toNat / 8 < d.size then d[pos.toNat / 8] else 0).toNat % 2 ^ (8 - (pos.toNat % 8)))) - (pos.toNat % 8)) hgt hzero hone]
+
+private theorem unzigU_eq (u : UInt64) (hu : u.toNat < 2 ^ 63) :
+    unzigU u = Rice.unzigzag u.toNat := by
+  unfold unzigU Rice.unzigzag
+  dsimp only
+  have hsh : (u >>> 1).toNat = u.toNat / 2 := by
+    rw [UInt64.toNat_shiftRight]
+    simp only [UInt64.reduceToNat]
+    rw [Nat.mod_eq_of_lt (by decide), Nat.shiftRight_eq_div_pow]
+  have hand : (u &&& 1).toNat = u.toNat % 2 := by
+    rw [UInt64.toNat_and]
+    simp only [UInt64.reduceToNat]
+    exact Nat.and_one_is_mod _
+  have hh : (u >>> 1).toInt64.toInt = ((u.toNat / 2 : Nat) : Int) := by
+    show (u >>> 1).toBitVec.toInt = _
+    rw [BitVec.toInt_eq_toNat_of_lt (by show 2 * (u >>> 1).toNat < 2 ^ 64; rw [hsh]; omega)]
+    show ((u >>> 1).toNat : Int) = _
+    rw [hsh]
+  have hodd : (u &&& 1).toInt64.toInt = ((u.toNat % 2 : Nat) : Int) := by
+    show (u &&& 1).toBitVec.toInt = _
+    rw [BitVec.toInt_eq_toNat_of_lt (by show 2 * (u &&& 1).toNat < 2 ^ 64; rw [hand]; omega)]
+    show ((u &&& 1).toNat : Int) = _
+    rw [hand]
+  have hsize : Int64.size = 2 ^ 64 := rfl
+  rcases Nat.mod_two_eq_zero_or_one u.toNat with he | ho
+  · have hz : (u &&& 1).toInt64 = 0 := Int64.toInt_inj.1 (by rw [hodd, he, Int64.toInt_zero]; rfl)
+    rw [hz, Int64.zero_mul, Int64.sub_zero, hh, if_pos he]
+  · have h1 : (u &&& 1).toInt64 = 1 := Int64.toInt_inj.1 (by rw [hodd, ho, Int64.toInt_one]; rfl)
+    rw [h1, Int64.one_mul, Int64.toInt_sub, Int64.toInt_add, Int64.toInt_add, Int64.toInt_one, hh,
+      Int.bmod_add_bmod, Int.sub_bmod_bmod, if_neg (by omega)]
+    have hbmod : ((u.toNat / 2 : Nat) : Int) - (((u.toNat / 2 : Nat) : Int) + ((u.toNat / 2 : Nat) : Int) + 1)
+        = -(((u.toNat / 2 : Nat) : Int) + 1) := by omega
+    rw [hbmod]
+    apply Int.bmod_eq_of_le <;> omega
+
+/-- **The machine-word Rice run computes the three-byte loop** on its
+    domain. -/
+theorem riceRunU_eq (d : ByteArray) (sz k mask total : USize) (pkU qLim : UInt64) (pk : Nat)
+    (hsz : sz ≤ d.usize) (heq : sz = d.usize)
+    (hd : d.size < 2 ^ (System.Platform.numBits - 4))
+    (hk : k.toNat ≤ 17) (hpk : pk = p2 k.toNat) (hpkU : pkU.toNat = p2 k.toNat)
+    (hmask : mask.toNat = p2 k.toNat - 1) (htotal : total.toNat = 8 * d.size)
+    (hq : qLim.toNat = 2 ^ 40) :
+    ∀ (count : Nat) (pos : USize) (acc : Array Int),
+      riceRunU d sz k mask total pkU qLim pk hsz count pos acc
+        = readRiceSeqScan3 d k.toNat pk (p2 k.toNat - 1) (8 * d.size) count pos.toNat acc := by
+  subst hpk
+  have hword := word_eq
+  obtain ⟨hL, hL'⟩ := quarter_word_bounds
+  generalize 2 ^ (System.Platform.numBits - 4) = L at hd hword hL hL'
+  have hs : d.size < 2 ^ System.Platform.numBits := by omega
+  have hpk17 : p2 k.toNat ≤ 2 ^ 17 := by
+    rw [p2_eq]; exact Nat.pow_le_pow_right (by omega) hk
+  have hk0 : (k = 0) ↔ (k.toNat = 0) := by rw [← USize.toNat_inj, USize.toNat_zero]
+  intro count
+  induction count with
+  | zero => intro pos acc; rfl
+  | succ count ih =>
+    intro pos acc
+    rw [riceRunU, readRiceSeqScan3]
+    dsimp only
+    by_cases hp : pos < total
+    · have hpN : pos.toNat < 8 * d.size := by rw [← htotal]; exact USize.lt_iff_toNat_lt.1 hp
+      rw [if_pos hp, if_pos hpN, bitU_eq d hs sz hsz heq]
+      have h1 : (pos + 1).toNat = pos.toNat + 1 := by
+        rw [USize.toNat_add, USize.toNat_one]; exact Nat.mod_eq_of_lt (by omega)
+      by_cases hb : bitFast d pos.toNat
+      · rw [if_pos hb, if_pos hb]
+        by_cases hkz : k.toNat = 0
+        · rw [if_pos (hk0.2 hkz), if_pos hkz, ih, h1]
+        · rw [if_neg (fun h => hkz (hk0.1 h)), if_neg hkz]
+          have h1k : (pos + 1 + k).toNat = pos.toNat + 1 + k.toNat := by
+            rw [USize.toNat_add, h1]; exact Nat.mod_eq_of_lt (by omega)
+          have hle : (pos + 1 + k ≤ total) ↔ (pos.toNat + 1 + k.toNat ≤ 8 * d.size) := by
+            rw [USize.le_iff_toNat_le, h1k, htotal]
+          by_cases hr : pos.toNat + 1 + k.toNat ≤ 8 * d.size
+          · rw [if_pos (hle.2 hr), if_pos hr, ih, h1k]
+            have hv : unzigU (extract3U d sz (pos + 1) k mask hsz).toUInt64
+                = Rice.unzigzag (extractBits3 d (pos.toNat + 1) k.toNat (p2 k.toNat - 1)) := by
+              have hex := extract3U_toNat d hs sz hsz heq (pos + 1) k mask hk (by omega)
+              rw [h1, hmask] at hex
+              rw [unzigU_eq _ (by
+                  rw [USize.toNat_toUInt64, hex]
+                  exact Nat.lt_of_le_of_lt (Nat.and_le_right) (by omega)),
+                USize.toNat_toUInt64, hex]
+            rw [hv]
+          · rw [if_neg (fun h => hr (hle.1 h)), if_neg hr]
+      · rw [if_neg hb, if_neg hb]
+        have hfuel : (total - (pos + 1)).toNat = 8 * d.size - (pos.toNat + 1) := by
+          rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.2 (by rw [h1, htotal]; omega)),
+            htotal, h1]
+        have hscan : (scanOneU d sz hsz (pos + 1) (total - (pos + 1))).toNat
+            = scanOne d (pos.toNat + 1) (8 * d.size - (pos.toNat + 1)) := by
+          have := scanOneU_toNat d hs sz hsz heq _ (total - (pos + 1)) (pos + 1) rfl
+            (by rw [h1, hfuel]; omega)
+          rw [h1, hfuel] at this
+          exact this
+        obtain ⟨hlo, hhi⟩ := scanOne_bounds d (8 * d.size - (pos.toNat + 1)) (pos.toNat + 1)
+        generalize hO : scanOneU d sz hsz (pos + 1) (total - (pos + 1)) = O at hscan ⊢
+        generalize hO' : scanOne d (pos.toNat + 1) (8 * d.size - (pos.toNat + 1)) = O' at hscan hlo hhi ⊢
+        by_cases ho : O < total
+        · have hoN : O' < 8 * d.size := by
+            rw [← hscan, ← htotal]; exact USize.lt_iff_toNat_lt.1 ho
+          rw [if_pos ho, if_pos hoN]
+          have hq' : (O - pos).toNat = O' - pos.toNat := by
+            rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.2 (by rw [hscan]; omega)), hscan]
+          have hO1 : (O + 1).toNat = O' + 1 := by
+            rw [USize.toNat_add, USize.toNat_one, hscan]; exact Nat.mod_eq_of_lt (by omega)
+          by_cases hkz : k.toNat = 0
+          · rw [if_pos (hk0.2 hkz), if_pos hkz, ih, hO1]
+            have hv : unzigU (O - pos).toUInt64 = Rice.unzigzag (O' - pos.toNat) := by
+              rw [unzigU_eq _ (by rw [USize.toNat_toUInt64, hq']; omega), USize.toNat_toUInt64, hq']
+            rw [hv]
+          · rw [if_neg (fun h => hkz (hk0.1 h)), if_neg hkz]
+            have hO1k : (O + 1 + k).toNat = O' + 1 + k.toNat := by
+              rw [USize.toNat_add, hO1]; exact Nat.mod_eq_of_lt (by omega)
+            have hle : (O + 1 + k ≤ total) ↔ (O' + 1 + k.toNat ≤ 8 * d.size) := by
+              rw [USize.le_iff_toNat_le, hO1k, htotal]
+            by_cases hr : O' + 1 + k.toNat ≤ 8 * d.size
+            · rw [if_pos (hle.2 hr), if_pos hr, ih, hO1k]
+              have hex := extract3U_toNat d hs sz hsz heq (O + 1) k mask hk (by omega)
+              rw [hO1, hmask] at hex
+              have hexlt : extractBits3 d (O' + 1) k.toNat (p2 k.toNat - 1) < 2 ^ 17 :=
+                Nat.lt_of_le_of_lt (Nat.and_le_right) (by omega)
+              have hval : (if (O - pos).toUInt64 < qLim
+                    then unzigU ((O - pos).toUInt64 * pkU + (extract3U d sz (O + 1) k mask hsz).toUInt64)
+                    else Rice.unzigzag ((O - pos).toNat * p2 k.toNat
+                      + (extract3U d sz (O + 1) k mask hsz).toNat))
+                  = Rice.unzigzag ((O' - pos.toNat) * p2 k.toNat
+                      + extractBits3 d (O' + 1) k.toNat (p2 k.toNat - 1)) := by
+                split
+                · next hlt =>
+                  have hqlt : O' - pos.toNat < 2 ^ 40 := by
+                    have := UInt64.lt_iff_toNat_lt.1 hlt
+                    rwa [USize.toNat_toUInt64, hq', hq] at this
+                  have hprod : (O' - pos.toNat) * p2 k.toNat ≤ 2 ^ 57 := by
+                    calc (O' - pos.toNat) * p2 k.toNat ≤ 2 ^ 40 * 2 ^ 17 :=
+                          Nat.mul_le_mul (Nat.le_of_lt hqlt) hpk17
+                      _ = 2 ^ 57 := by decide
+                  have hsum : ((O - pos).toUInt64 * pkU + (extract3U d sz (O + 1) k mask hsz).toUInt64).toNat
+                      = (O' - pos.toNat) * p2 k.toNat
+                        + extractBits3 d (O' + 1) k.toNat (p2 k.toNat - 1) := by
+                    rw [UInt64.toNat_add, UInt64.toNat_mul, USize.toNat_toUInt64,
+                      USize.toNat_toUInt64, hq', hex, hpkU]
+                    rw [Nat.mod_eq_of_lt (by omega), Nat.mod_eq_of_lt (by omega)]
+                  rw [unzigU_eq _ (by rw [hsum]; omega), hsum]
+                · rw [hq', hex]
+              rw [hval]
+            · rw [if_neg (fun h => hr (hle.1 h)), if_neg hr]
+        · rw [if_neg ho, if_neg (fun h => ho (USize.lt_iff_toNat_lt.2 (by rw [hscan, htotal]; exact h)))]
+    · rw [if_neg hp, if_neg (fun h => hp (USize.lt_iff_toNat_lt.2 (by rw [htotal]; exact h)))]
+
+/-- The shipped Rice run is the byte-addressed one on every branch. -/
 theorem readRiceSeqFast_eq_scanFast (k count : Nat) (br : BitReader) (acc : Array Int) :
     readRiceSeqFast k count br acc = readRiceSeqScanFast k count br acc := by
   unfold readRiceSeqFast readRiceSeqScanFast
   split
-  · rw [readRiceSeqScan3_eq br.data k (p2 k) (8 * br.data.size) (by assumption)]
-  · rfl
+  · next hok =>
+    obtain ⟨hk, hd, hpos⟩ := hok
+    rw [p2_eq] at hd
+    have hws : 2 ^ 32 ≤ 2 ^ System.Platform.numBits :=
+      Nat.pow_le_pow_right (by omega) numBits_ge
+    have hword := word_eq
+    obtain ⟨hL, _⟩ := quarter_word_bounds
+    have hlit : ∀ n, n < 2 ^ 32 → (USize.ofNat n).toNat = n := fun n hn =>
+      USize.toNat_ofNat_of_lt' (Nat.lt_of_lt_of_le hn (by rw [USize.size_eq_two_pow]; exact hws))
+    have hkN : (USize.ofNat k).toNat = k := hlit k (by omega)
+    have htot : (USize.ofNat (8 * br.data.size)).toNat = 8 * br.data.size := by
+      rw [USize.toNat_ofNat']; exact Nat.mod_eq_of_lt (by omega)
+    have hposN : (USize.ofNat br.pos).toNat = br.pos := by
+      rw [USize.toNat_ofNat']; exact Nat.mod_eq_of_lt (by omega)
+    have hmaskN : (USize.ofNat (p2 k - 1)).toNat = p2 k - 1 :=
+      hlit _ (by rw [p2_eq]; have := Nat.pow_le_pow_right (show 0 < 2 by omega) hk; omega)
+    have hpkN : (UInt64.ofNat (p2 k)).toNat = p2 k := by
+      rw [UInt64.toNat_ofNat']; exact Nat.mod_eq_of_lt (by
+        rw [p2_eq]; exact Nat.lt_of_le_of_lt (Nat.pow_le_pow_right (by omega) hk) (by decide))
+    have hqN : ((1 : UInt64) <<< 40).toNat = 2 ^ 40 := by decide
+    rw [riceRunU_eq br.data br.data.usize (USize.ofNat k) _ _ _ _ (p2 k)
+      (USize.le_iff_toNat_le.2 (Nat.le_refl _)) rfl hd
+      (by rw [hkN]; exact hk)
+      (by rw [hkN]) (by rw [hkN, hpkN]) (by rw [hkN, hmaskN]) htot hqN, hkN, hposN,
+      readRiceSeqScan3_eq br.data k (p2 k) (8 * br.data.size) hk]
+  · split
+    · rw [readRiceSeqScan3_eq br.data k (p2 k) (8 * br.data.size) (by assumption)]
+    · rfl
 
 theorem readRiceSeqFast_eq (k : Nat) :
     ∀ (count : Nat) (br : BitReader) (acc : Array Int),
@@ -290,22 +743,96 @@ theorem readRiceSeqFast_eq (k : Nat) :
   intro count br acc
   rw [readRiceSeqFast_eq_scanFast, readRiceSeqScanFast_eq]
 
+/-- **The machine-word fixed-width run computes the `Nat` loop** on its
+    domain. The same argument as `riceRunU_eq`, one branch shorter: there is no
+    unary prefix, so every sample is one three-byte window read at a known
+    width. -/
+theorem readSIntSeqU_eq (d : ByteArray) (sz bits mask total : USize) (pb : Nat)
+    (hsz : sz ≤ d.usize) (heq : sz = d.usize)
+    (hd : d.size < 2 ^ (System.Platform.numBits - 4))
+    (hb1 : 1 ≤ bits.toNat) (hb : bits.toNat ≤ 17) (hpb : pb = p2 bits.toNat)
+    (hmask : mask.toNat = p2 bits.toNat - 1) (htotal : total.toNat = 8 * d.size) :
+    ∀ (count : Nat) (pos : USize), pos.toNat ≤ 8 * d.size → ∀ (acc : Array Int),
+      readSIntSeqU d sz bits mask total pb hsz count pos acc
+        = readSIntSeqGo d bits.toNat count pos.toNat acc := by
+  subst hpb
+  have hword := word_eq
+  obtain ⟨hL, hL'⟩ := quarter_word_bounds
+  generalize 2 ^ (System.Platform.numBits - 4) = L at hd hword hL hL'
+  have hs : d.size < 2 ^ System.Platform.numBits := by omega
+  have hbz : ¬ bits.toNat = 0 := by omega
+  intro count
+  induction count with
+  | zero => intro pos _ acc; rfl
+  | succ count ih =>
+    intro pos hpos acc
+    rw [readSIntSeqU, readSIntSeqGo]
+    dsimp only
+    rw [if_neg hbz]
+    -- `pos` never runs past `total`, so the machine-word sum cannot wrap.
+    have hsum : (pos + bits).toNat = pos.toNat + bits.toNat := by
+      rw [USize.toNat_add]
+      exact Nat.mod_eq_of_lt (by omega)
+    have hle : (pos + bits ≤ total) ↔ (pos.toNat + bits.toNat ≤ 8 * d.size) := by
+      rw [USize.le_iff_toNat_le, hsum, htotal]
+    by_cases hr : pos.toNat + bits.toNat ≤ 8 * d.size
+    · rw [if_pos (hle.2 hr), if_pos hr, ih _ (by rw [hsum]; omega), hsum]
+      have hex := extract3U_toNat d hs sz hsz heq pos bits mask hb (by omega)
+      rw [hmask] at hex
+      rw [hex, extractBits3_eq d pos.toNat bits.toNat (by omega)]
+    · rw [if_neg (fun h => hr (hle.1 h)), if_neg hr]
+
+/-- The shipped fixed-width run is the `Nat` loop on every branch. -/
+theorem readSIntSeqFast_eq_go (bits count : Nat) (br : BitReader) (acc : Array Int) :
+    readSIntSeqFast bits count br acc
+      = (match readSIntSeqGo br.data bits count br.pos acc with
+         | none => none
+         | some (a, pos) => some (a, ⟨br.data, pos⟩)) := by
+  unfold readSIntSeqFast
+  dsimp only
+  by_cases hok : SIntRunOk bits br
+  · rw [if_pos hok]
+    obtain ⟨hb1, hb, hd, hpos⟩ := hok
+    rw [p2_eq] at hd
+    have hws : 2 ^ 32 ≤ 2 ^ System.Platform.numBits :=
+      Nat.pow_le_pow_right (by omega) numBits_ge
+    have hword := word_eq
+    obtain ⟨hL, _⟩ := quarter_word_bounds
+    have hlit : ∀ n, n < 2 ^ 32 → (USize.ofNat n).toNat = n := fun n hn =>
+      USize.toNat_ofNat_of_lt' (Nat.lt_of_lt_of_le hn (by rw [USize.size_eq_two_pow]; exact hws))
+    have hbN : (USize.ofNat bits).toNat = bits := hlit bits (by omega)
+    have htot : (USize.ofNat (8 * br.data.size)).toNat = 8 * br.data.size := by
+      rw [USize.toNat_ofNat']; exact Nat.mod_eq_of_lt (by omega)
+    have hposN : (USize.ofNat br.pos).toNat = br.pos := by
+      rw [USize.toNat_ofNat']; exact Nat.mod_eq_of_lt (by omega)
+    have hmaskN : (USize.ofNat (p2 bits - 1)).toNat = p2 bits - 1 :=
+      hlit _ (by rw [p2_eq]; have := Nat.pow_le_pow_right (show 0 < 2 by omega) hb; omega)
+    rw [readSIntSeqU_eq br.data br.data.usize (USize.ofNat bits) _ _ (p2 bits)
+      (USize.le_iff_toNat_le.2 (Nat.le_refl _)) rfl hd
+      (by rw [hbN]; exact hb1) (by rw [hbN]; exact hb) (by rw [hbN])
+      (by rw [hbN, hmaskN]) htot count (USize.ofNat br.pos) (by rw [hposN]; exact hpos),
+      hbN, hposN]
+    rfl
+  · rw [if_neg hok]
+    rfl
+
 theorem readSIntSeqFast_eq (bits : Nat) :
     ∀ (count : Nat) (br : BitReader) (acc : Array Int),
       readSIntSeqFast bits count br acc = readSIntSeqA bits count br acc := by
   intro count
   induction count with
-  | zero => intro br acc; rfl
+  | zero => intro br acc; rw [readSIntSeqFast_eq_go]; rfl
   | succ count ih =>
     intro br acc
     obtain ⟨d, pos⟩ := br
-    unfold readSIntSeqFast readSIntSeqGo readSIntSeqA
+    rw [readSIntSeqFast_eq_go]
+    unfold readSIntSeqGo readSIntSeqA
     dsimp only
     rw [readSInt_pos]
     by_cases hz : bits = 0
     · rw [if_pos hz, if_pos hz]
       have h := ih ⟨d, pos⟩ (acc.push 0)
-      unfold readSIntSeqFast at h
+      rw [readSIntSeqFast_eq_go] at h
       exact h
     · rw [if_neg hz, if_neg hz]
       by_cases hb : pos + bits ≤ 8 * d.size
@@ -315,7 +842,7 @@ theorem readSIntSeqFast_eq (bits : Nat) :
               ((extractBitsFast d pos bits : Nat) : Int)
             else ((extractBitsFast d pos bits : Nat) : Int)
               - ((p2 bits : Nat) : Int)))
-        unfold readSIntSeqFast at h
+        rw [readSIntSeqFast_eq_go] at h
         exact h
       · simp only [hb, if_false]
 
@@ -1542,7 +2069,7 @@ theorem readChannels_sim (bs b chCode : Nat) (br : BitReader) :
       rw [readSubframe_sim bs (b + 1) p.2]
       cases readSubframe bs (b + 1) p.2 with
       | none => rfl
-      | some q => simp [Stereo.decodeMSLA_toList, Stereo.decodeMSRA_toList]
+      | some q => simp [Stereo.decodeMSA, Stereo.decodeMSLA_toList, Stereo.decodeMSRA_toList]
   · rw [if_neg h4, if_neg h4]
     rfl
 
@@ -2418,11 +2945,10 @@ theorem decode_encode_unchecked (a : Stream.Audio) (h : a.WellFormed) :
 /-- **The capstone**, hypothesis-free: whenever the public encoder
     returns bytes at all, decoding them recovers the samples.
     `Flac.encode` and `Flac.decode` are the shipped production entry
-    points; since the P7 round `encode` checks `Audio.WellFormed` —
-    exactly "representable as FLAC" (1–8 equal-length channels, bit depth
-    1–32, samples in range, STREAMINFO field bounds), decidable — at
-    runtime, so the guarantee needs no hypothesis a caller could fail to
-    have read. -/
+    points. `encode` checks the decidable `Audio.WellFormed` at runtime —
+    exactly "representable as FLAC": 1–8 equal-length channels, bit depth
+    1–32, samples in range, STREAMINFO field bounds — so the guarantee needs
+    no hypothesis a caller could fail to have read. -/
 theorem decode_encode {a : Stream.Audio} {bytes : ByteArray}
     (h : encode a = some bytes) : decode bytes = .ok a := by
   unfold encode at h
@@ -2431,9 +2957,7 @@ theorem decode_encode {a : Stream.Audio} {bytes : ByteArray}
     exact decode_encode_unchecked a ‹_›
   · cases h
 
-/-- The same guarantee under the compatibility alias `encodeChecked`
-    (the checked encoder's name from when the unchecked one held the
-    natural name). -/
+/-- The same guarantee under the compatibility alias `encodeChecked`. -/
 theorem decode_encodeChecked {a : Stream.Audio} {bytes : ByteArray}
     (h : encodeChecked a = some bytes) : decode bytes = .ok a :=
   decode_encode h
@@ -2449,7 +2973,6 @@ theorem decode_encodeCheckedCfg {cfg : Stream.EncoderCfg}
     cases h
     exact decode_encode_cfg cfg a hc.1 hc.2.1 hc.2.2
   case isFalse => cases h
-
 
 /-! ## Byte-level PCM round-trip -/
 
@@ -2874,12 +3397,17 @@ theorem pcm16FastA_eq (arrs : List (Array Int)) :
   have hcount : (arrs.map (·.toList)).length = arrs.length := List.length_map _
   rw [harr, hlen, hcount]
 
-/-- The array-side byte decoder computes exactly what the list-side one
-    does: `decodeOption` is `decodeArrays` plus the conversion, and both
+/-- The sample-path half of `decodePcm16A` computes the list-side decoder:
+    `decodeOption` is `decodeArrays` plus the conversion, and both
     serializers agree on the converted samples. -/
-theorem decodePcm16A_eq (flac : ByteArray) :
-    decodePcm16A flac = decodePcm16 flac := by
-  unfold decodePcm16A decodePcm16 decode Decode.decodeOption
+theorem decodePcm16A_samples_eq (flac : ByteArray) :
+    (match Decode.decodeArrays flac with
+      | none => (.error "not a decodable FLAC stream (within the v1 feature set)"
+          : Except String ByteArray)
+      | some (chs, bps, _) =>
+        if bps = 16 then .ok (pcm16FastPar chs) else .error "not 16-bit audio")
+      = decodePcm16 flac := by
+  unfold decodePcm16 decode Decode.decodeOption
   cases h : Decode.decodeArrays flac with
   | none => rfl
   | some p =>

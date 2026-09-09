@@ -28,8 +28,8 @@ enforced for the codec, stops at a directory boundary that the shipped
 binary does not respect: `vinyl`'s `main` is `cliMain`. The audit's
 row for this finding is, in effect, a map of where the gate's
 jurisdiction ends. (That the production CLI lives in the test package at
-all is the underlying smell; this round left it where it is — moving a
-600-line module is a refactor, not a fix — and moved the *boundary*
+all is the underlying smell; the fix left it where it is — moving a
+900-line module is a refactor, not a fix — and moved the *boundary*
 instead, which is the part that was load-bearing.)
 
 ## The fix

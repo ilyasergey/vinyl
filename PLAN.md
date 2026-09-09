@@ -1,10 +1,5 @@
 # Vinyl — PLAN.md
 
-Lean version: 4.33
-Github repository to sync with:
-Make suitable .gitignore
-Log your progress and commit regularly - make this into CLAUD.md
-
 **A formally verified FLAC codec in pure Lean 4.**
 
 This document is the complete working plan. It is written to be handed to a
@@ -49,20 +44,24 @@ configurable form is `decode_encode_cfg`. See
 with
 
 ```lean
-/-- Interleaved multichannel PCM. `samples[c][i] : Int` is sample `i` of
-    channel `c`. -/
+/-- Multichannel PCM. `channels[c][i] : Int` is sample `i` of channel `c`. -/
 structure Audio where
-  channels      : Array (Array Int)
-  bitsPerSample : Nat        -- 4..32
-  sampleRate    : Nat        -- 1..1048575 (0 reserved out of scope for v1)
+  channels   : List (List Int)
+  bps        : Nat
+  sampleRate : Nat
 
 def Audio.WellFormed (a : Audio) : Prop :=
-  1 ≤ a.channels.size ∧ a.channels.size ≤ 8 ∧
-  4 ≤ a.bitsPerSample ∧ a.bitsPerSample ≤ 32 ∧
-  (∀ c ∈ a.channels, c.size = a.channels[0]!.size) ∧
-  (∀ c ∈ a.channels, ∀ s ∈ c,
-     -(2^(a.bitsPerSample-1)) ≤ s ∧ s < 2^(a.bitsPerSample-1))
+  1 ≤ a.channels.length ∧ a.channels.length ≤ 8 ∧
+  1 ≤ a.bps ∧ a.bps ≤ 32 ∧
+  (∀ c ∈ a.channels, c.length = a.numSamples) ∧
+  (∀ c ∈ a.channels, ∀ x ∈ c, FitsSInt a.bps x) ∧
+  a.sampleRate < 2 ^ 20 ∧ a.numSamples < 2 ^ 36
 ```
+
+The two field bounds are the landed ones and differ from this plan's first
+draft: depth is **1–32**, not 4–32, and `sampleRate = 0` is *admitted* rather
+than out of scope — a recorded deviation from RFC 9639, see `COVERAGE.md` and
+[`docs/11-spec-adequacy.md`](docs/11-spec-adequacy.md).
 
 `EncoderOptions` must cover, and the capstone must quantify over: block size,
 max fixed/LPC order, LPC coefficient precision, Rice partition order limit,
@@ -105,7 +104,7 @@ Section 6 — outside the kernel, by design.
 - Native FLAC container: `fLaC` marker, STREAMINFO, PADDING; frames with
   CRC-8 header / CRC-16 footer.
 - All block sizes 16–65535 on decode (last frame may be shorter), all
-  sample rates encodable in the frame header, 4–32 bits per sample, 1–8
+  sample rates encodable in the frame header, 1–32 bits per sample, 1–8
   channels. The encoder stops at block size 4608: above that its own
   all-CONSTANT output can exceed the decoder's decompression-bomb budget
   (audit finding P2), and the round-trip capstone would need a hypothesis.
@@ -131,39 +130,41 @@ metadata") edge cases. None of these interact with the capstone.
 ## 3. Repository layout
 
 ```
-lean-flac/
-  Flac.lean                    -- public API re-exports
+vinyl/
+  Flac.lean                    -- library root; imports the public modules
   Flac/
-    Native/                    -- executable code (production)
-      BitReader.lean           -- MSB-first reader (FLAC is big-endian/MSB-first;
-      BitWriter.lean           --   port lean-zip's pattern, flip bit order)
+    Native/                    -- executable code (production), and the
+                               --   reference decoder the proofs are phrased over
+      Bits.lean                -- MSB-first bit model: read/write, unary, alignment
       Crc.lean                 -- CRC-8 (poly 0x07), CRC-16 (poly 0x8005)
       Md5.lean                 -- pure-Lean MD5 (tested against RFC 1321 vectors)
-      Utf8Num.lean             -- extended-UTF-8 coded frame/sample numbers (≤36 bits)
+      Utf8Num.lean             -- extended-UTF-8 coded numbers (≤36 bits)
       Rice.lean                -- zigzag + Rice/RICE2 + escape partitions
       Fixed.lean               -- fixed predictors, orders 0–4
-      Lpc.lean                 -- quantized-LPC residual/restore (Int64 arithmetic)
+      Lpc.lean                 -- quantized-LPC residual/restore
       Stereo.lean              -- mid/side, left/side, right/side transforms
       Subframe.lean            -- subframe encode/decode incl. wasted bits
       Frame.lean               -- frame assembly, header/footer, CRCs
-      Stream.lean              -- fLaC marker, STREAMINFO, top-level encode/decode
+      Stream.lean              -- fLaC marker, STREAMINFO, Audio, decodeReference
       Heuristics.lean          -- order selection, apodization, partition search,
                                --   stereo-mode decision (UNVERIFIED BY DESIGN;
                                --   only output-format lemmas may depend on it)
-    Reference/                 -- verified reference decoder over ℤ (unbounded),
-                               --   structured for proofs, not speed
+      Reader.lean              -- BitReader: buffered ByteArray bit reader
+      Decode.lean              -- the shipped production decoder
+      Emit.lean                -- the byte-buffer stream writer
+      Encode.lean              -- the fast encoder (arrays, Task-parallel frames)
+      Codec.lean               -- Flac.encode/decodePcm16 and the Unchecked forms
     Spec/                      -- all theorems; NO sorry, NO axioms; one file per
-                               --   lemma cluster, lean-zip style
-  FlacTest/                    -- unit + golden tests
-  conformance/                 -- separate lake package (like lean-zip's):
-    DiffLibFlac.lean           --   differential rig vs `flac` CLI and ffmpeg
-    FuzzDecode.lean            --   decoder totality fuzzing
-    FuzzRoundtrip.lean         --   structured round-trip fuzzing
-    corpus/                    --   IETF test files + generated corpus
-  references/                  -- RFC 9639; ietf-wg-cellar/flac-test-files notes
-  bench/                       -- vs libFLAC/ffmpeg (Section 7)
+                               --   lemma cluster
+  FlacTest/                    -- unit + golden tests, and the `vinyl` CLI
+  conformance/                 -- shell rigs against the flac CLI: smoke, ietf, fuzz
+  fuzz/                        -- coverage-guided differential fuzzing (see its README)
+  scripts/                     -- check.sh (the merge gate), audit_ir.py, gen/
+  docs/                        -- hardening notes, one per audit finding
+  bench/                       -- corpus generator, runners, plots vs libFLAC
+  references/                  -- RFC 9639
   PLAN.md                      -- this file
-  PROGRESS.md                  -- per-session logs, lean-zip convention
+  PROGRESS.md                  -- per-session log
 ```
 
 Toolchain: current stable Lean 4; depend on Std only (no mathlib in `Native/`;
@@ -297,8 +298,9 @@ incl. Huffman + LZ77): FLAC has no Huffman and no match-finder, so expect
 
 ## 6. Fuzzing and conformance plan
 
-All of this lives in `conformance/` (separate lake package) and in CI. None of
-it is in the trusted base; all of it gates merges.
+All of this lives in `conformance/` (shell scripts driving the built `vinyl`
+binary against the `flac` CLI). None of it is in the trusted base; all of it
+gates merges.
 
 **C oracles:** official `flac` CLI (libFLAC) and `ffmpeg`. Pin versions in
 `conformance/README`.
@@ -315,14 +317,14 @@ it is in the trusted base; all of it gates merges.
   32}, channels ∈ {1, 2, 3, 8}.
 
 **Rig 1 — Encoder conformance (our encoder → their decoders).** For every
-corpus PCM × a matrix of `EncoderOptions`: encode with lean-flac; require
+corpus PCM × a matrix of `EncoderOptions`: encode with Vinyl; require
 (a) `flac -t` passes, (b) `flac -d` output is byte-identical PCM, (c) ffmpeg
 decode matches, (d) STREAMINFO MD5 verifies. This is the interop statement the
 kernel doesn't give us; it must be green from M4 onward.
 
 **Rig 2 — Decoder conformance (their encoder → our decoder).** Encode corpus
 PCM with `flac` across `-0`..`-8`, `-e`, `-p`, `-A` variants, `--lax`, forced
-stereo modes, and odd block sizes; require lean-flac decodes byte-identically.
+stereo modes, and odd block sizes; require Vinyl decodes byte-identically.
 This exercises regions of the format our encoder never emits (e.g. exotic
 partition orders, precision choices) — exactly the gap a round-trip theorem
 leaves open.
@@ -336,7 +338,7 @@ Run a fixed-seed smoke set in CI; long runs nightly.
 **Rig 4 — Structure-aware fuzz.** Generate random *valid* frame structures
 directly at the subframe/residual layer (random orders, partition orders,
 Rice params incl. escapes, wasted bits), byte-serialize, decode with both
-lean-flac and libFLAC; outputs must agree whenever both accept. Disagreement =
+Vinyl and libFLAC; outputs must agree whenever both accept. Disagreement =
 spec-reading bug; file an issue with the minimized frame.
 
 **Rig 5 — Property round-trip fuzz.** Random `(pcm, opts)` through

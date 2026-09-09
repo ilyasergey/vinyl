@@ -5,11 +5,13 @@ Vinyl proves several runtime implementations equal to a reference / tail-recursi
 form (`@[csimp]`) or to each other (`*_eq_*`). Coverage of the *reference* side is
 often invisible in a naive report because the compiled program runs the OTHER twin,
 so a whole module can read 0% while being fully proven -- and, worse, a future
-`@[export]` can silently bind the *pre*-csimp writer (exactly the emitFast case:
-`FuzzGen.lean` imports only `Flac.Native.*`, so `@[csimp] Unchecked_encode_eq_emitFast`
-in `Flac/Spec/Emit.lean` does NOT rewrite `vlean_unchecked_encode`; the export names
-the reference writer by design and emitFast coverage must come from
-`vinyl_gen_encode_pair`).
+`@[export]` can silently bind the *post*-csimp writer (exactly the emitFast case:
+`vlean_unchecked_encode` must name the reference writer, so it lives in
+`FlacTest/FuzzRef.lean`, which imports `Flac.Native.Stream` alone and therefore
+never sees `@[csimp] Unchecked_encode_eq_emitFast` from `Flac/Spec/Emit.lean`.
+It used to live in `FuzzGen.lean`, and did alias once `Flac/Native/Codec.lean`
+started importing that swap for the shipped entry points. emitFast coverage comes
+from `vinyl_gen_encode_pair`).
 
 This tool:
   1. Enumerates every `@[csimp]` twin (Flac/Native + Flac/Spec) and every
@@ -19,16 +21,16 @@ This tool:
      Unchecked.encode) asserts >=1 fuzz target drives it, via a C connector symbol
      that must actually appear in the harness sources.
   3. Records, via `llvm-nm` on build/lib/libvinyl.fuzz.a (if present), which
-     compiled symbol each `@[export]` in FlacTest/FuzzGen.lean binds to, so a
+     compiled symbol each `@[export]` in FlacTest/Fuzz*.lean binds to, so a
      future export cannot silently regress a twin binding.
-  4. Parses the compiled IR (.lake/build/ir/FlacTest/FuzzGen.c) and, for each
+  4. Parses the compiled IR (.lake/build/ir/FlacTest/Fuzz*.c) and, for each
      twin PAIR whose two sides are BOTH exported to C (only pair #13,
      Unchecked.encode vs emitFast), asserts the two `@[export]` wrappers tail-call
      DISTINCT `lp_vinyl_*` callees. This is the encode-side TCB oracle guard: if a
-     future `import Flac` (or a csimp moved into a Native module) pulled
-     `@[csimp] Unchecked_encode_eq_emitFast` into FuzzGen's scope, the reference
-     writer would silently alias to emitFast, `fz_encode_pair` would compare
-     emitFast to itself, and every green run would be a false negative.
+     future import pulled `@[csimp] Unchecked_encode_eq_emitFast` into the
+     exporting module's scope, the reference writer would silently alias to
+     emitFast, `fz_encode_pair` would compare emitFast to itself, and every green
+     run would be a false negative. That has happened once already.
 
 Exit nonzero (CI-fail) if any side has no driver / no live connector, or if a
 must-be-distinct twin pair aliases to a single compiled callee.
@@ -47,8 +49,13 @@ REPO = C.FUZZ_ROOT.parent
 FUZZ = C.FUZZ_ROOT
 SPEC = REPO / "Flac" / "Spec"
 NATIVE = REPO / "Flac" / "Native"
-FUZZGEN = REPO / "FlacTest" / "FuzzGen.lean"
-FUZZGEN_IR = REPO / ".lake" / "build" / "ir" / "FlacTest" / "FuzzGen.c"
+# The harness exports are spread across FlacTest modules, not one file: an export
+# whose callee must NOT be rewritten by a `@[csimp]` has to live in a module that
+# does not import the swap, so `vlean_unchecked_encode` sits in FuzzRef.lean while
+# the rest are in FuzzGen.lean. Scan the directory, not a single file, or moving an
+# export to fix an aliasing failure looks like the export disappearing.
+FUZZGEN_SRCS = sorted((REPO / "FlacTest").glob("Fuzz*.lean"))
+FUZZGEN_IRS = sorted((REPO / ".lake" / "build" / "ir" / "FlacTest").glob("Fuzz*.c"))
 ARCHIVES = [FUZZ / "build" / "lib" / "libvinyl.fuzz.a",
             REPO / "build" / "lib" / "libvinyl.fuzz.a"]
 
@@ -93,7 +100,7 @@ SIDES: dict[str, dict] = {
 BINDING_NOTES = {
     "vlean_unchecked_encode":
         "binds Stream.Unchecked.encode (the reference writer), NOT emitFast: "
-        "FuzzGen imports Flac.Native only, so @[csimp] Unchecked_encode_eq_emitFast "
+        "FuzzRef.lean imports Flac.Native.Stream alone, so @[csimp] Unchecked_encode_eq_emitFast "
         "does not rewrite it. emitFast is driven via vinyl_gen_encode_pair instead.",
 }
 
@@ -158,11 +165,14 @@ def target_sources() -> dict[str, str]:
 
 
 def fuzzgen_exports() -> list[str]:
-    return re.findall(r"@\[export\s+([A-Za-z0-9_]+)\]", FUZZGEN.read_text())
+    out: list[str] = []
+    for src in FUZZGEN_SRCS:
+        out += re.findall(r"@\[export\s+([A-Za-z0-9_]+)\]", src.read_text())
+    return out
 
 
 def fuzzgen_ir_callees() -> dict[str, set[str]]:
-    """{function -> set of lp_vinyl_* callees} from the compiled IR FuzzGen.c.
+    """{function -> set of lp_vinyl_* callees} from the compiled FlacTest/Fuzz*.c IR.
 
     Each `@[export]` becomes a `LEAN_EXPORT lean_object* NAME(...){ ... }` DEFINITION
     (the bare `);` forward declarations at the top of the file carry no body and are
@@ -170,9 +180,9 @@ def fuzzgen_ir_callees() -> dict[str, set[str]]:
     actually binds. The body is delimited by brace matching so the callee set is exact
     regardless of the wrapper's shape. Returns {} if the IR has not been built.
     """
-    if not FUZZGEN_IR.exists():
+    if not FUZZGEN_IRS:
         return {}
-    text = FUZZGEN_IR.read_text()
+    text = "\n".join(p.read_text() for p in FUZZGEN_IRS)
     header = re.compile(r"^LEAN_EXPORT\s+lean_object\*\s+([A-Za-z0-9_]+)\s*\([^;{]*\)\s*\{",
                         re.M)
     callee = re.compile(r"\blp_vinyl_[A-Za-z0-9_]+")
@@ -255,7 +265,7 @@ def main() -> int:
         if sym not in exports and sym not in blob:
             print(f"  note: documented binding symbol {sym} not found -- {note}")
 
-    print("\n## @[export] wrapper callee-disjointness (IR: .lake/.../FuzzGen.c)")
+    print("\n## @[export] wrapper callee-disjointness (IR: .lake/.../FlacTest/Fuzz*.c)")
     callees = fuzzgen_ir_callees()
     if not callees:
         print(f"  note: {FUZZGEN_IR.relative_to(REPO)} not built yet -- "
@@ -267,7 +277,7 @@ def main() -> int:
                 missing = [e for e, c in ((exp_a, ca), (exp_b, cb)) if c is None]
                 status = "FAIL(wrapper absent)"
                 fails.append(f"{exp_a} vs {exp_b}: export wrapper(s) {missing} "
-                             "not defined in FuzzGen.c IR")
+                             "not defined in the FlacTest/Fuzz*.c IR")
             elif ca & cb:
                 status = "FAIL(ALIASED)"
                 fails.append(f"{exp_a} vs {exp_b}: both wrappers tail-call {sorted(ca & cb)} "

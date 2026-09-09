@@ -2,12 +2,20 @@ import Flac.Native.Decode
 import Flac.Native.Heuristics
 import Flac.Native.Stream
 import Flac.Native.Encode
+-- For the compiled implementation only: `Flac.Emit.Unchecked_encode_eq_emitFast`
+-- is the kernel-checked `@[csimp]` swap that puts the tail-recursive
+-- `ByteArray` emitter behind `Stream.Unchecked.encode`, and a `@[csimp]` reaches
+-- only definitions elaborated after it. Without this import the wrappers below
+-- (`Flac.encode`, `Flac.encodeChecked(Cfg)`, `Flac.Unchecked.encode`) compile to
+-- the `List Bool` reference writer — 500x slower and not stack-safe on a
+-- many-frame encode. No theorem here depends on the import.
+import Flac.Spec.Emit
 
 /-!
 # The shipped encoder entry points
 
-`Flac.encode` pairs with `Flac.decode` (in `Flac.Native.Decode`). Since
-the P7 round (issue #7), the natural names are the *checked* forms: they
+`Flac.encode` pairs with `Flac.decode` (in `Flac.Native.Decode`). The
+natural names are the *checked* forms (audit finding P7, issue #7): they
 test the (decidable) precondition at runtime, so a `some` result carries
 the round-trip theorem with no hypotheses, and `none` is the
 precondition's voice. The raw total encoders — which mod-wrap
@@ -338,16 +346,31 @@ def decodePcm16 (flac : ByteArray) : Except String ByteArray :=
     if a.bps = 16 then .ok (pcm16Fast a.channels)
     else .error "not 16-bit audio"
 
-/-- `decodePcm16` without the decoder's list conversion: it serializes the
-    decoded arrays directly. Proven equal to `decodePcm16` by
-    `Flac.decodePcm16A_eq`, which is what lets the runtime certificate and
-    the CLI run it in place of the list path. -/
+/-- `decodePcm16` without the decoder's list conversion. The fused byte
+    decoder does the whole job when it engages (its result is proven to be
+    the serialization of the sample path, `Flac.Stream.decodeBytes_spec`);
+    the sample path with the direct serializer is the fallback. Proven
+    equal to `decodePcm16` by `Flac.decodePcm16A_eq`, which is what lets
+    the CLI run it in place of the list path.
+
+    The fused path holds one byte buffer; the sample path held every
+    channel array *and* the serialization (26–39 GB of RSS and 48 s of
+    system time on a 2.1 GB stream, against 5.3 GB for `--decode-fast`).
+
+    A stream the fused path *decoded* but at another bit depth is rejected
+    from that result (`Stream.decodeBytes_spec` already identifies its
+    samples) rather than decoded again. A `none` does fall through to
+    `decodeArrays`, and that stream is read twice. -/
 def decodePcm16A (flac : ByteArray) : Except String ByteArray :=
-  match Decode.decodeArrays flac with
-  | none => .error "not a decodable FLAC stream (within the v1 feature set)"
-  | some (chs, bps, _) =>
-    if bps = 16 then .ok (pcm16FastPar chs)
-    else .error "not 16-bit audio"
+  match Decode.decodeBytes flac with
+  | some (pcm, 16) => .ok pcm
+  | some _ => .error "not 16-bit audio"
+  | none =>
+    match Decode.decodeArrays flac with
+    | none => .error "not a decodable FLAC stream (within the v1 feature set)"
+    | some (chs, bps, _) =>
+      if bps = 16 then .ok (pcm16FastPar chs)
+      else .error "not 16-bit audio"
 
 /-! ## The fast encoder, proven
 

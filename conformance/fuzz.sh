@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rigs 3-5 (PLAN.md §9):
+# Rigs 3-5 (PLAN.md §6):
 #   Rig 3 — decoder totality fuzz: random bytes and truncations must never
 #           crash/hang the decoder (clean accept or clean reject only).
 #   Rig 4 — structure-aware fuzz: bit-flipped valid streams must never
@@ -41,11 +41,15 @@ run_decode () {  # $1 = input file; returns decoder exit code, 124 on timeout
 echo "== Rig 3: totality fuzz ($N random inputs + truncations)"
 fail=0
 for i in $(seq 1 "$N"); do
-  case $((i % 3)) in
+  seedsz=$(stat -c%s "$WORK/seed.flac" 2>/dev/null || stat -f%z "$WORK/seed.flac")
+  case $((i % 4)) in
     0) head -c $((RANDOM % 4096)) /dev/urandom > "$WORK/fuzz.bin" ;;
     1) { printf 'fLaC'; head -c $((RANDOM % 4096)) /dev/urandom; } > "$WORK/fuzz.bin" ;;
-    2) head -c $((RANDOM % $(stat -f%z "$WORK/seed.flac" 2>/dev/null || stat -c%s "$WORK/seed.flac"))) \
-         "$WORK/seed.flac" > "$WORK/fuzz.bin" ;;
+    2) head -c $((RANDOM % seedsz)) "$WORK/seed.flac" > "$WORK/fuzz.bin" ;;
+    # a slice starting inside the audio: no metadata block, so the decoder
+    # reaches the sync scan rather than the header reader
+    3) dd if="$WORK/seed.flac" of="$WORK/fuzz.bin" bs=1 \
+         skip=$((RANDOM % seedsz)) count=$((RANDOM % 4096 + 1)) status=none ;;
   esac
   run_decode "$WORK/fuzz.bin"; rc=$?
   if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
@@ -81,7 +85,9 @@ R4=$fail
 echo "== Rig 5: runtime round-trip fuzz ($N random audios)"
 fail=0
 for i in $(seq 1 "$N"); do
-  ch=$((RANDOM % 2 + 1))
+  # 1-8 channels: 2 gets stereo decorrelation, 1 and 3-8 take the independent
+  # multichannel path, and 8 is the widest the encoder's shape guard admits.
+  ch=$((RANDOM % 8 + 1))
   python3 - "$WORK/rt.pcm" "$ch" <<'EOF'
 import random, struct, sys
 n = random.randint(0, 3000)
@@ -96,7 +102,11 @@ with open(sys.argv[1], "wb") as f:
         else: v = random.randint(-4096, 4095) * 8
         f.write(struct.pack("<h", v))
 EOF
-  bs=$((16 + RANDOM % 8000))
+  # the checked encoder caps block sizes at 4608 so that an all-CONSTANT
+  # stream cannot exceed the decoder's decompression-bomb budget
+  # (Flac.Stream.decodeBudget; the cap is enforced in Flac/Native/Codec.lean).
+  # Drawing above it makes the rig report that precondition as a failure.
+  bs=$((16 + RANDOM % 4593))
   if ! "$VINYL" --encode "$WORK/rt.pcm" "$WORK/rt.flac" "$bs" "$ch" >/dev/null 2>&1; then
     fail=$((fail+1)); echo "  ENCODE REJECTED valid input on iteration $i (bs=$bs ch=$ch)"
     continue

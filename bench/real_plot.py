@@ -17,7 +17,6 @@ swept: Vinyl's encoder and decoder are frame-parallel and libFLAC 1.5.0 takes
 `-j`.  libFLAC's decoder has no threading option and appears at `-j1` only.
 """
 import csv
-import math
 import os
 import re
 import sys

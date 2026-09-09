@@ -162,6 +162,158 @@ def readRiceSeqScan3 (d : ByteArray) (k pk mask total : Nat) :
         else none
     else none
 
+/-! ### The machine-word Rice run
+
+`readRiceSeqScan3` above is the specification shape; `riceRunU` below is the
+same algorithm with the cursor and window in `USize` and the folded value in
+`UInt64`, which is 64 bits on every platform so `q · 2^k` cannot wrap on a
+32-bit word. The `Nat` version pays a tag test and a range check on every one
+of ~25 scalar operations per sample.
+
+Nothing wraps, and one guard per partition is what buys that:
+`d.size < 2^(numBits - 4)` puts every position, `8 · d.size` included, below
+`2^(numBits - 1)`. The one value not bounded by the input size is `q · 2^k`; a
+quotient above `2^40` — a unary run of a terabit — takes the exact `Nat` path.
+Both paths are `readRiceSeqScan3`'s arithmetic
+(`Flac.Spec.Decode.riceRunU_eq`). -/
+
+/-- Byte `i` as a machine word, 0 past the end (as `bit`/`extractBits3`
+    read it). `sz` is the buffer's size, carried as a loop parameter
+    (`Flac.Bits.toNat_lt_of_lt_size`): reading it from the object header
+    instead costs a coherence miss per byte once several threads share the
+    input. -/
+@[inline] def byteU (d : ByteArray) (sz i : USize) (hsz : sz ≤ d.usize) : USize :=
+  if hi : i < sz then (d.uget i (toNat_lt_of_lt_size hsz hi)).toUSize else 0
+
+/-- `bitFast` on a machine-word cursor. -/
+@[inline] def bitU (d : ByteArray) (sz i : USize) (hsz : sz ≤ d.usize) : Bool :=
+  decide ((byteU d sz (i >>> 3) hsz >>> (7 - (i &&& 7))) &&& 1 = 1)
+
+/-- `extractBits3` on machine words (valid for `n ≤ 17`, as the original). -/
+@[inline] def extract3U (d : ByteArray) (sz pos n mask : USize) (hsz : sz ≤ d.usize) : USize :=
+  let p := pos >>> 3
+  ((byteU d sz p hsz * 256 + byteU d sz (p + 1) hsz) * 256 + byteU d sz (p + 2) hsz)
+    >>> (24 - (pos &&& 7) - n) &&& mask
+
+/-- A byte read through `byteU` is a byte. -/
+theorem byteU_lt (d : ByteArray) (sz i : USize) (hsz : sz ≤ d.usize) :
+    (byteU d sz i hsz).toNat < 256 := by
+  unfold byteU
+  split
+  · exact UInt8.toNat_lt_size _
+  · rw [USize.toNat_zero]; omega
+
+/-! ### The unary scan, one byte at a time
+
+`scanOne` walks the unary prefix bit by bit at twelve instructions per zero
+bit — ~9% of decode on `flac -8` streams, and the only visible branch-miss
+rate. One table lookup decides the whole run inside a byte instead: mask off
+the bits before the cursor, and the MSB-first position of the remaining
+value's highest set bit is `7 - log2`, which is what the table holds. A byte
+that is entirely zero after the cursor is skipped eight bits at a time.
+
+`Flac.Spec.Decode.scanOneU_toNat` proves the result is the bit walk's;
+`Nat.log2_self_le` and `Nat.lt_log2_self` are what make that a proof rather
+than a 2048-case evaluation. -/
+
+/-- MSB-first index of a byte's highest set bit — its count of leading
+    zero bits. Entry 0 is never read (the scan tests for an empty window
+    first). -/
+def nlz8Table : ByteArray :=
+  ⟨Array.ofFn (n := 256) fun i => UInt8.ofNat (7 - Nat.log2 i.val)⟩
+
+theorem nlz8Table_size : nlz8Table.size = 256 := Array.size_ofFn
+
+theorem usize_toNat_255 : (255 : USize).toNat = 255 := by simp only [USize.reduceToNat]
+theorem usize_toNat_7 : (7 : USize).toNat = 7 := by simp only [USize.reduceToNat]
+theorem usize_toNat_8 : (8 : USize).toNat = 8 := by simp only [USize.reduceToNat]
+
+/-- The leading-zero count of `m &&& 0xFF`. -/
+@[inline] def nlz8 (m : USize) : USize :=
+  (nlz8Table.uget (m &&& 255) (by
+    rw [nlz8Table_size, USize.toNat_and, usize_toNat_255]
+    exact Nat.lt_succ_of_le Nat.and_le_right)).toUSize
+
+/-- `scanOne` on a machine-word cursor, a byte per step. Called only for a
+    nonzero quotient: `riceRunU` tests the bit at `pos` itself and enters here
+    at `pos + 1`, which keeps the immediate-termination case — about half of a
+    well-parameterised Rice run — off the mask and the table lookup. Routing it
+    through here instead costs 3–6% of decode on streams with short runs.
+
+    Both byte reads are the same expression, so the compiler emits one load. -/
+def scanOneU (d : ByteArray) (sz : USize) (hsz : sz ≤ d.usize) (pos fuel : USize) : USize :=
+  let j := pos &&& 7
+  let m := byteU d sz (pos >>> 3) hsz &&& (255 >>> j)
+  if m = 0 then
+    let s := 8 - j
+    if fuel ≤ s then pos + fuel
+    else scanOneU d sz hsz (pos + s) (fuel - s)
+  else
+    let t := nlz8 m - j
+    if fuel ≤ t then pos + fuel else pos + t
+termination_by fuel.toNat
+decreasing_by
+  rename_i hlt
+  have hj : (pos &&& 7).toNat ≤ 7 := by
+    rw [USize.toNat_and, usize_toNat_7]; exact Nat.and_le_right
+  have hs : (8 - (pos &&& 7)).toNat = 8 - (pos &&& 7).toNat := by
+    rw [USize.toNat_sub_of_le _ _
+      (USize.le_iff_toNat_le.2 (by rw [usize_toNat_8]; omega)), usize_toNat_8]
+  have hlt' : (8 - (pos &&& 7)).toNat < fuel.toNat := by
+    rcases Nat.lt_or_ge (8 - (pos &&& 7)).toNat fuel.toNat with h | h
+    · exact h
+    · exact absurd (USize.le_iff_toNat_le.2 h) hlt
+  rw [USize.toNat_sub_of_le _ _ (USize.le_iff_toNat_le.2 (Nat.le_of_lt hlt'))]
+  omega
+
+/-- `Rice.unzigzag` on a folded value below `2^63`, branch-free: `h` when
+    even, `-h - 1` when odd, with `h = u / 2`. -/
+@[inline] def unzigU (u : UInt64) : Int :=
+  let h : Int64 := (u >>> 1).toInt64
+  let odd : Int64 := (u &&& 1).toInt64
+  (h - odd * (h + h + 1)).toInt
+
+/-- `readRiceSeqScan3` on machine words (`Flac.Spec.Decode.riceRunU_eq`).
+    `k`, `mask = 2^k - 1` and `total = 8 · d.size` are the loop invariants
+    as words; `pkU = 2^k` as a `UInt64` and `pk` as a `Nat` serve the fast
+    and the exact value paths; `qLim = 2^40` bounds the fast one. -/
+def riceRunU (d : ByteArray) (sz k mask total : USize) (pkU qLim : UInt64) (pk : Nat)
+    (hsz : sz ≤ d.usize) :
+    (count : Nat) → (pos : USize) → Array Int → Option (Array Int × Nat)
+  | 0, pos, acc => some (acc, pos.toNat)
+  | count + 1, pos, acc =>
+    if pos < total then
+      if bitU d sz pos hsz then
+        let pos1 := pos + 1
+        if k = 0 then riceRunU d sz k mask total pkU qLim pk hsz count pos1 (acc.push 0)
+        else if pos1 + k ≤ total then
+          riceRunU d sz k mask total pkU qLim pk hsz count (pos1 + k)
+            (acc.push (unzigU (extract3U d sz pos1 k mask hsz).toUInt64))
+        else none
+      else
+        let onePos := scanOneU d sz hsz (pos + 1) (total - (pos + 1))
+        if onePos < total then
+          let q := onePos - pos
+          let pos1 := onePos + 1
+          if k = 0 then
+            riceRunU d sz k mask total pkU qLim pk hsz count pos1 (acc.push (unzigU q.toUInt64))
+          else if pos1 + k ≤ total then
+            let r := extract3U d sz pos1 k mask hsz
+            riceRunU d sz k mask total pkU qLim pk hsz count (pos1 + k)
+              (acc.push (if q.toUInt64 < qLim then unzigU (q.toUInt64 * pkU + r.toUInt64)
+                else Rice.unzigzag (q.toNat * pk + r.toNat)))
+          else none
+        else none
+    else none
+
+/-- The domain of `riceRunU`: the three-byte window is valid and no
+    machine-word position can wrap. -/
+def RiceRunOk (k : Nat) (br : BitReader) : Prop :=
+  k ≤ 17 ∧ br.data.size < p2 (System.Platform.numBits - 4) ∧ br.pos ≤ 8 * br.data.size
+
+instance (k : Nat) (br : BitReader) : Decidable (RiceRunOk k br) := by
+  unfold RiceRunOk; exact inferInstance
+
 /-- The byte-addressed Rice run (the form the simulation proof is phrased
     over). -/
 @[inline] def readRiceSeqScanFast (k count : Nat) (br : BitReader) (acc : Array Int) :
@@ -172,14 +324,19 @@ def readRiceSeqScan3 (d : ByteArray) (k pk mask total : Nat) :
   | none => none
   | some (a, pos) => some (a, ⟨br.data, pos⟩)
 
-/-- The shipped Rice run: the three-byte window where it is valid
-    (`k ≤ 17`, i.e. always in practice), the general reader otherwise.
-    Equal to `readRiceSeqScanFast` either way
-    (`Flac.Spec.Decode.readRiceSeqFast_eq_scanFast`). -/
+/-- The shipped Rice run: the machine-word loop on its domain (`k ≤ 17` and
+    a word-sized buffer), the three-byte `Nat` loop for `k ≤ 17` otherwise,
+    the general reader beyond. RICE2 parameters 18–30 take the last branch and
+    are not covered by any benchmark. Equal to `readRiceSeqScanFast` on every
+    branch (`Flac.Spec.Decode.readRiceSeqFast_eq_scanFast`). -/
 @[inline] def readRiceSeqFast (k count : Nat) (br : BitReader) (acc : Array Int) :
     Option (Array Int × BitReader) :=
   let result :=
-    if k ≤ 17 then
+    if RiceRunOk k br then
+      riceRunU br.data br.data.usize (USize.ofNat k) (USize.ofNat (p2 k - 1))
+        (USize.ofNat (8 * br.data.size)) (UInt64.ofNat (p2 k)) ((1 : UInt64) <<< 40) (p2 k)
+        (USize.le_iff_toNat_le.2 (Nat.le_refl _)) count (USize.ofNat br.pos) acc
+    else if k ≤ 17 then
       readRiceSeqScan3 br.data k (p2 k) (p2 k - 1) (8 * br.data.size) count br.pos acc
     else
       readRiceSeqScan br.data k (p2 k) (8 * br.data.size) count br.pos acc
@@ -210,9 +367,55 @@ def readSIntSeqGo (d : ByteArray) (bits : Nat) : (count : Nat) → (pos : Nat) �
         (acc.push (if 2 * v < p2 bits then (v : Int) else (v : Int) - ((p2 bits : Nat) : Int)))
     else none
 
+/-- `readSIntSeqGo` on machine words — the VERBATIM and warm-up reader.
+
+    `readSIntSeqGo` reads the input `ByteArray`'s header **four times per
+    sample**: once for its own `pos + bits ≤ 8 * d.size` test and once per
+    covering byte inside `extractBitsFast`'s `accBytes` loop. That word shares
+    a cache line with the object's reference count, so on a VERBATIM stream at
+    sixteen threads those reads become repeated coherence invalidations —
+    identical instruction counts at every thread count with IPC falling
+    4.95 → 2.37, the signature the Rice reader carried before the same fix.
+
+    Here the size travels as a `USize` parameter under an erased
+    `sz ≤ d.usize`, and the three window bytes come from `extract3U`, so
+    nothing in the loop touches the header. Domain: `1 ≤ bits ≤ 17` (the
+    three-byte window, and `bits = 0` has its own non-advancing branch above)
+    and a word-sized buffer — `SIntRunOk`, the twin of `RiceRunOk`. Proven
+    equal to `readSIntSeqGo` by `Flac.Spec.Decode.readSIntSeqU_eq`. -/
+def readSIntSeqU (d : ByteArray) (sz bits mask total : USize) (pb : Nat)
+    (hsz : sz ≤ d.usize) :
+    (count : Nat) → (pos : USize) → Array Int → Option (Array Int × Nat)
+  | 0, pos, acc => some (acc, pos.toNat)
+  | count + 1, pos, acc =>
+    if pos + bits ≤ total then
+      let v := (extract3U d sz pos bits mask hsz).toNat
+      readSIntSeqU d sz bits mask total pb hsz count (pos + bits)
+        (acc.push (if 2 * v < pb then (v : Int) else (v : Int) - (pb : Int)))
+    else none
+
+/-- The domain of `readSIntSeqU`: the three-byte window is valid, the width
+    is not the degenerate zero, and no machine-word position can wrap. -/
+def SIntRunOk (bits : Nat) (br : BitReader) : Prop :=
+  1 ≤ bits ∧ bits ≤ 17 ∧ br.data.size < p2 (System.Platform.numBits - 4) ∧
+    br.pos ≤ 8 * br.data.size
+
+instance (bits : Nat) (br : BitReader) : Decidable (SIntRunOk bits br) := by
+  unfold SIntRunOk; exact inferInstance
+
+/-- The shipped fixed-width run: the machine-word loop on its domain
+    (`1 ≤ bits ≤ 17`, word-sized buffer), the `Nat` loop otherwise — so 24-
+    and 32-bit VERBATIM still take the slow branch. Equal to `readSIntSeqA` on
+    both (`Flac.Spec.Decode.readSIntSeqFast_eq`). -/
 @[inline] def readSIntSeqFast (bits count : Nat) (br : BitReader) (acc : Array Int) :
     Option (Array Int × BitReader) :=
-  match readSIntSeqGo br.data bits count br.pos acc with
+  let result :=
+    if SIntRunOk bits br then
+      readSIntSeqU br.data br.data.usize (USize.ofNat bits) (USize.ofNat (p2 bits - 1))
+        (USize.ofNat (8 * br.data.size)) (p2 bits)
+        (USize.le_iff_toNat_le.2 (Nat.le_refl _)) count (USize.ofNat br.pos) acc
+    else readSIntSeqGo br.data bits count br.pos acc
+  match result with
   | none => none
   | some (a, pos) => some (a, ⟨br.data, pos⟩)
 
@@ -458,7 +661,7 @@ def readChannels (bs b chCode : Nat) (br : BitReader) :
     | some (m, br) =>
       match readSubframe bs (b + 1) br with
       | none => none
-      | some (sd, br) => some ([Stereo.decodeMSLA b m sd, Stereo.decodeMSRA b m sd], br)
+      | some (sd, br) => some (Stereo.decodeMSA b m sd, br)
   else none
 
 def readHeaderChannels (b0 : Nat) (br : BitReader) :
@@ -658,17 +861,26 @@ def minFrameBytes : Nat := 16
     real audio sits well below the cap and never saturates, while a window
     that does saturate has already proved the stream is not honestly
     framed, which `syncCandidates` acts on. -/
-def syncScan (d : ByteArray) (lo hi : Nat) : Array Nat := Id.run do
+def syncScanGo (d : ByteArray) (sz : USize) (hsz : sz ≤ d.usize) (cap : Nat) :
+    (n : Nat) → (i : USize) → Array Nat → Array Nat
+  | 0, _, out => out
+  | n + 1, i, out =>
+    if h : i < sz then
+      if d.uget i (toNat_lt_of_lt_size hsz h) == 0xFF then
+        if h1 : i + 1 < sz then
+          if d.uget (i + 1) (toNat_lt_of_lt_size hsz h1) &&& 0xFC == 0xF8 then
+            if out.size < cap then syncScanGo d sz hsz cap n (i + 1) (out.push i.toNat) else out
+          else syncScanGo d sz hsz cap n (i + 1) out
+        else out
+      else syncScanGo d sz hsz cap n (i + 1) out
+    else out
+
+/-- The scan proper: a `USize` walk over `[lo, min hi d.size)`, since a
+    position at or past the end can hold no sync code. -/
+def syncScan (d : ByteArray) (lo hi : Nat) : Array Nat :=
   let cap := (hi - lo) / minFrameBytes + 8
-  let mut out : Array Nat := Array.emptyWithCapacity cap
-  for i in [lo : hi] do
-    if (if h : i < d.size then d[i] else 0) == 0xFF then
-      if (if h : i + 1 < d.size then d[i + 1] else 0) &&& 0xFC == 0xF8 then
-        if out.size < cap then
-          out := out.push i
-        else
-          break
-  return out
+  syncScanGo d d.usize (USize.le_iff_toNat_le.2 (Nat.le_refl _)) cap (min hi d.size - lo)
+    (USize.ofNat lo) (Array.emptyWithCapacity cap)
 
 /-- Bytes per parallel scan window. -/
 def syncWindow : Nat := 1 <<< 20

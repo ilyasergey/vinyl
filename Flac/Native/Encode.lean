@@ -290,7 +290,7 @@ private def lpcFoldRange (xs : FloatArray) (cs : List Float) (inv : Float) :
     else acc
   termination_by i stop => stop - i
 
-/-- Order-specialised residual folds.
+/-! ### Order-specialised residual folds.
 
     `lpcFoldRange` walked a `List Float` of coefficients once per sample,
     which costs three *dependent* loads per tap — the cons cell, its tail
@@ -305,17 +305,24 @@ private def lpcFoldRange (xs : FloatArray) (cs : List Float) (inv : Float) :
     `2^53`, so each result is bit-identical to the list version — the plan
     these sums produce, and therefore the emitted bytes, do not change.
 
-    `lpcMaxOrder` is 8, so orders 1–8 cover every candidate; anything else
-    falls back to the generic walk. -/
+    Orders 1–8 are specialised, which covers every candidate `lpcMaxOrder`
+    can produce; anything else falls back to the generic walk. -/
+/-- Sample `j` as a float, `0.0` past the end: a word-sized bounds test per
+    tap instead of `Nat` index arithmetic (`i - k` cost a tag test and a
+    range check per tap, a third of the fold). The folds below only ever
+    read inside the block, so the search is unchanged bit for bit
+    (`fastMirrorTests`). -/
+@[inline] private def fAt (xs : FloatArray) (j : USize) : Float :=
+  if h : j < xs.usize then xs.uget j (Flac.Bits.floatArray_toNat_lt_of_lt_usize h) else ff0
+
 private def lpcFold1 (xs : FloatArray) (c0 inv : Float) :
     (i stop : Nat) → stop ≤ xs.size → Float → Float
   | i, stop, hstop, acc =>
     if h : i < stop then
       have hi : i < xs.size := by omega
-      have h1 : i - 1 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
+      let iu := i.toUSize
       lpcFold1 xs c0 inv (i + 1) stop hstop
-        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1]) inv))
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * fAt xs (iu - 1)) inv))
     else acc
   termination_by i stop => stop - i
 
@@ -324,12 +331,9 @@ private def lpcFold2 (xs : FloatArray) (c0 c1 inv : Float) :
   | i, stop, hstop, acc =>
     if h : i < stop then
       have hi : i < xs.size := by omega
-      have h1 : i - 1 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
-      have h2 : i - 2 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
+      let iu := i.toUSize
       lpcFold2 xs c0 c1 inv (i + 1) stop hstop
-        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2]) inv))
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * fAt xs (iu - 1) + c1 * fAt xs (iu - 2)) inv))
     else acc
   termination_by i stop => stop - i
 
@@ -338,14 +342,9 @@ private def lpcFold3 (xs : FloatArray) (c0 c1 c2 inv : Float) :
   | i, stop, hstop, acc =>
     if h : i < stop then
       have hi : i < xs.size := by omega
-      have h1 : i - 1 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
-      have h2 : i - 2 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
-      have h3 : i - 3 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
+      let iu := i.toUSize
       lpcFold3 xs c0 c1 c2 inv (i + 1) stop hstop
-        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3]) inv))
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * fAt xs (iu - 1) + c1 * fAt xs (iu - 2) + c2 * fAt xs (iu - 3)) inv))
     else acc
   termination_by i stop => stop - i
 
@@ -354,16 +353,9 @@ private def lpcFold4 (xs : FloatArray) (c0 c1 c2 c3 inv : Float) :
   | i, stop, hstop, acc =>
     if h : i < stop then
       have hi : i < xs.size := by omega
-      have h1 : i - 1 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
-      have h2 : i - 2 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
-      have h3 : i - 3 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
-      have h4 : i - 4 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 4) hi
+      let iu := i.toUSize
       lpcFold4 xs c0 c1 c2 c3 inv (i + 1) stop hstop
-        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3] + c3 * xs[i - 4]) inv))
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * fAt xs (iu - 1) + c1 * fAt xs (iu - 2) + c2 * fAt xs (iu - 3) + c3 * fAt xs (iu - 4)) inv))
     else acc
   termination_by i stop => stop - i
 
@@ -372,18 +364,9 @@ private def lpcFold5 (xs : FloatArray) (c0 c1 c2 c3 c4 inv : Float) :
   | i, stop, hstop, acc =>
     if h : i < stop then
       have hi : i < xs.size := by omega
-      have h1 : i - 1 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
-      have h2 : i - 2 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
-      have h3 : i - 3 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
-      have h4 : i - 4 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 4) hi
-      have h5 : i - 5 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 5) hi
+      let iu := i.toUSize
       lpcFold5 xs c0 c1 c2 c3 c4 inv (i + 1) stop hstop
-        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3] + c3 * xs[i - 4] + c4 * xs[i - 5]) inv))
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * fAt xs (iu - 1) + c1 * fAt xs (iu - 2) + c2 * fAt xs (iu - 3) + c3 * fAt xs (iu - 4) + c4 * fAt xs (iu - 5)) inv))
     else acc
   termination_by i stop => stop - i
 
@@ -392,20 +375,9 @@ private def lpcFold6 (xs : FloatArray) (c0 c1 c2 c3 c4 c5 inv : Float) :
   | i, stop, hstop, acc =>
     if h : i < stop then
       have hi : i < xs.size := by omega
-      have h1 : i - 1 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
-      have h2 : i - 2 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
-      have h3 : i - 3 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
-      have h4 : i - 4 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 4) hi
-      have h5 : i - 5 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 5) hi
-      have h6 : i - 6 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 6) hi
+      let iu := i.toUSize
       lpcFold6 xs c0 c1 c2 c3 c4 c5 inv (i + 1) stop hstop
-        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3] + c3 * xs[i - 4] + c4 * xs[i - 5] + c5 * xs[i - 6]) inv))
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * fAt xs (iu - 1) + c1 * fAt xs (iu - 2) + c2 * fAt xs (iu - 3) + c3 * fAt xs (iu - 4) + c4 * fAt xs (iu - 5) + c5 * fAt xs (iu - 6)) inv))
     else acc
   termination_by i stop => stop - i
 
@@ -414,22 +386,9 @@ private def lpcFold7 (xs : FloatArray) (c0 c1 c2 c3 c4 c5 c6 inv : Float) :
   | i, stop, hstop, acc =>
     if h : i < stop then
       have hi : i < xs.size := by omega
-      have h1 : i - 1 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
-      have h2 : i - 2 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
-      have h3 : i - 3 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
-      have h4 : i - 4 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 4) hi
-      have h5 : i - 5 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 5) hi
-      have h6 : i - 6 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 6) hi
-      have h7 : i - 7 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 7) hi
+      let iu := i.toUSize
       lpcFold7 xs c0 c1 c2 c3 c4 c5 c6 inv (i + 1) stop hstop
-        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3] + c3 * xs[i - 4] + c4 * xs[i - 5] + c5 * xs[i - 6] + c6 * xs[i - 7]) inv))
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * fAt xs (iu - 1) + c1 * fAt xs (iu - 2) + c2 * fAt xs (iu - 3) + c3 * fAt xs (iu - 4) + c4 * fAt xs (iu - 5) + c5 * fAt xs (iu - 6) + c6 * fAt xs (iu - 7)) inv))
     else acc
   termination_by i stop => stop - i
 
@@ -438,24 +397,9 @@ private def lpcFold8 (xs : FloatArray) (c0 c1 c2 c3 c4 c5 c6 c7 inv : Float) :
   | i, stop, hstop, acc =>
     if h : i < stop then
       have hi : i < xs.size := by omega
-      have h1 : i - 1 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 1) hi
-      have h2 : i - 2 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 2) hi
-      have h3 : i - 3 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 3) hi
-      have h4 : i - 4 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 4) hi
-      have h5 : i - 5 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 5) hi
-      have h6 : i - 6 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 6) hi
-      have h7 : i - 7 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 7) hi
-      have h8 : i - 8 < xs.size :=
-        Nat.lt_of_le_of_lt (Nat.sub_le i 8) hi
+      let iu := i.toUSize
       lpcFold8 xs c0 c1 c2 c3 c4 c5 c6 c7 inv (i + 1) stop hstop
-        (acc + foldF (xs[i] - sarF (ff0 + c0 * xs[i - 1] + c1 * xs[i - 2] + c2 * xs[i - 3] + c3 * xs[i - 4] + c4 * xs[i - 5] + c5 * xs[i - 6] + c6 * xs[i - 7] + c7 * xs[i - 8]) inv))
+        (acc + foldF (xs[i] - sarF (ff0 + c0 * fAt xs (iu - 1) + c1 * fAt xs (iu - 2) + c2 * fAt xs (iu - 3) + c3 * fAt xs (iu - 4) + c4 * fAt xs (iu - 5) + c5 * fAt xs (iu - 6) + c6 * fAt xs (iu - 7) + c7 * fAt xs (iu - 8)) inv))
     else acc
   termination_by i stop => stop - i
 
@@ -966,6 +910,281 @@ def pushRiceRangeF (k mask : Nat) (res : Array Int) :
     else ⟨buf, acc, n⟩
   termination_by i stop => stop - i
 
+/-! ### The machine-word Rice writer
+
+`pushRiceRangeF` above is what the theorems read; what the encoder *runs* is
+`pushRiceRangeFFast` below, swapped in by `pushRiceRangeF_eq_fast`
+(`@[csimp]`). Per sample the boxed loop folds the residual through
+`Int.toNat` (an out-of-line call), shifts and adds `Nat`s, converts three of
+them to `UInt64`, and runs `flushBytes` with a `Nat` count; the machine-word
+loop folds in `Int64`, keeps every count in `UInt64`, and flushes with a
+word count. Exact for residuals below `2^30` in magnitude and `k ≤ 25`
+(`Flac.Encode.pushRiceRangeM_eq`), which one scan per partition decides;
+the wide-quotient sample still takes the boxed `pushRiceFolded`. -/
+
+/-- `Rice.zigzag` on a machine word, branch-free: `2x` for `x ≥ 0` and
+    `-2x - 1` below, with `s = x >>> 63 ∈ {0, -1}` selecting the fold.
+    `zigzag64_toNat` proves it exact on `Bits.FitsSInt 31`, i.e. for
+    `-2^30 ≤ x < 2^30` — which is the domain `pushRiceRangeM` already
+    decides per partition, and the only domain the callers use. -/
+@[inline] def zigzag64 (x : Int64) : UInt64 :=
+  let s := x >>> 63
+  (x + x + s * (x + x + x + x + 1)).toUInt64
+
+/-- `BitWriter.accPush` with machine-word arguments. -/
+@[inline] def accPushU (acc kk v : UInt64) : UInt64 :=
+  (acc <<< kk) ||| (v &&& ((1 <<< kk) - 1))
+
+/-- `BitWriter.flushBytes` with a machine-word pending count. -/
+def flushBytesM (buf : ByteArray) (acc n : UInt64) : ByteArray :=
+  if n < 8 then buf
+  else flushBytesM (buf.push (acc >>> (n - 8)).toUInt8) acc (n - 8)
+termination_by n.toNat
+decreasing_by
+  rename_i h
+  have h8n : ¬ n.toNat < 8 := fun hlt =>
+    h (UInt64.lt_iff_toNat_lt.2 (by simp only [UInt64.reduceToNat]; exact hlt))
+  rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_iff_toNat_le.2 (by
+    simp only [UInt64.reduceToNat]; omega))]
+  simp only [UInt64.reduceToNat]
+  omega
+
+/-- `pushRiceRangeF` verbatim: the swap's fallback must not be the swapped
+    name. -/
+def pushRiceRangeFSlow (k mask : Nat) (res : Array Int) :
+    (i stop : Nat) → (buf : ByteArray) → (acc : UInt64) → (n : Nat) → BitWriter
+  | i, stop, buf, acc, n =>
+    if h : i < stop then
+      let x := res.getD i 0
+      let u := if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1
+      let q := u >>> k
+      if q < 32 then
+        let acc2 := BitWriter.accPush (BitWriter.accPush acc (q + 1) 1) k u
+        let nF := n + (q + 1) + k
+        pushRiceRangeFSlow k mask res (i + 1) stop
+          (BitWriter.flushBytes buf acc2 nF) acc2 (nF % 8)
+      else
+        let w := (BitWriter.mk buf acc n).pushRiceFolded k u
+        pushRiceRangeFSlow k mask res (i + 1) stop w.buf w.acc w.n
+    else ⟨buf, acc, n⟩
+  termination_by i stop => stop - i
+
+/-- `pushRiceRangeF` on machine words. Each residual is range-checked as it
+    is read; one outside `2^30` hands the rest of the partition to the boxed
+    writer. -/
+def pushRiceRangeM (k mask : Nat) (kU : UInt64) (res : Array Int) :
+    (i stop : Nat) → (buf : ByteArray) → (acc n : UInt64) → BitWriter
+  | i, stop, buf, acc, n =>
+    if h : i < stop then
+      let x := res.getD i 0
+      if Bits.small31 x then
+        let u := zigzag64 x.toInt64
+        let q := u >>> kU
+        if q < 32 then
+          let acc2 := accPushU (accPushU acc (q + 1) 1) kU u
+          let nF := n + (q + 1) + kU
+          pushRiceRangeM k mask kU res (i + 1) stop (flushBytesM buf acc2 nF) acc2 (nF &&& 7)
+        else
+          let uN := if 0 ≤ x then 2 * x.toNat else 2 * (-x).toNat - 1
+          let w := (BitWriter.mk buf acc n.toNat).pushRiceFolded k uN
+          pushRiceRangeM k mask kU res (i + 1) stop w.buf w.acc (UInt64.ofNat w.n)
+      else pushRiceRangeFSlow k mask res i stop buf acc n.toNat
+    else ⟨buf, acc, n.toNat⟩
+  termination_by i stop => stop - i
+
+def pushRiceRangeFFast (k mask : Nat) (res : Array Int) (i stop : Nat) (buf : ByteArray)
+    (acc : UInt64) (n : Nat) : BitWriter :=
+  if k ≤ 25 ∧ n < 8 then
+    pushRiceRangeM k mask (UInt64.ofNat k) res i stop buf acc (UInt64.ofNat n)
+  else pushRiceRangeFSlow k mask res i stop buf acc n
+
+/-! #### The machine-word writer computes the boxed one -/
+
+theorem zigzag64_toNat (x : Int) (hx : Bits.FitsSInt 31 x) :
+    (zigzag64 x.toInt64).toNat = Rice.zigzag x := by
+  obtain ⟨h1, h2⟩ := hx
+  simp only [Nat.reducePow] at h1 h2
+  have hxe : x.toInt64.toInt = x := Int64.toInt_ofInt_of_le (by omega) (by omega)
+  have hsize : Int64.size = 2 ^ 64 := rfl
+  have hs : (x.toInt64 >>> 63).toInt = x / 9223372036854775808 := by
+    rw [show (63 : Int64) = Int64.ofNat 63 from rfl, Bits.toInt_shiftRight_ofNat _ _ (by decide),
+      hxe, Int.shiftRight_eq_div_pow]
+    rfl
+  unfold zigzag64
+  dsimp only
+  have hv : (x.toInt64 + x.toInt64 + (x.toInt64 >>> 63)
+      * (x.toInt64 + x.toInt64 + x.toInt64 + x.toInt64 + 1)).toInt = Rice.zigzag x := by
+    simp only [Int64.toInt_add, Int64.toInt_mul, Int64.toInt_one, Int.bmod_add_bmod,
+      Int.add_bmod_bmod, Int.bmod_mul_bmod, Int.mul_bmod_bmod, hxe, hs]
+    unfold Rice.zigzag
+    split
+    · next hnn =>
+      have : x / 9223372036854775808 = 0 := by omega
+      rw [this, show x + x + 0 * (x + x + x + x + 1) = 2 * x by omega,
+        Int.bmod_eq_of_le (by omega) (by omega)]
+      omega
+    · next hneg =>
+      have : x / 9223372036854775808 = -1 := by omega
+      rw [this, show x + x + -1 * (x + x + x + x + 1) = -2 * x - 1 by omega,
+        Int.bmod_eq_of_le (by omega) (by omega)]
+      omega
+  rw [Int64.toNat_toUInt64_of_le (Int64.le_iff_toInt_le.2 (by rw [Int64.toInt_zero, hv]; omega))]
+  show (x.toInt64 + x.toInt64 + (x.toInt64 >>> 63)
+      * (x.toInt64 + x.toInt64 + x.toInt64 + x.toInt64 + 1)).toInt.toNat = _
+  rw [hv]
+  rfl
+
+theorem flushBytesM_eq (buf : ByteArray) (acc : UInt64) :
+    ∀ (m : Nat) (n : UInt64), n.toNat = m →
+      flushBytesM buf acc n = BitWriter.flushBytes buf acc m := by
+  intro m
+  induction m using Nat.strongRecOn generalizing buf with
+  | _ m ih =>
+    intro n hn
+    rw [flushBytesM, BitWriter.flushBytes]
+    by_cases h8 : m < 8
+    · rw [dif_pos h8, if_pos (UInt64.lt_iff_toNat_lt.2 (by simp only [UInt64.reduceToNat]; omega))]
+    · have hle : (8 : UInt64) ≤ n := UInt64.le_iff_toNat_le.2 (by simp only [UInt64.reduceToNat]; omega)
+      rw [dif_neg h8, if_neg (fun h => h8 (by have := UInt64.lt_iff_toNat_lt.1 h; simp only [UInt64.reduceToNat] at this; omega))]
+      have hsub : (n - 8).toNat = m - 8 := by
+        rw [UInt64.toNat_sub_of_le _ _ hle]; simp only [UInt64.reduceToNat]; omega
+      rw [ih (m - 8) (by omega) _ _ hsub]
+      have hidx : n - 8 = UInt64.ofNat (m - 8) := UInt64.toNat_inj.1 (by
+        rw [hsub, UInt64.toNat_ofNat']
+        exact (Nat.mod_eq_of_lt (Nat.lt_of_le_of_lt (Nat.sub_le _ _)
+          (by rw [← hn]; exact UInt64.toNat_lt n))).symm)
+      rw [hidx]
+
+private theorem pushRiceFolded_n' (bw : BitWriter) (k u : Nat) : (bw.pushRiceFolded k u).n < 8 := by
+  show ((bw.pushUnary (u >>> k)).push k (u &&& (p2 k - 1))).n < 8
+  rw [BitWriter.push]
+  exact Nat.mod_lt _ (by omega)
+
+theorem pushRiceRangeFSlow_eq (k mask : Nat) (res : Array Int) :
+    ∀ (len i : Nat) (buf : ByteArray) (acc : UInt64) (n : Nat),
+      pushRiceRangeFSlow k mask res i (i + len) buf acc n
+        = pushRiceRangeF k mask res i (i + len) buf acc n := by
+  intro len
+  induction len with
+  | zero =>
+    intro i buf acc n
+    rw [pushRiceRangeFSlow, pushRiceRangeF]
+    simp only []
+    rw [dif_neg (by omega), dif_neg (by omega)]
+  | succ len ih =>
+    intro i buf acc n
+    rw [pushRiceRangeFSlow, pushRiceRangeF]
+    simp only []
+    rw [dif_pos (show i < i + (len + 1) by omega), dif_pos (show i < i + (len + 1) by omega),
+      show i + (len + 1) = i + 1 + len by omega]
+    split <;> split <;> exact ih _ _ _ _
+
+theorem pushRiceRangeM_eq (k : Nat) (hk : k ≤ 25) (mask : Nat) (res : Array Int) :
+    ∀ (len i : Nat) (buf : ByteArray) (acc n : UInt64), n.toNat < 8 →
+      pushRiceRangeM k mask (UInt64.ofNat k) res i (i + len) buf acc n
+        = pushRiceRangeF k mask res i (i + len) buf acc n.toNat := by
+  have hkU : (UInt64.ofNat k).toNat = k := by
+    rw [UInt64.toNat_ofNat']; exact Nat.mod_eq_of_lt (by omega)
+  intro len
+  induction len with
+  | zero =>
+    intro i buf acc n _
+    rw [pushRiceRangeM, pushRiceRangeF]
+    simp only []
+    rw [dif_neg (by omega), dif_neg (by omega)]
+  | succ len ih =>
+    intro i buf acc n hn
+    rw [pushRiceRangeM]
+    simp only []
+    rw [dif_pos (show i < i + (len + 1) by omega)]
+    by_cases hxs : Bits.small31 (res.getD i 0) = true
+    · rw [if_pos hxs, pushRiceRangeF]
+      simp only []
+      rw [dif_pos (show i < i + (len + 1) by omega), show i + (len + 1) = i + 1 + len by omega]
+      have hx := Bits.fitsSInt31_of_small31 hxs
+      have hzz : (if 0 ≤ res.getD i 0 then 2 * (res.getD i 0).toNat
+          else 2 * (-res.getD i 0).toNat - 1) = Rice.zigzag (res.getD i 0) := rfl
+      have hu : (zigzag64 (res.getD i 0).toInt64).toNat = Rice.zigzag (res.getD i 0) :=
+        zigzag64_toNat _ hx
+      have hz31 : Rice.zigzag (res.getD i 0) < 2 ^ 31 := by
+        obtain ⟨a, b⟩ := hx
+        simp only [Nat.reducePow] at a b ⊢
+        unfold Rice.zigzag
+        split <;> omega
+      have hq : (zigzag64 (res.getD i 0).toInt64 >>> UInt64.ofNat k).toNat
+          = Rice.zigzag (res.getD i 0) >>> k := by
+        rw [UInt64.toNat_shiftRight, hu, hkU, Nat.mod_eq_of_lt (by omega)]
+      have hqlt : (zigzag64 (res.getD i 0).toInt64 >>> UInt64.ofNat k < 32)
+          ↔ (Rice.zigzag (res.getD i 0) >>> k < 32) := by
+        rw [UInt64.lt_iff_toNat_lt, hq]
+        simp only [UInt64.reduceToNat]
+      rw [hzz]
+      by_cases hlt : Rice.zigzag (res.getD i 0) >>> k < 32
+      · rw [if_pos (hqlt.2 hlt), if_pos hlt]
+        have hq1n : (zigzag64 (res.getD i 0).toInt64 >>> UInt64.ofNat k + 1).toNat
+            = Rice.zigzag (res.getD i 0) >>> k + 1 := by
+          rw [UInt64.toNat_add, hq]
+          simp only [UInt64.reduceToNat]
+          exact Nat.mod_eq_of_lt (by omega)
+        have hq1 : UInt64.ofNat (Rice.zigzag (res.getD i 0) >>> k + 1)
+            = zigzag64 (res.getD i 0).toInt64 >>> UInt64.ofNat k + 1 := by
+          rw [← UInt64.toNat_inj, hq1n, UInt64.toNat_ofNat']
+          exact Nat.mod_eq_of_lt (by omega)
+        have hu' : UInt64.ofNat (Rice.zigzag (res.getD i 0)) = zigzag64 (res.getD i 0).toInt64 := by
+          rw [← UInt64.toNat_inj, hu, UInt64.toNat_ofNat']
+          exact Nat.mod_eq_of_lt (by omega)
+        have hacc : accPushU (accPushU acc (zigzag64 (res.getD i 0).toInt64 >>> UInt64.ofNat k + 1) 1)
+              (UInt64.ofNat k) (zigzag64 (res.getD i 0).toInt64)
+            = BitWriter.accPush (BitWriter.accPush acc (Rice.zigzag (res.getD i 0) >>> k + 1) 1) k
+              (Rice.zigzag (res.getD i 0)) := by
+          unfold accPushU BitWriter.accPush
+          rw [hq1, hu']
+          rfl
+        have hnF : (n + (zigzag64 (res.getD i 0).toInt64 >>> UInt64.ofNat k + 1) + UInt64.ofNat k).toNat
+            = n.toNat + (Rice.zigzag (res.getD i 0) >>> k + 1) + k := by
+          rw [UInt64.toNat_add, UInt64.toNat_add, hq1n, hkU,
+            Nat.mod_eq_of_lt (a := n.toNat + (Rice.zigzag (res.getD i 0) >>> k + 1)) (by omega),
+            Nat.mod_eq_of_lt (by omega)]
+        have h7 : ((n + (zigzag64 (res.getD i 0).toInt64 >>> UInt64.ofNat k + 1) + UInt64.ofNat k)
+              &&& 7).toNat
+            = (n.toNat + (Rice.zigzag (res.getD i 0) >>> k + 1) + k) % 8 := by
+          rw [UInt64.toNat_and, hnF]
+          simp only [UInt64.reduceToNat]
+          show _ &&& (2 ^ 3 - 1) = _ % 2 ^ 3
+          exact Nat.and_two_pow_sub_one_eq_mod _ _
+        rw [hacc, flushBytesM_eq _ _ _ _ hnF, ih (i + 1) _ _ _ (by rw [h7]; exact Nat.mod_lt _ (by omega)), h7]
+      · rw [if_neg (fun h => hlt (hqlt.1 h)), if_neg hlt]
+        have hw : (UInt64.ofNat ((BitWriter.mk buf acc n.toNat).pushRiceFolded k
+            (Rice.zigzag (res.getD i 0))).n).toNat
+            = ((BitWriter.mk buf acc n.toNat).pushRiceFolded k (Rice.zigzag (res.getD i 0))).n := by
+          rw [UInt64.toNat_ofNat']
+          exact Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le (pushRiceFolded_n' _ _ _) (by decide))
+        rw [ih (i + 1) _ _ _ (by rw [hw]; exact pushRiceFolded_n' _ _ _), hw]
+    · rw [if_neg hxs]
+      exact pushRiceRangeFSlow_eq k mask res (len + 1) i buf acc n.toNat
+
+/-- **The machine-word writer computes the boxed one.** -/
+@[csimp] theorem pushRiceRangeF_eq_fast : @pushRiceRangeF = @pushRiceRangeFFast := by
+  funext k mask res i stop buf acc n
+  unfold pushRiceRangeFFast
+  split
+  · next h =>
+    obtain ⟨hk, hn⟩ := h
+    have hnU : (UInt64.ofNat n).toNat = n := by
+      rw [UInt64.toNat_ofNat']; exact Nat.mod_eq_of_lt (by omega)
+    by_cases hlt : i ≤ stop
+    · obtain ⟨len, rfl⟩ : ∃ len, stop = i + len := ⟨stop - i, by omega⟩
+      rw [pushRiceRangeM_eq k hk mask res len i buf acc _ (by rw [hnU]; exact hn), hnU]
+    · rw [pushRiceRangeM, pushRiceRangeF]
+      simp only []
+      rw [dif_neg (by omega), dif_neg (by omega), hnU]
+  · by_cases hlt : i ≤ stop
+    · obtain ⟨len, rfl⟩ : ∃ len, stop = i + len := ⟨stop - i, by omega⟩
+      exact (pushRiceRangeFSlow_eq k mask res len i buf acc n).symm
+    · rw [pushRiceRangeFSlow, pushRiceRangeF]
+      simp only []
+      rw [dif_neg (by omega), dif_neg (by omega)]
+
 /-- The per-partition Rice parameters as the reference's choice list. The
     fast plan carries `ks : Array Nat`; `Rice.Partition` is what
     `Emit.W.pushParts` consumes. -/
@@ -1142,6 +1361,110 @@ def channelSegO (bytes : ByteArray) (stride : Nat) :
   | j, rem + 1, out =>
     channelSegO bytes stride (j + stride) rem (out.push (sampleAt bytes j))
 
+/-- `channelSegO` verbatim: the swap's fallback must not be the swapped name. -/
+def channelSegOSlow (bytes : ByteArray) (stride : Nat) :
+    (j rem : Nat) → Array Int → Array Int
+  | _, 0, out => out
+  | j, rem + 1, out =>
+    channelSegOSlow bytes stride (j + stride) rem (out.push (sampleAt bytes j))
+
+/-- `channelSegO` on machine words: two byte loads at a `USize` cursor and
+    the sign adjust on `Int64`. The invariant `j + s·rem + 2 ≤ size + s` is
+    exactly "every read is in range" for a stride `s ≥ 2`. -/
+def channelSegU (bytes : ByteArray) (s : Nat) (sU : USize) (hs : bytes.size + s < USize.size)
+    (h2 : 2 ≤ s) (hsU : sU.toNat = s) :
+    (rem : Nat) → (j : USize) → j.toNat + s * rem + 2 ≤ bytes.size + s → Array Int → Array Int
+  | 0, _, _, out => out
+  | rem + 1, j, hj, out =>
+    have hmul : s * (rem + 1) = s * rem + s := Nat.mul_succ s rem
+    have e1 := Flac.Bits.usize_add_toNat j 1 bytes.size (by omega) (by omega)
+    have eS : (j + sU).toNat = j.toNat + s := by
+      have hs' := hs
+      rw [USize.size_eq_two_pow] at hs'
+      rw [USize.toNat_add, hsU]; exact Nat.mod_eq_of_lt (by omega)
+    let lo := bytes.uget j (by omega)
+    let hi := bytes.uget (j + USize.ofNat 1) (by rw [e1]; omega)
+    let v : Int64 := Int64.ofNat (lo.toNat + 256 * hi.toNat)
+    channelSegU bytes s sU hs h2 hsU rem (j + sU) (by rw [eS]; omega)
+      (out.push (if v < 32768 then v.toInt else (v - 65536).toInt))
+
+def channelSegOFast (bytes : ByteArray) (stride : Nat) (j rem : Nat) (out : Array Int) :
+    Array Int :=
+  if h : 2 ≤ stride ∧ j ≤ bytes.size ∧
+      j + stride * rem + 2 ≤ bytes.size + stride ∧ bytes.size + stride < USize.size then
+    channelSegU bytes stride (USize.ofNat stride) h.2.2.2 h.1
+      (USize.toNat_ofNat_of_lt' (by omega)) rem (USize.ofNat j)
+      (by rw [USize.toNat_ofNat_of_lt' (by omega)]; exact h.2.2.1) out
+  else channelSegOSlow bytes stride j rem out
+
+theorem channelSegOSlow_eq (bytes : ByteArray) (stride : Nat) :
+    ∀ (rem j : Nat) (out : Array Int),
+      channelSegOSlow bytes stride j rem out = channelSegO bytes stride j rem out := by
+  intro rem
+  induction rem with
+  | zero => intros; rfl
+  | succ rem ih => intro j out; simp only [channelSegOSlow, channelSegO]; exact ih _ _
+
+/-- The `Int64` sign adjust is `sampleAt`'s. -/
+theorem sample64_eq (lo hi : UInt8) :
+    (if Int64.ofNat (lo.toNat + 256 * hi.toNat) < 32768
+      then (Int64.ofNat (lo.toNat + 256 * hi.toNat)).toInt
+      else (Int64.ofNat (lo.toNat + 256 * hi.toNat) - 65536).toInt)
+    = if lo.toNat + 256 * hi.toNat < 32768 then ((lo.toNat + 256 * hi.toNat : Nat) : Int)
+      else ((lo.toNat + 256 * hi.toNat : Nat) : Int) - 65536 := by
+  have hb1 : lo.toNat < 256 := UInt8.toNat_lt_size lo
+  have hb2 : hi.toNat < 256 := UInt8.toNat_lt_size hi
+  have hv := Int64.toInt_ofNat_of_lt (n := lo.toNat + 256 * hi.toNat) (by omega)
+  have h32 : (32768 : Int64) = Int64.ofNat 32768 := rfl
+  have h65 : (65536 : Int64) = Int64.ofNat 65536 := rfl
+  have hv32 := Int64.toInt_ofNat_of_lt (n := 32768) (by omega)
+  have hv65 := Int64.toInt_ofNat_of_lt (n := 65536) (by omega)
+  by_cases hlt : lo.toNat + 256 * hi.toNat < 32768
+  · rw [if_pos hlt, if_pos (show Int64.ofNat (lo.toNat + 256 * hi.toNat) < 32768 by
+      rw [Int64.lt_iff_toInt_lt, hv, h32, hv32]; omega), hv]
+  · rw [if_neg hlt, if_neg (show ¬ Int64.ofNat (lo.toNat + 256 * hi.toNat) < 32768 by
+      rw [Int64.lt_iff_toInt_lt, hv, h32, hv32]; omega), Int64.toInt_sub, hv, h65, hv65]
+    apply Int.bmod_eq_of_le <;> simp only [Nat.reducePow] <;> omega
+
+theorem channelSegU_eq (bytes : ByteArray) (s : Nat) (sU : USize) (hs : bytes.size + s < USize.size)
+    (h2 : 2 ≤ s) (hsU : sU.toNat = s) :
+    ∀ (rem : Nat) (j : USize) (hj : j.toNat + s * rem + 2 ≤ bytes.size + s) (out : Array Int),
+      channelSegU bytes s sU hs h2 hsU rem j hj out = channelSegO bytes s j.toNat rem out := by
+  intro rem
+  induction rem with
+  | zero => intros; rfl
+  | succ rem ih =>
+    intro j hj out
+    have hmul : s * (rem + 1) = s * rem + s := Nat.mul_succ s rem
+    have e1 := Flac.Bits.usize_add_toNat j 1 bytes.size (by omega) (by omega)
+    have eS : (j + sU).toNat = j.toNat + s := by
+      have hs' := hs
+      rw [USize.size_eq_two_pow] at hs'
+      rw [USize.toNat_add, hsU]; exact Nat.mod_eq_of_lt (by omega)
+    have hlo : j.toNat < bytes.size := by omega
+    have hhi : j.toNat + 1 < bytes.size := by omega
+    have he1 : (j + USize.ofNat 1).toNat < bytes.size := by rw [e1]; exact hhi
+    simp only [channelSegU, channelSegO]
+    rw [ih, eS]
+    congr 2
+    rw [sample64_eq]
+    unfold sampleAt
+    rw [dif_pos hlo, dif_pos hhi]
+    have hu2 : bytes.uget (j + USize.ofNat 1) he1 = bytes[j.toNat + 1]'hhi := by
+      show bytes.data[(j + USize.ofNat 1).toNat]'_ = bytes.data[j.toNat + 1]'_
+      simp only [e1]
+    rw [hu2]
+    rfl
+
+/-- **The machine-word deinterleave computes the boxed one.** -/
+@[csimp] theorem channelSegO_eq_fast : @channelSegO = @channelSegOFast := by
+  funext bytes stride j rem out
+  unfold channelSegOFast
+  split
+  · next h =>
+    rw [channelSegU_eq, USize.toNat_ofNat_of_lt' (by omega)]
+  · exact (channelSegOSlow_eq bytes stride rem j out).symm
+
 /-- Channels `[c, c+rem)` of the window `[lo, lo+len)`. -/
 def frameChannelsGo (bytes : ByteArray) (ch lo len : Nat) :
     (c rem : Nat) → Array (Array Int) → Array (Array Int)
@@ -1222,6 +1545,12 @@ def encodePcm16 (blockSize ch sr : Nat) (bytes : ByteArray) : ByteArray :=
     let frameTasks := if blockSize = 0 then [] else
       (List.range ((n + blockSize - 1) / blockSize)).map fun f =>
         Task.spawn fun _ => frameStep blockSize ch n bytes f
+    -- Waiting for the digest *here*, before the concatenation, is deliberate:
+    -- the wait parks this thread while the pool runs MD5 and the frames on
+    -- exactly the worker count, and the concatenation then runs alone. Moving
+    -- the wait after the concatenation (so the two overlap) was measured
+    -- 3–7% slower at 16 and 32 threads on a 2.1 GB input: MD5 sets the wall
+    -- time there, and the extra active thread only costs it SMT sharing.
     let md5 := md5Task.get.digest
     -- the marker and STREAMINFO, in `Emit.W.pushStreamPrefix`'s order. The
     -- digest goes in as one 128-bit field rather than sixteen bytes: once
