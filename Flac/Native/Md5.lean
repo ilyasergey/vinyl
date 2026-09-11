@@ -15,10 +15,10 @@ block loop; the digest is pinned by the RFC vectors in `FlacTest` and by
 
 namespace Flac.Md5
 
-@[inline] private def fF (x y z : UInt32) : UInt32 := (x &&& y) ||| (~~~x &&& z)
-@[inline] private def fG (x y z : UInt32) : UInt32 := (x &&& z) ||| (y &&& ~~~z)
-@[inline] private def fH (x y z : UInt32) : UInt32 := x ^^^ y ^^^ z
-@[inline] private def fI (x y z : UInt32) : UInt32 := y ^^^ (x ||| ~~~z)
+@[inline] def fF (x y z : UInt32) : UInt32 := (x &&& y) ||| (~~~x &&& z)
+@[inline] def fG (x y z : UInt32) : UInt32 := (x &&& z) ||| (y &&& ~~~z)
+@[inline] def fH (x y z : UInt32) : UInt32 := x ^^^ y ^^^ z
+@[inline] def fI (x y z : UInt32) : UInt32 := y ^^^ (x ||| ~~~z)
 
 @[inline] private def rotl (x : UInt32) (s : UInt32) : UInt32 :=
   (x <<< s) ||| (x >>> (32 - s))
@@ -29,7 +29,7 @@ namespace Flac.Md5
     pays. The compiled loop emits one `rol` per step and merges each four-byte
     word read into a single 32-bit load, so ≈5.8 cycles/byte is the state
     chain's latency, not something a source rewrite reaches. -/
-@[inline] private def step (a b f x k s : UInt32) : UInt32 :=
+@[inline] def step (a b f x k s : UInt32) : UInt32 :=
   b + rotl (a + f + x + k) s
 
 /-- Byte `i` as a word, 0 past the end.
@@ -42,11 +42,11 @@ namespace Flac.Md5
     specified over `ByteArray` with no size hypothesis, so the fallback has to
     agree with natural-index reads at every index, including those no machine
     word can name. -/
-@[inline] private def byteAt (msg : ByteArray) (i : Nat) : UInt32 :=
+@[inline] def byteAt (msg : ByteArray) (i : Nat) : UInt32 :=
   if h : i < msg.size then msg[i].toUInt32 else 0
 
 /-- Little-endian 32-bit word at byte offset `i`. -/
-@[inline] private def wordAt (msg : ByteArray) (i : Nat) : UInt32 :=
+@[inline] def wordAt (msg : ByteArray) (i : Nat) : UInt32 :=
   byteAt msg i ||| (byteAt msg (i + 1) <<< 8) ||| (byteAt msg (i + 2) <<< 16)
     ||| (byteAt msg (i + 3) <<< 24)
 
@@ -54,7 +54,7 @@ namespace Flac.Md5
     words as parameters is what lets the bounds-checked reader and the
     proof-carrying one share it: both are `@[inline]`, so each call site
     gets the straight-line body with its own loads. -/
-@[inline] private def compressWords (m0 m1 m2 m3 m4 m5 m6 m7 m8 m9 m10 m11 m12 m13 m14 m15 : UInt32) (a0 b0 c0 d0 : UInt32) :
+@[inline] def compressWords (m0 m1 m2 m3 m4 m5 m6 m7 m8 m9 m10 m11 m12 m13 m14 m15 : UInt32) (a0 b0 c0 d0 : UInt32) :
     UInt32 × UInt32 × UInt32 × UInt32 :=
   -- Round 1.
   let a := step a0 b0 (fF b0 c0 d0) m0  0xd76aa478 7
@@ -128,7 +128,7 @@ namespace Flac.Md5
 
 /-- Compress the 64-byte block at `base`, bounds-testing every byte. The
     fallback path: `compressIn` below is what runs. -/
-@[inline] private def compress (msg : ByteArray) (base : Nat) (a0 b0 c0 d0 : UInt32) :
+@[inline] def compress (msg : ByteArray) (base : Nat) (a0 b0 c0 d0 : UInt32) :
     UInt32 × UInt32 × UInt32 × UInt32 :=
   compressWords (wordAt msg base) (wordAt msg (base + 4)) (wordAt msg (base + 8))
     (wordAt msg (base + 12)) (wordAt msg (base + 16)) (wordAt msg (base + 20))
@@ -211,7 +211,7 @@ theorem compressIn_eq_compress (msg : ByteArray) (base : USize) (a0 b0 c0 d0 : U
     The fallback loop, for a buffer whose size does not fit a machine word:
     unreachable on any real platform, but it is what the digest *means* on
     such a value, so it reads and advances in `Nat`. -/
-private def blocks (msg : ByteArray) : (n : Nat) → (base : Nat) → (a b c d : UInt32) →
+def blocks (msg : ByteArray) : (n : Nat) → (base : Nat) → (a b c d : UInt32) →
     UInt32 × UInt32 × UInt32 × UInt32
   | 0, _, a, b, c, d => (a, b, c, d)
   | n + 1, base, a, b, c, d =>
@@ -220,7 +220,7 @@ private def blocks (msg : ByteArray) : (n : Nat) → (base : Nat) → (a b c d :
 
 /-- The shipped loop: the in-bounds hypothesis travels with the cursor, so
     no block read touches the buffer's header. -/
-private def blocksIn (msg : ByteArray) (hs : msg.size < USize.size) :
+def blocksIn (msg : ByteArray) (hs : msg.size < USize.size) :
     (n : Nat) → (base : USize) → (a b c d : UInt32) → base.toNat + 64 * n ≤ msg.size →
     UInt32 × UInt32 × UInt32 × UInt32
   | 0, _, a, b, c, d, _ => (a, b, c, d)
@@ -231,7 +231,7 @@ private def blocksIn (msg : ByteArray) (hs : msg.size < USize.size) :
         (by rw [Flac.Bits.usize_add_toNat base 64 msg.size (by omega) hs]; omega)
 
 /-- `blocksIn` where the size fits a word, `blocks` otherwise. -/
-@[inline] private def blocksFrom (msg : ByteArray) (n : Nat) (a b c d : UInt32) :
+@[inline] def blocksFrom (msg : ByteArray) (n : Nat) (a b c d : UInt32) :
     UInt32 × UInt32 × UInt32 × UInt32 :=
   if hs : msg.size < USize.size ∧ 64 * n ≤ msg.size then
     blocksIn msg hs.1 n 0 a b c d (by rw [USize.toNat_zero]; omega)
@@ -239,7 +239,7 @@ private def blocksIn (msg : ByteArray) (hs : msg.size < USize.size) :
 
 /-- RFC 1321 §3.4 padding, but only for the final partial block. The result
     is one or two blocks (64 or 128 bytes), never a copy of the full input. -/
-private def finalBlocks (msg : ByteArray) (fullBytes : Nat) : ByteArray := Id.run do
+def finalBlocks (msg : ByteArray) (fullBytes : Nat) : ByteArray := Id.run do
   let rem := msg.size - fullBytes
   let tailSize := if rem < 56 then 64 else 128
   let mut tail := ByteArray.emptyWithCapacity tailSize
@@ -253,7 +253,7 @@ private def finalBlocks (msg : ByteArray) (fullBytes : Nat) : ByteArray := Id.ru
     tail := tail.push (bitLen >>> (8 * UInt64.ofNat i)).toUInt8
   return tail
 
-private def wordLE (x : UInt32) : List UInt8 :=
+def wordLE (x : UInt32) : List UInt8 :=
   [x.toUInt8, (x >>> 8).toUInt8, (x >>> 16).toUInt8, (x >>> 24).toUInt8]
 
 /-- The 16-byte MD5 digest of `msg`. -/

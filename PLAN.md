@@ -52,15 +52,19 @@ structure Audio where
 
 def Audio.WellFormed (a : Audio) : Prop :=
   1 ≤ a.channels.length ∧ a.channels.length ≤ 8 ∧
-  1 ≤ a.bps ∧ a.bps ≤ 32 ∧
+  4 ≤ a.bps ∧ a.bps ≤ 32 ∧
   (∀ c ∈ a.channels, c.length = a.numSamples) ∧
   (∀ c ∈ a.channels, ∀ x ∈ c, FitsSInt a.bps x) ∧
   a.sampleRate < 2 ^ 20 ∧ a.numSamples < 2 ^ 36
 ```
 
-The two field bounds are the landed ones and differ from this plan's first
-draft: depth is **1–32**, not 4–32, and `sampleRate = 0` is *admitted* rather
-than out of scope — a recorded deviation from RFC 9639, see `COVERAGE.md` and
+The two field bounds are the landed ones. Depth is **4–32** per RFC 9639
+Table 3; an earlier revision admitted **1–32**, which let the checked encoder
+emit a STREAMINFO both reference decoders reject (`bits per sample must be
+4–32`), corrected 2026-09-11. `sampleRate = 0` is now *rejected* on both sides —
+`0 < a.sampleRate` in `Audio.WellFormed` and a `0 < sr` guard in both
+`readStreamInfo` twins (RFC 9639 §8.2: the rate MUST NOT be 0 when audio is
+present), closing the former deviation; see `COVERAGE.md` and
 [`docs/11-spec-adequacy.md`](docs/11-spec-adequacy.md).
 
 `EncoderOptions` must cover, and the capstone must quantify over: block size,

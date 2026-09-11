@@ -812,7 +812,11 @@ def readStreamInfo (s : BitStream) : Option (Info × BitStream) :=
                     -- the decoder's accept set inside the format, and is safe for
                     -- the round-trip capstone because `Audio.WellFormed` now
                     -- carries `4 ≤ bps`, so the encoder never emits one.
-                    if 4 ≤ bm1 + 1 then
+                    -- RFC 9639 §9.1.7: a STREAMINFO sample rate of 0 means
+                    -- "unknown/non-audio". A stream carrying audio with rate 0 is
+                    -- not conforming; reject it here. Safe for the capstone because
+                    -- `Audio.WellFormed` now carries `0 < sampleRate`.
+                    if 4 ≤ bm1 + 1 ∧ 0 < sr then
                       some (⟨minB, maxB, sr, ch + 1, bm1 + 1, total⟩, s)
                     else none
 
@@ -1133,7 +1137,7 @@ def Audio.WellFormed (a : Audio) : Prop :=
   4 ≤ a.bps ∧ a.bps ≤ 32 ∧
   (∀ c ∈ a.channels, c.length = a.numSamples) ∧
   (∀ c ∈ a.channels, ∀ x ∈ c, FitsSInt a.bps x) ∧
-  a.sampleRate < 2 ^ 20 ∧ a.numSamples < 2 ^ 36
+  0 < a.sampleRate ∧ a.sampleRate < 2 ^ 20 ∧ a.numSamples < 2 ^ 36
 
 instance (a : Audio) : Decidable a.WellFormed := by
   unfold Audio.WellFormed

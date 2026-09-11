@@ -42,8 +42,8 @@ service surface, and it sat one field of the STREAMINFO block away.
 The `Int64` restore kernel (`Lpc.restoreFast`, shipped behind
 `restoreA_eq_restoreFast`): the taps and the history ride in machine words,
 the sum is exact because the subframe grammar bounds it (order ≤ 32,
-|c| < 2^15, |x| < 2^34 ⇒ |Σ| < 2^54), and values outside the guarded domain
-fall back to the boxed loop. The 24-bit probe went 5.31 s → 0.21 s with zero
+|c| < 2^15, |x| < 2^33 ⇒ |Σ| < 2^53), and values outside the guarded domain
+fall back to the boxed loop. The 24-bit probe went 5.31 s → 0.157 s with zero
 GMP calls, and the statement of every theorem about `restoreA` is unchanged.
 
 ## What to carry forward

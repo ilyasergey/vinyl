@@ -567,8 +567,8 @@ Both byte-level encoders now run the shared O(1) `Pcm16ShapeOk` guard
 before anything sized by its arguments exists. These pin the two incidents:
 a channel count whose only rejection used to come from `Audio.WellFormed`,
 checked *after* `ch` channel lists were materialized (P8 — the first check
-below used to OOM), and `sampleRate = 0` stamped on nonempty audio, which
-RFC 9639 §8.2 forbids (P11). -/
+below used to OOM), and `sampleRate = 0`, which RFC 9639 §8.2 / §9.1.7 forbids
+and `readStreamInfo` now rejects on decode (P11). -/
 
 def encoderGuardTests : TestM Unit := do
   let cfg : Stream.EncoderCfg := ⟨4096, false, Heuristics.defaultAsgChooser 16⟩
@@ -582,14 +582,19 @@ def encoderGuardTests : TestM Unit := do
     (Flac.encodePcm16Cfg cfg 9 44100 (ByteArray.mk (Array.replicate 18 0))).isNone
   check "P8: eight channels accepted (slow)"
     (Flac.encodePcm16Cfg cfg 8 44100 (ByteArray.mk (Array.replicate 16 0))).isSome
-  -- P11: rate 0 is defensible only for empty content
+  -- P11: rate 0 is rejected outright — `readStreamInfo` rejects a STREAMINFO
+  -- sample rate of 0 (RFC 9639 §9.1.7), so the encoder must never emit one,
+  -- even on empty content, or the round-trip capstone would range over an
+  -- undecodable stream.
   let audio := ByteArray.mk (Array.replicate 4000 0)
   check "P11: rate 0 with audio refused (fast)"
     (Flac.encodePcm16Fast 4096 1 0 audio).isNone
   check "P11: rate 0 with audio refused (slow)"
     (Flac.encodePcm16Cfg cfg 1 0 audio).isNone
-  check "P11: rate 0 with empty input still encodes (fast)"
-    (Flac.encodePcm16Fast 4096 1 0 ByteArray.empty).isSome
+  check "P11: rate 0 with empty input refused (fast)"
+    (Flac.encodePcm16Fast 4096 1 0 ByteArray.empty).isNone
+  check "P11: rate 0 with empty input refused (slow)"
+    (Flac.encodePcm16Cfg cfg 1 0 ByteArray.empty).isNone
   check "P11: rate 1 with audio encodes (fast)"
     (Flac.encodePcm16Fast 4096 1 1 audio).isSome
 
@@ -722,7 +727,7 @@ def encodeFastMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
     IO.println s!"encoded {bytes.size / (2 * ch)} samples x {ch} channels @ {sampleRate} Hz (round-trip guaranteed by Flac.Stream.decodePcm16_encodePcm16Fast)"
     return 0
   | none =>
-    IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, channels/blockSize/sampleRate out of range, or sample rate 0 with nonempty audio)"
+    IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, channels/blockSize/sampleRate out of range, or sample rate 0)"
     return 1
 
 /-- The fully verified encoder as a CLI action; kept for differential testing. -/
@@ -736,7 +741,7 @@ def encodeSlowMain (inFile outFile : String) (blockSize ch sampleRate : Nat) :
     IO.println s!"encoded {bytes.size / (2 * ch)} samples x {ch} channels @ {sampleRate} Hz (checked: round-trip guaranteed by Flac.decodePcm16_encodePcm16Cfg)"
     return 0
   | none =>
-    IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, channels/blockSize/sampleRate out of range, or sample rate 0 with nonempty audio)"
+    IO.println "ENCODE ERROR: input not FLAC-representable (byte count not a multiple of 2x channels, channels/blockSize/sampleRate out of range, or sample rate 0)"
     return 1
 
 /-! ## The public encoder refuses what the theorems exclude (audit finding P7)

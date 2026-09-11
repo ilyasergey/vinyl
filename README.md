@@ -19,7 +19,7 @@ theorem Flac.decode_encode
 The public [`Flac.encode`](Flac/Native/Codec.lean#L36) tests its
 (decidable) precondition [`Audio.WellFormed`](Flac/Native/Stream.lean#L502)
 at runtime — exactly "representable as FLAC": 1–8 equal-length channels,
-bit depth 1–32, samples in range for the bit depth, and the STREAMINFO
+bit depth 4–32, samples in range for the bit depth, and the STREAMINFO
 field bounds — and returns `none` rather than a stream for anything else,
 which is what turns the runtime check itself into the theorem's premise.
 The raw total encoder still exists for proofs and for callers who hold a
@@ -47,7 +47,7 @@ between the user's bytes and the guarantee**: it is the end-to-end
 contract for the file-level API (and the `vinyl` CLI), and the single
 hypothesis-free statement to audit if that is the interface you use.
 (The "16" is only the byte layout of this front end; the codec and the
-theorems above cover bit depths 1–32.)
+theorems above cover bit depths 4–32.)
 
 The statements quantify over every encoder knob: block size, numbering
 strategy, stereo-decorrelation mode, wasted bits, subframe types, Rice

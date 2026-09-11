@@ -231,12 +231,12 @@ def interleave (chs : List (List Int)) : List Int :=
     two entry points used to disagree about guard order, and the slow one
     materialized `ch` channel lists before `Audio.WellFormed` ever saw
     `ch`): channel count positive and within FLAC's limit of 8, byte count
-    an even split into 16-bit channels, and a nonzero sample rate whenever
-    there is audio to stamp it on (RFC 9639 §8.2, audit finding P11 —
-    rate 0 is defensible only for empty content). -/
+    an even split into 16-bit channels, and a nonzero sample rate (RFC 9639
+    §8.2 / §9.1.7, audit finding P11 — a STREAMINFO sample rate of 0 means
+    "unknown/non-audio", and `readStreamInfo` now rejects it, so the encoder
+    must never stamp it even on empty content). -/
 def Pcm16ShapeOk (ch sampleRate : Nat) (bytes : ByteArray) : Prop :=
-  0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧
-  (bytes.size = 0 ∨ 0 < sampleRate)
+  0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧ 0 < sampleRate
 
 instance (ch sr : Nat) (bytes : ByteArray) : Decidable (Pcm16ShapeOk ch sr bytes) := by
   unfold Pcm16ShapeOk; exact inferInstance

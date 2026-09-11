@@ -467,7 +467,7 @@ theorem frameCostTotal_le (frs : List (List (List Int))) (ch n : Nat)
 /-! ## STREAMINFO and metadata -/
 
 theorem readStreamInfo_writeStreamInfo (bs sr ch b total md5 : Nat)
-    (tail : BitStream) (hbs : bs < 2 ^ 16) (hsr : sr < 2 ^ 20)
+    (tail : BitStream) (hbs : bs < 2 ^ 16) (hsr0 : 0 < sr) (hsr : sr < 2 ^ 20)
     (hch1 : 1 ≤ ch) (hch8 : ch ≤ 8)
     (hb1 : 4 ≤ b) (hb2 : b ≤ 32) (htot : total < 2 ^ 36) :
     readStreamInfo (writeStreamInfo bs sr ch b total md5 ++ tail)
@@ -480,12 +480,12 @@ theorem readStreamInfo_writeStreamInfo (bs sr ch b total md5 : Nat)
     readBits_writeBits _ _ _ (by omega : b - 1 < 2 ^ 5),
     readBits_writeBits _ _ _ htot,
     readBits_writeBits_append 128 md5]
-  rw [if_pos (by omega : 4 ≤ b - 1 + 1)]
+  rw [if_pos (show 4 ≤ b - 1 + 1 ∧ 0 < sr from ⟨by omega, hsr0⟩)]
   simp only [Option.some.injEq, Prod.mk.injEq, Info.mk.injEq]
   refine ⟨⟨trivial, trivial, trivial, by omega, by omega, trivial⟩, trivial⟩
 
 theorem readMeta_spec (fuel : Nat) (bs sr ch b total md5 : Nat)
-    (tail : BitStream) (hbs : bs < 2 ^ 16) (hsr : sr < 2 ^ 20)
+    (tail : BitStream) (hbs : bs < 2 ^ 16) (hsr0 : 0 < sr) (hsr : sr < 2 ^ 20)
     (hch1 : 1 ≤ ch) (hch8 : ch ≤ 8)
     (hb1 : 4 ≤ b) (hb2 : b ≤ 32) (htot : total < 2 ^ 36) :
     readMeta fuel (writeBits 1 1 ++ (writeBits 7 0 ++ (writeBits 24 34 ++
@@ -495,7 +495,7 @@ theorem readMeta_spec (fuel : Nat) (bs sr ch b total md5 : Nat)
     readBits_writeBits _ _ _ (by omega : 1 < 2 ^ 1),
     readBits_writeBits _ _ _ (by omega : 0 < 2 ^ 7),
     readBits_writeBits _ _ _ (by omega : 34 < 2 ^ 24),
-    readStreamInfo_writeStreamInfo bs sr ch b total md5 tail hbs hsr hch1
+    readStreamInfo_writeStreamInfo bs sr ch b total md5 tail hbs hsr0 hsr hch1
       hch8 hb1 hb2 htot]
   rw [if_pos (by trivial), if_pos (by trivial), if_pos (by trivial)]
 
@@ -695,7 +695,7 @@ theorem decodeReference_encode (cfg : EncoderCfg) (a : Audio)
     (hwf : a.WellFormed)
     (hbs1 : 16 ≤ cfg.blockSize) (hbs2 : cfg.blockSize ≤ 4608) :
     decodeReference (Unchecked.encode cfg a) = some a := by
-  obtain ⟨hch1, hch8, hb1, hb2, heq, hfit, hsr, htot⟩ := hwf
+  obtain ⟨hch1, hch8, hb1, hb2, heq, hfit, hsr0, hsr, htot⟩ := hwf
   have heq' : ∀ c ∈ a.channels, c.length = (a.channels.headD []).length := heq
   have hframes : ∀ fr ∈ chunkChannels cfg.blockSize a.channels,
       1 ≤ (fr.headD []).length ∧ (fr.headD []).length ≤ 65536 ∧
@@ -720,7 +720,7 @@ theorem decodeReference_encode (cfg : EncoderCfg) (a : Audio)
   simp only [List.append_assoc,
     readBits_writeBits _ _ _ (by omega : 0x664C6143 < 2 ^ 32),
     readMeta_spec _ cfg.blockSize a.sampleRate a.channels.length a.bps
-      a.numSamples _ _ (by omega) hsr hch1 hch8 hb1 hb2 htot]
+      a.numSamples _ _ (by omega) hsr0 hsr hch1 hch8 hb1 hb2 htot]
   rw [if_pos (by trivial)]
   rw [readFramesB_eq]
   simp only [readFrames_writeFrames a.bps a.bps cfg.variableBlocking

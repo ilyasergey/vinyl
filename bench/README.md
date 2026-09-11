@@ -694,7 +694,7 @@ attempts — see [Part 3](#part-3--optimization-history).
 - **`flac -0` is not measured on real audio**, so Vinyl's ratio is bracketed
   from above by `flac -5` but not from below.
 - **16-bit only, two sample rates.** Both corpora are S16; the codec and the
-  theorems cover depths 1–32. No 24-bit or 96 kHz material is benchmarked.
+  theorems cover depths 4–32. No 24-bit or 96 kHz material is benchmarked.
 - **SQAM may not be redistributed.** The fetcher verifies publisher identity and
   records hashes, but the audio stays local; a third party reproducing these
   numbers must accept the EBU terms themselves.

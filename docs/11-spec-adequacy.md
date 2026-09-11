@@ -1,20 +1,35 @@
 # Spec adequacy: when the verified predicate is not the standard
 
-Written after fixing audit finding P11
+Written after audit finding P11
 ([issue #11](https://github.com/ilyasergey/vinyl/issues/11),
 `sampleRate = 0` emitted with audio). The lowest-severity finding and the
-one with the longest reach: it is the only entry in the series where the
-theorems, the code, *and* the runtime behavior are all exactly as
-designed — and the design is what deviates from RFC 9639. The proofs are
-correct about a model that is laxer than the standard.
+one with the longest reach: at the time it was the only entry in the
+series where the theorems, the code, *and* the runtime behavior were all
+exactly as designed — and the design was what deviated from RFC 9639, so
+the proofs were correct about a model laxer than the standard.
+
+**Update (2026-09-11): the deviation is now closed, and the original fix
+below was superseded.** `0 < a.sampleRate` was added to `Audio.WellFormed`
+and a `0 < sr` guard to both `readStreamInfo` twins, so the model no
+longer deviates on this point and the *decoder* now rejects rate 0 as
+well — a fuller fix than the guard-only one first chosen. The ripple
+through the capstones that the analysis below judged not worth paying
+turned out to be tractable, following the `4 ≤ bps` change as a template
+(both are STREAMINFO-field tightenings of the same shape). The analysis is
+kept because the *lesson* — a verified predicate can be laxer than the
+standard, and no internal round-trip check can see it — outlives the
+instance, and because the reversal of the original decision is instructive
+in its own right: "hypotheses ripple, so don't tighten them" is true only
+until a template makes the ripple cheap.
 
 ## The incident, in one paragraph
 
-`Audio.WellFormed` bounds the sample rate only from above
-(`sampleRate < 2^20`, the STREAMINFO field width), so `0` is admitted,
-flows into the 20-bit field, and `vinyl --encode … 0` happily reports
-"encoded 4000 samples @ 0 Hz". RFC 9639 §8.2 says the sample rate MUST
-NOT be 0 when the file contains audio. The audit is honest about the
+*(As it stood before the closure above.)* `Audio.WellFormed` bounded the
+sample rate only from above (`sampleRate < 2^20`, the STREAMINFO field
+width), so `0` was admitted, flowed into the 20-bit field, and
+`vinyl --encode … 0` happily reported "encoded 4000 samples @ 0 Hz".
+RFC 9639 §8.2 says the sample rate MUST NOT be 0 when the file contains
+audio. The audit is honest about the
 blast radius: libFLAC 1.4.2 accepts such a file, so interop damage is
 limited; tooling that treats rate 0 as "unknown" or "non-audio" may
 misbehave. The output is simply non-conformant, with every capstone
@@ -35,32 +50,34 @@ the RFC text, other implementations, conformance corpora — can see them.
 
 ## The fix
 
-As the issue proposed: the clause `bytes.size = 0 ∨ 0 < sampleRate`
-(rate 0 is defensible only for empty content) landed in the guard, *not*
-in `Audio.WellFormed` — and it landed once, in the shared `Pcm16ShapeOk`
-predicate the P8 round introduced
+It was fixed in two stages, and the second reversed the first's
+architectural call.
+
+**First — the guard-only fix.** The clause `bytes.size = 0 ∨ 0 < sampleRate`
+landed in the shared `Pcm16ShapeOk` guard the P8 round introduced
 ([`08-late-guards.md`](08-late-guards.md)), so both CLI entry points
-(`encodePcm16Fast` and `encodePcm16Cfg`) tightened together. Guards can
-tighten freely under `some`-conditional theorems, so every capstone keeps
-its statement; the one hypothesis this adds to the two equality-shaped
-lemmas is recorded in `08`.
+(`encodePcm16Fast`, `encodePcm16Cfg`) rejected rate 0 on nonempty input.
+`Audio.WellFormed` was left admitting it, on the argument that
+`WellFormed`'s job is decodability (which rate 0 does not threaten — the
+round trip holds), that the RFC's MUST NOT is an *emission* rule, and that
+tightening the hypothesis would ripple through every capstone.
 
-Scope, stated honestly: the *sample-level* checked encoders
-(`Flac.encode`, `encodeCheckedCfg`) test `WellFormed` and nothing more,
-so a library caller who builds an `Audio` with audio at rate 0 still gets
-a stream. That is the layering decision, made deliberately:
-`WellFormed`'s job is "representable as a FLAC stream" — decodability,
-which rate 0 does not threaten (the round-trip holds) — while the RFC's
-MUST NOT is a conformance rule about *emission*. Tightening `WellFormed`
-would ripple a hypothesis through every capstone to enforce an emission
-policy; the byte-level entry points (the CLI, the only place a rate
-parameter arrives as untrusted input) enforce it as a guard instead. The
-deviation is now written down where coverage claims live —
-`COVERAGE.md`'s "Known deviations from RFC MUSTs" — which before this
-round it was not.
+**Second (2026-09-11) — the closure.** That argument was revisited and the
+bound moved into the model after all: `0 < a.sampleRate` in
+`Audio.WellFormed`, `Pcm16ShapeOk` tightened from the disjunction to an
+unconditional `0 < sampleRate`, and — the part the guard-only fix never
+reached — a `0 < sr` guard in **both `readStreamInfo` twins**, so the
+*decoder* rejects a rate-0 stream from any source, not only ones this
+encoder would have produced. The capstone ripple was real but tractable:
+it followed the `4 ≤ bps` change exactly (STREAMINFO-field tightenings of
+the same shape). `some`-conditional statements tolerate a tighter
+hypothesis, and the hypothesis-free capstones extract `WellFormed` from a
+successful encode, so they needed no change. IETF must-decode stays
+61/61 — nothing valid is rejected. The deviation row in `COVERAGE.md` now
+reads *no longer a deviation*.
 
-Reproducer: `vinyl --encode audio.pcm rate0.flac 4096 1 0` now fails
-cleanly (`ENCODE ERROR`, rc 1); on an empty input, rate 0 still encodes.
+Reproducer: `vinyl --encode audio.pcm rate0.flac 4096 1 0` fails cleanly
+(`ENCODE ERROR`, rc 1), and a rate-0 stream now fails to *decode* as well.
 Regression tests: the P11 checks in `encoderGuardTests`.
 
 ## Checklist addition
@@ -70,8 +87,14 @@ Regression tests: the P11 checks in `encoderGuardTests`.
   deviation covers it? An unmapped MUST is a P11 waiting to be found by
   someone else's audit.
 - When a hypothesis predicate (`WellFormed`) and the standard disagree,
-  fix the *guards* and document the predicate, unless decodability
-  itself is at stake; hypotheses ripple, guards don't.
+  fixing the *guards* and documenting the predicate is the cheap option —
+  but it only constrains *emission*, never the decoder, and it leaves the
+  model deviating. If a template exists for tightening the predicate (a
+  prior field-bound change of the same shape, as `4 ≤ bps` was for
+  `0 < sampleRate`), the capstone ripple is usually mechanical and worth
+  paying, because tightening the predicate is the only option that also
+  makes the decoder reject the non-conformant input. Hypotheses ripple;
+  a worked template makes the ripple cheap.
 - Internal consistency proofs (round-trips) cannot detect model-level
   deviations by construction; budget for an external referee —
   conformance files, differential runs against another implementation —

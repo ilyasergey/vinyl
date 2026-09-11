@@ -408,10 +408,15 @@ the shipped definition itself branches on a decidable domain guard, with every
 branch proven equal to the specification reader — that is what
 `readRiceSeqFast` (on `RiceRunOk`) and `readSIntSeqFast` (on `SIntRunOk`) are,
 and the guarantee is as strong as (a), with `riceRunU_eq` / `readSIntSeqU_eq`
-pinned by name instead of a swap. **(c)** *Tested, not verified*: MD5 has no
-equality theorem and no second implementation; RFC 1321 vectors and corpus
-digests are what check it, and it sits outside the decoder-totality lint for
-the same reason. **(d)** *Proof-free by construction*: the sync scan only
+pinned by name instead of a swap. **(c)** *Verified against a reference
+transcription*: MD5 is proven equal to a table-free RFC 1321 transcription
+(`Flac.Md5.md5_eq_rfc1321 : md5 msg = Rfc1321.md5 msg`, unconditional, axioms
+`[propext, Quot.sound]`), so the machine-word fast path and the `Nat`-indexed
+fallback both compute the RFC digest for *every* `ByteArray`; what remains
+trusted is only that the ~240-line transcription faithfully renders RFC 1321 §3,
+checked against the standard vectors. It still sits outside the
+decoder-totality lint because it is an encode-side conformance checksum, not
+part of any decode path. **(d)** *Proof-free by construction*: the sync scan only
 guesses frame offsets, and `stepAt` builds a `Step` by matching on
 `readFrameAt`'s own result, so a `Step` exists only where a frame really
 parsed. A wrong guess therefore costs a failed parse and never a wrong result;
@@ -472,8 +477,10 @@ bytes (`Flac.Encode.pcmBytes_deinterleave`).
 ## Trusted vs. tested
 
 Trusted (PLAN.md §10): the Lean kernel and compiler, plus our reading of
-RFC 9639. Tested but not verified: MD5 (a conformance checksum, not part of
-the losslessness claim — validated against the RFC 1321 suite) and CRC-8/16
+RFC 9639. MD5 is now *verified* equal to a table-free RFC 1321 transcription
+(`md5_eq_rfc1321`); the only residual trust is that the transcription faithfully
+renders RFC 1321 §3, checked against the RFC 1321 suite. Tested but not
+verified: CRC-8/16
 (the encoder writes them by construction, the decoder recomputes the same
 function, so the round-trip theorem needs no CRC math; correctness against
 the standard is covered by golden vectors and, later, the conformance rigs).

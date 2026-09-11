@@ -2245,9 +2245,10 @@ theorem readStreamInfo_sim (br : BitReader) :
                   cases p8.2.readBits 128 with
                   | none => rfl
                   | some p9 =>
-                    -- both twins now carry the RFC 9639 Table 3 guard; `Option.map`
-                    -- does not commute with `if` definitionally, so split it.
-                    by_cases hb : 4 ≤ p7.1 + 1
+                    -- both twins now carry the RFC 9639 Table 3 / §9.1.7 guard;
+                    -- `Option.map` does not commute with `if` definitionally, so
+                    -- split it (bit depth `p7.1 + 1`, sample rate `p5.1`).
+                    by_cases hb : 4 ≤ p7.1 + 1 ∧ 0 < p5.1
                     · simp only [if_pos hb, Option.map_some]
                     · simp only [if_neg hb]; rfl
 
@@ -2473,11 +2474,12 @@ theorem readMeta_pos8 {fuel : Nat} {br br' : BitReader} {si : Stream.Info}
                             | none => rw [g9] at h4; simp at h4
                             | some (v9, c9) =>
                               simp only [g9] at h4
-                              -- the Table 3 guard must have held, else h4 : none = some
-                              have hb4 : 4 ≤ v7 + 1 := by
-                                rcases Nat.lt_or_ge (v7 + 1) 4 with hc | hc
-                                · rw [if_neg (by omega)] at h4; simp at h4
+                              -- the Table 3 / §9.1.7 guard must have held, else
+                              -- h4 : none = some (bit depth `v7 + 1`, rate `v5`).
+                              have hb4 : 4 ≤ v7 + 1 ∧ 0 < v5 := by
+                                by_cases hc : 4 ≤ v7 + 1 ∧ 0 < v5
                                 · exact hc
+                                · rw [if_neg hc] at h4; simp at h4
                               rw [if_pos hb4] at h4
                               simp only [Option.some.injEq, Prod.mk.injEq] at h4
                               obtain ⟨-, hbr⟩ := h4

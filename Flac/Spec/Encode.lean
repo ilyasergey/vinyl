@@ -1922,7 +1922,7 @@ private theorem deinterleave_lengths {ch : Nat} (hch : 0 < ch) (L : List Int)
     theorem, so the shipped encoder's O(1) guards are enough where the
     reference would scan. -/
 theorem audio_wellFormed {ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
-    (bytes : ByteArray) (hsr : sr < 2 ^ 20)
+    (bytes : ByteArray) (hsr0 : 0 < sr) (hsr : sr < 2 ^ 20)
     (hn : bytes.size / (2 * ch) < 2 ^ 36) :
     (Stream.Audio.mk (Flac.deinterleave ch
       (Flac.pcm16OfByteList bytes.data.toList)) 16 sr).WellFormed := by
@@ -1943,7 +1943,7 @@ theorem audio_wellFormed {ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
   have hbps : (Stream.Audio.mk (Flac.deinterleave ch
       (Flac.pcm16OfByteList bytes.data.toList)) 16 sr).bps = 16 := rfl
   refine ⟨by rw [hcl]; omega, by rw [hcl]; omega, by rw [hbps]; omega,
-    by rw [hbps]; omega, ?_, ?_, hsr, by rw [hns]; exact hn⟩
+    by rw [hbps]; omega, ?_, ?_, hsr0, hsr, by rw [hns]; exact hn⟩
   · intro c hc
     rw [deinterleave_lengths hch _ c hc, hns, hL, Nat.div_div_eq_div_mul]
   · intro c hc
@@ -2213,7 +2213,7 @@ theorem encodePcm16_eq {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
     theorem, so a `some` needs only the O(1) guards. -/
 theorem encodePcm16Cfg_fast {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch ≤ 8)
     (bytes : ByteArray) (hsz : bytes.size % (2 * ch) = 0)
-    (hsr0 : bytes.size = 0 ∨ 0 < sr) (hsr : sr < 2 ^ 20)
+    (hsr0 : 0 < sr) (hsr : sr < 2 ^ 20)
     (hn : bytes.size / (2 * ch) < 2 ^ 36) (hbs16 : 16 ≤ blockSize)
     (hbs : blockSize ≤ 4608) :
     Flac.encodePcm16Cfg ⟨blockSize, false, fastChooser 16⟩ ch sr bytes
@@ -2222,14 +2222,14 @@ theorem encodePcm16Cfg_fast {blockSize ch sr : Nat} (hch : 0 < ch) (hch8 : ch �
   rw [if_pos (show Flac.Pcm16ShapeOk ch sr bytes by
     unfold Flac.Pcm16ShapeOk; exact ⟨hch, hch8, hsz, hsr0⟩)]
   unfold Flac.encodeCheckedCfg
-  rw [if_pos ⟨audio_wellFormed hch hch8 bytes hsr hn, hbs16, hbs⟩,
+  rw [if_pos ⟨audio_wellFormed hch hch8 bytes hsr0 hsr hn, hbs16, hbs⟩,
     encodePcm16_eq hch hch8 (by omega) bytes hsz]
 
 /-- **The byte-level guarantee for the shipped encoder, with no runtime
     certificate**: decoding what it produced returns exactly the input PCM. -/
 theorem decodePcm16_encodePcm16_direct {blockSize ch sr : Nat} (hch : 0 < ch)
     (hch8 : ch ≤ 8) (bytes : ByteArray) (hsz : bytes.size % (2 * ch) = 0)
-    (hsr0 : bytes.size = 0 ∨ 0 < sr) (hsr : sr < 2 ^ 20)
+    (hsr0 : 0 < sr) (hsr : sr < 2 ^ 20)
     (hn : bytes.size / (2 * ch) < 2 ^ 36)
     (hbs16 : 16 ≤ blockSize) (hbs : blockSize ≤ 4608) :
     Flac.decodePcm16 (encodePcm16 blockSize ch sr bytes) = .ok bytes :=

@@ -77,8 +77,13 @@ echo "== stack-shape swaps present (P6: csimp-pinned tail forms)"
 # The input-driven frame loops ship in accumulator form via kernel-checked
 # @[csimp] equations (docs/06-recursion-shape.md). Pin them by name so a
 # refactor cannot silently drop a swap and revert a loop to
-# stack-frame-per-frame.
-for thm in "readUnary_eq_readUnaryTR" "readFrames_eq_readFramesTR" "readFramesB_eq_readFramesBTR" "recombine_eq_recombineTR" "readFramesStepsB_eq_readFramesStepsBTR" "readRiceSeq_eq_readRiceSeqTR" "readSIntSeq_eq_readSIntSeqTR" "restoreAux_eq_restoreAuxTR"; do
+# stack-frame-per-frame.  All are tail-recursion (`*TR`) swaps in Flac/Native/.
+STACK_SWAPS="readUnary_eq_readUnaryTR readFrames_eq_readFramesTR readFramesB_eq_readFramesBTR
+recombine_eq_recombineTR readFramesStepsB_eq_readFramesStepsBTR readRiceSeq_eq_readRiceSeqTR
+readSIntSeq_eq_readSIntSeqTR restoreAux_eq_restoreAuxTR bitsToByteList_eq_bitsToByteListTR
+chunkChannels_eq_chunkChannelsTR deinterleaveN_eq_deinterleaveNTR diff1_eq_diff1TR
+pcm16OfByteList_eq_pcm16OfByteListTR residualAux_eq_residualAuxTR writeFrames_eq_writeFramesTR"
+for thm in $STACK_SWAPS; do
   if ! grep -rq "@\[csimp\] theorem $thm" Flac/Native/; then
     echo "FAIL: missing csimp stack-shape swap $thm"; fail=1
   fi
@@ -91,13 +96,7 @@ echo "== machine-word kernel swaps present (csimp-pinned, per file)"
 # loop to boxed arithmetic.  The LPC and fixed restores are both named
 # restoreA_eq_restoreFast, so the pins are per file: a repository-wide grep
 # would be satisfied by either one alone.
-while read -r file thm; do
-  [ -z "$file" ] && continue
-  if ! grep -q "@\[csimp\] theorem $thm" "$file"; then
-    echo "FAIL: missing csimp swap $thm in $file"; fail=1
-  fi
-done <<'EOF'
-Flac/Native/Lpc.lean restoreA_eq_restoreFast
+KERNEL_SWAPS='Flac/Native/Lpc.lean restoreA_eq_restoreFast
 Flac/Native/Fixed.lean restoreA_eq_restoreFast
 Flac/Native/Emit.lean lpcResGo1_eq_fast
 Flac/Native/Emit.lean lpcResGo2_eq_fast
@@ -119,8 +118,29 @@ Flac/Native/Stream.lean pcmMonoGo_eq_fast
 Flac/Native/Crc.lean crc16Range_eq_fast
 Flac/Native/Heuristics.lean riceParam_eq_fast
 Flac/Spec/PcmBytes.lean decodePcm16_eq_decodePcm16A
-Flac/Spec/Emit.lean Unchecked_encode_eq_emitFast
+Flac/Spec/Emit.lean Unchecked_encode_eq_emitFast'
+while read -r file thm; do
+  [ -z "$file" ] && continue
+  if ! grep -q "@\[csimp\] theorem $thm" "$file"; then
+    echo "FAIL: missing csimp swap $thm in $file"; fail=1
+  fi
+done <<EOF
+$KERNEL_SWAPS
 EOF
+echo "ok"
+
+echo "== every @[csimp] swap in Flac/ is pinned above (closure: the pin list cannot drift behind the code)"
+# The two lists above detect a *removed* pin; they cannot detect a *newly added*
+# swap that nobody pinned.  Seven tail-form swaps were introduced by later work
+# and sat unpinned until this check existed.  Derive the expected set from the
+# code and fail on any @[csimp] name not covered by a pin above, so adding a
+# swap forces adding its pin rather than silently reverting the gate's coverage.
+PINNED=$( { printf '%s\n' $STACK_SWAPS; printf '%s\n' "$KERNEL_SWAPS" | awk '{print $2}'; } | sort -u )
+for name in $(grep -rhoE "@\[csimp\] theorem [A-Za-z0-9_.']+" Flac/ | sed -E 's/.*theorem //' | sort -u); do
+  if ! printf '%s\n' "$PINNED" | grep -Fxq "$name"; then
+    echo "FAIL: @[csimp] swap $name is defined in Flac/ but pinned nowhere in scripts/check.sh"; fail=1
+  fi
+done
 echo "ok"
 
 echo "== residual-reader equalities present (not csimp: they justify the guarded dispatch)"
@@ -156,8 +176,26 @@ echo "== kernel generators match the code they generated"
 # templates exist to prevent.
 python3 scripts/gen/check_gen.py || fail=1
 
-echo "== proof-level trust holes: no native_decide/implemented_by/unsafe/extern in Flac/"
-if grep -rn --include='*.lean' -E '\bnative_decide\b|@\[implemented_by|\bunsafe def\b|@\[extern' Flac/; then
+echo "== proven-equivalence twin map + encode-side oracle-aliasing guard (E1)"
+# fuzz/cov/twins.py: every proven-equivalent implementation side has a live C
+# connector and >=1 driving fuzz target, AND -- the half that matters here -- the
+# reference writer (Unchecked.encode) and emitFast stay DISTINCT compiled callees in
+# the generated FlacTest/Fuzz*.c. An `import` that pulled `@[csimp]
+# Unchecked_encode_eq_emitFast` into the exporting module's scope once aliased the two
+# @[export] wrappers, so the differential encode oracle compared emitFast to itself and
+# every green run was a false negative -- a defect no theorem, build or nm check can
+# see. The detector existed but lived only in the fuzz CI; pinning it here makes it a
+# merge-gate condition. `lake build` above generates the FlacTest/Fuzz*.c IR the
+# disjointness check reads, so an absent IR fails rather than skips.
+if twout=$(python3 fuzz/cov/twins.py 2>&1); then
+  echo "ok"
+else
+  echo "$twout"
+  echo "FAIL: twins.py (twin routing / oracle aliasing)"; fail=1
+fi
+
+echo "== proof-level trust holes: no native_decide/implemented_by/unsafe/extern/dbg_trace in Flac/"
+if grep -rn --include='*.lean' -E '\bnative_decide\b|@\[implemented_by|\bunsafe def\b|@\[extern|\bdbg_trace\b' Flac/; then
   echo "FAIL: proof or compilation trust hole in Flac/"; fail=1
 else
   echo "ok"

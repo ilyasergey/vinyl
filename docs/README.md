@@ -164,9 +164,10 @@ which is exactly the *upgrade* stack semantics proposes.
   behavioral claims need a checker (test or theorem) or a rewrite as
   description.
 - [11 — Spec adequacy](11-spec-adequacy.md): the P11 `sampleRate = 0`
-  emission — theorems correct about a model laxer than RFC 9639; the
-  guards tightened, `WellFormed` stayed, and the deviation is documented
-  in `COVERAGE.md`; only an external referee can see model-level gaps.
+  emission — theorems were correct about a model laxer than RFC 9639; the
+  guards tightened first, then (2026-09-11) `WellFormed` and both decoder
+  twins, closing the deviation rather than only documenting it; only an
+  external referee can see model-level gaps in the first place.
 
 - [The 32-bit scalar-`Int` cliff](int-width-cliff.md): not an audit
   finding — a performance incident, recorded because it is the same shape

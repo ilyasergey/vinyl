@@ -268,8 +268,15 @@ def main() -> int:
     print("\n## @[export] wrapper callee-disjointness (IR: .lake/.../FlacTest/Fuzz*.c)")
     callees = fuzzgen_ir_callees()
     if not callees:
-        print(f"  note: {FUZZGEN_IR.relative_to(REPO)} not built yet -- "
-              "callee-disjointness gate skipped (routing gate above still applies).")
+        # Both callers (scripts/check.sh and fuzz/scripts/ci.sh) build before this
+        # runs, so the FlacTest/Fuzz*.c IR is present whenever the check is meant to
+        # mean anything. An absent IR here is not a benign "not built yet" -- silently
+        # skipping the disjointness gate is exactly the blind spot that once let the
+        # reference writer alias to emitFast. Fail rather than skip.
+        msg = ("FlacTest/Fuzz*.c IR absent -- callee-disjointness gate could not run; "
+               "run `lake build` before this check")
+        print(f"  FAIL(no IR): {msg}")
+        fails.append(msg)
     else:
         for exp_a, want_a, exp_b, want_b, why in DISTINCT_EXPORT_PAIRS:
             ca, cb = callees.get(exp_a), callees.get(exp_b)

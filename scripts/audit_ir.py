@@ -63,7 +63,7 @@ FORBIDDEN_IN = {
     ("Flac/Native/Decode.c", "lp_vinyl_Flac_Decode_readSIntSeqU___redArg"): ["lean_sarray_size", "lean_byte_array_size"],
     ("Flac/Native/Md5.c", "lp_vinyl___private_Flac_Native_Md5_0__Flac_Md5_compressIn___redArg"):
         ["lean_sarray_size", "lean_byte_array_size"],
-    ("Flac/Native/Md5.c", "lp_vinyl___private_Flac_Native_Md5_0__Flac_Md5_blocksIn___redArg"):
+    ("Flac/Native/Md5.c", "lp_vinyl_Flac_Md5_blocksIn___redArg"):
         ["lean_sarray_size", "lean_byte_array_size"],
 }
 

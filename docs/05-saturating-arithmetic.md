@@ -36,8 +36,9 @@ for it. Saturating `Nat` subtraction maps "the header claims more wasted
 bits than the bit depth" to "decode at depth 0", a perfectly well-defined
 semantics for a stream the spec rejects — and every proof stays green,
 because nothing is wrong with any function. The same absorption pattern
-sits behind other findings: P11 (`sampleRate = 0` accepted) is the same
-disease with a milder symptom, and each `Nat` subtraction, `getD`, `%`,
+sits behind other findings: P11 (`sampleRate = 0` accepted, since closed
+on both sides) is the same disease with a milder symptom, and each `Nat`
+subtraction, `getD`, `%`,
 `toNat`, or truncating conversion applied to an attacker-controlled field
 is a candidate instance. Where `01` said "totality is not a resource
 bound", this note adds the sharper form: **totality converts validation

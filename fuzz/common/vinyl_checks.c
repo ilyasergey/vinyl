@@ -197,7 +197,12 @@ void vinyl_self_consistency(const uint8_t *in, size_t n, SelfConsistency *sc) {
    * conforming encoding, so `vinyl_encode` returns none and structural_ok must
    * agree or this cross-check fires spuriously. */
   sc->bad_bps = (bps_ll < 4 || bps_ll > 32);
-  sc->bad_rate = (sr_ll < 0 || sr_ll >= (1LL << 20));
+  /* Mirrors Audio.WellFormed's sample-rate conjunct: RFC 9639 §9.1.7 makes a
+   * STREAMINFO rate of 0 mean "unknown/non-audio", so WellFormed now carries
+   * `0 < sampleRate` and `readStreamInfo` rejects rate 0. A sr==0 audio has no
+   * conforming encoding, so `vinyl_encode` returns none and structural_ok must
+   * agree or this cross-check fires spuriously (the bad_bps sibling case). */
+  sc->bad_rate = (sr_ll < 1 || sr_ll >= (1LL << 20));
   sc->bad_count = ((long long)num_samples >= (1LL << 36));
   sc->structural_ok =
       !(sc->bad_channels || sc->bad_bps || sc->ragged || sc->bad_rate || sc->bad_count);

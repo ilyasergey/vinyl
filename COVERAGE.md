@@ -16,13 +16,13 @@ listed here.
 | block sizes: all codes incl. explicit 8/16-bit (192, 576·2ᵏ, 256·2ᵏ, arbitrary 1–65536) | ✓ | 16–4608, explicit code |
 | both frame-numbering strategies (fixed / variable block size) | ✓ | ✓ |
 | sample rates: STREAMINFO up to 2²⁰−1 Hz; all frame-header codes incl. explicit 8/16-bit | ✓ | STREAMINFO code |
-| bit depths 1–32; per-frame bit-depth codes (8/12/16/20/24/32 + STREAMINFO) | ✓ | STREAMINFO code, 1–32 |
+| bit depths 4–32; per-frame bit-depth codes (8/12/16/20/24/32 + STREAMINFO) | ✓ | STREAMINFO code, 4–32 |
 | channels 1–8 independent; stereo decorrelation left/side, right/side, mid/side (b+1-bit side) | ✓ | ✓ |
 | subframes: CONSTANT, VERBATIM, FIXED orders 0–4, LPC orders 1–32 (any precision 1–15, shift 0–15) | ✓ | ✓ |
 | wasted bits (any count < bit depth) | ✓ | ✓ (detected) |
 | residuals: 4-bit Rice, 5-bit Rice2, escaped partitions, partition orders 0–15 | ✓ | ✓ |
 | CRC-8 (frame header) and CRC-16 (frame) verification | ✓ (checked, by theorem) | ✓ (emitted) |
-| MD5 signature of the unencoded data | emitted by encoder | emitted |
+| MD5 signature of the unencoded data | emitted; **proven = RFC 1321** (`md5_eq_rfc1321`) | emitted |
 | coded frame numbers (extended UTF-8, up to 36 bits) | ✓ | ✓ |
 
 ## Not supported
@@ -37,7 +37,8 @@ listed here.
   bit-depth code 3, channel codes 11–15, reserved header bits ≠ 0) —
   rejected, as the RFC requires;
 - MD5 *verification* on decode (the decoder is exact by theorem on
-  every stream it accepts; MD5 is validated in differential tests);
+  every stream it accepts; the encoder's MD5 is now proven equal to
+  RFC 1321, `md5_eq_rfc1321`, not merely differential-tested);
 - metadata *content* (Vorbis comments, seek tables, pictures …) is
   skipped, not surfaced to the caller;
 - the encoder always emits the streamable subset: it does not produce
@@ -68,7 +69,7 @@ the model was left alone.
 
 | RFC clause | model behavior | covered by | why the model stays lax |
 |---|---|---|---|
-| §8.2: sample rate MUST NOT be 0 when audio is present | `Audio.WellFormed` admits `sampleRate = 0`, so the sample-level encoders (`Flac.encode`, `encodeCheckedCfg`) will emit it | the byte-level/CLI guard `Pcm16ShapeOk` rejects rate 0 on nonempty input (audit finding P11, [`docs/11-spec-adequacy.md`](docs/11-spec-adequacy.md)) | `WellFormed` states decodability, and rate 0 round-trips; tightening it would ripple a hypothesis through every capstone to enforce an emission policy |
+| §8.2: sample rate MUST NOT be 0 when audio is present | *(was)* `Audio.WellFormed` admitted `sampleRate = 0`, so the sample-level encoders (`Flac.encode`, `encodeCheckedCfg`) emitted it | fixed **in the model and both `readStreamInfo` twins** (2026-09-11, audit finding P11): `0 < a.sampleRate` in `Audio.WellFormed`, a `0 < sr` decode guard, and `Pcm16ShapeOk` tightened to `0 < sampleRate` ([`docs/11-spec-adequacy.md`](docs/11-spec-adequacy.md)) | no longer a deviation — the accept-set fix landed on both sides, threaded through every capstone, IETF must-decode still 61/61 |
 | §9.2.2/§5: wasted-bits count MUST leave a positive depth | *(was)* `Nat` saturation accepted `w ≥ b` on every decode path | fixed **in the model and production readers** in the P5 round ([`docs/05-saturating-arithmetic.md`](docs/05-saturating-arithmetic.md)); listed here as the deviation-table's origin story | no longer a deviation — the accept-set fix landed on both sides |
 
 ## Conformance-corpus results

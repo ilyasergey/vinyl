@@ -5,7 +5,9 @@ version = "0.1.0"
 defaultTargets = ["Flac", "FlacTest", "flactest", "vinyl"]
 # Link-time optimisation across the generated C units (+7% encode, +2% decode,
 # output byte-identical) and `-fno-math-errno`, which lets clang inline `floor`
-# in the float search (+3% encode; no code here reads errno). Package-wide, so
+# in the float search — no numerical change, no code here reads errno; its
+# isolated effect is within measurement noise (an earlier +3% figure was
+# confounded, the same variant also carried `x86-64-v3`). Package-wide, so
 # every module's C is bitcode and the executables link with LTO.
 moreLeancArgs = ["-flto", "-fno-math-errno"]
 moreLinkArgs = ["-flto", "-fno-math-errno"]

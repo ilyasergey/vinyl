@@ -54,8 +54,7 @@ encoders now run the same O(1) predicate first:
 
 ```lean
 def Pcm16ShapeOk (ch sampleRate : Nat) (bytes : ByteArray) : Prop :=
-  0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧
-  (bytes.size = 0 ∨ 0 < sampleRate)
+  0 < ch ∧ ch ≤ 8 ∧ bytes.size % (2 * ch) = 0 ∧ 0 < sampleRate
 ```
 
 `encodePcm16Cfg` tests it before the `Audio` value exists;
@@ -63,8 +62,10 @@ def Pcm16ShapeOk (ch sampleRate : Nat) (bytes : ByteArray) : Prop :=
 count field widths, block-size window). One shared predicate is the
 answer to "the two entry points disagree about guard order": there is no
 longer a second copy to disagree with. (The last clause is audit finding
-P11's — [`11-spec-adequacy.md`](11-spec-adequacy.md) — which rode along
-in the same predicate.)
+P11's — [`11-spec-adequacy.md`](11-spec-adequacy.md); it was later
+tightened from `bytes.size = 0 ∨ 0 < sampleRate` to an unconditional
+`0 < sampleRate` when the same bound moved into `Audio.WellFormed`, so the
+guard and the model now agree and rate 0 is rejected everywhere.)
 
 The theorems moved exactly as predicted: `some`-conditional statements
 tolerate a tighter guard, so the fix only moved inputs from "expensive

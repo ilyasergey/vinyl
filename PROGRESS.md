@@ -2601,3 +2601,92 @@ sample-rate-0, channel truncation, `decodeBytes` under-allocation, Float-LPC div
 `4 ≤ bps` change is a worked template for the `0 < sampleRate` conjunct that sample-rate-0
 needs, since it threads the same shape through `readStreamInfo` → `readMeta_spec` → the
 capstones.
+
+## 2026-09-11 — optimizations branch: report-prep hardening (MD5 verified, sampleRate=0 closed, gates + docs reconciled)
+
+Preparing the second findings report. The report is written as though a set of branch fixes are
+already done, so this session made them true and closed two more codec findings. Everything below is
+green: `lake build`, `lake exe flactest` (**178** checks, +1 for the rate-0 refusal), `scripts/check.sh`
+**ALL GREEN**, `conformance/ietf.sh` **61/61 must-decode**, `conformance/smoke.sh` green.
+
+### MD5 is now verified, not merely tested
+
+`md5_eq_rfc1321 : md5 msg = Rfc1321.md5 msg` was ported in-tree as `Flac/Spec/Md5.lean` — a table-free
+64-round RFC 1321 transcription plus the bridge (`blocksFrom = blocks` via `blocksIn_eq_blocks` and the
+existing `compressIn_eq_compress`; `blocks = Rfc1321.blocks` by induction). Unconditional, `#print
+axioms` = `[propext, Quot.sound]`. The USize fast path and the `Nat` fallback are both proven to compute
+the RFC digest for every `ByteArray`, so the campaign's MD5 corruption (a fast/fallback divergence) now
+fails the build. Removing `private` from 14 `Md5` defs (needed for the proof to reference them) renamed
+`blocksIn`'s mangled symbol, which broke `audit_ir.py`'s positive-half check — fixed by updating the
+expected symbol (`lp_vinyl_Flac_Md5_blocksIn___redArg`). `ARCHITECTURE.md` (mechanism table (c),
+trusted/tested) and `COVERAGE.md` updated: MD5 leaves the *tested, not verified* category; residual
+trust is the transcription's faithfulness, checked against the standard vectors.
+
+### `sampleRate = 0` closed on both sides (issue #11)
+
+Mirrored the `4 ≤ bps` template one field over: `0 < a.sampleRate` in `Audio.WellFormed`, a `0 < sr`
+guard in **both** `readStreamInfo` twins, `Pcm16ShapeOk` tightened from `bytes.size = 0 ∨ 0 < sampleRate`
+to an unconditional `0 < sampleRate`, threaded through `readMeta_spec` → the capstones, and the C mirror
+(`vinyl_checks.c` `bad_rate`). This reverses the earlier "fix the guard, document the deviation, don't
+ripple `WellFormed`" call in `docs/11-spec-adequacy.md` — the ripple was tractable given the template,
+and tightening the model is the only option that also makes the *decoder* reject rate 0. Docs
+reconciled: `PLAN.md`, `COVERAGE.md` (deviation row → *no longer a deviation*), `docs/08`, `docs/11`
+(rewritten intro + fix + checklist), `docs/05`, `docs/README`. `fuzz/TODO.md` flipped to FIXED. IETF
+must-decode still 61/61.
+
+### Gate and doc fixes from the August pass
+
+- `fuzz/cov/twins.py` (the oracle-aliasing detector) wired into `scripts/check.sh`, verified both
+  directions: green normally, `FAIL(ALIASED)` when the reference export is moved into the swap's scope.
+  Also fixed its `FUZGEN_IR`-absent path from a NameError to a clean fail.
+- The `@[csimp]` pin list is now a **closure check**: `scripts/check.sh` derives the expected set from
+  `grep '@[csimp] theorem' Flac/` and fails on any swap not pinned. Seven previously-unpinned tail-form
+  swaps (`writeFrames`, `chunkChannels`, `bitsToByteList`, `deinterleaveN`, `diff1`, `pcm16OfByteList`,
+  `residualAux`) are now pinned by name in the stack-shape list, and a new one cannot go unpinned.
+- `dbg_trace` added to the trust-hole deny list. Bit-depth docs corrected 1–32 → 4–32 (`README.md`,
+  `COVERAGE.md`, `PLAN.md`, `bench/README.md`) — the `1826ffe` commit body claimed `README.md` was
+  corrected for the bit-depth bound; it was not, and this entry records that rather than rewriting the
+  commit. `docs/int-width-cliff.md` off-by-one fixed (`|x| < 2^33 ⇒ |Σ| < 2^53`, and the post-fix probe
+  figure aligned to 0.157 s). `lakefile.toml`'s `-fno-math-errno` comment corrected: its isolated effect
+  is within noise (the earlier +3% was confounded with `x86-64-v3`).
+
+### Capacity fix and a paired resource assertion
+
+- `decodeBytes` output pre-size corrected from `2 *` to `((si.bps + 7) / 8) *` bytes/sample
+  (`Flac/Native/Decode.lean`); proof-invisible (`emptyWithCapacity` is definitionally empty), closes the
+  `decode-capacity-underalloc` finding for 24/32-bit.
+- `fuzz/scripts/scaling_assert.py` (wired into `ci_assertions.sh`): the **cost half** of the paired
+  resource bound the August stack-limit assertion lacked. It doubles the `--encode-slow` input at
+  block 16 and requires sub-quadratic wall growth (branch 2.18×, the `master` `chunkChannels` quadratic
+  7.14×, threshold 3.5). The oracle is wall time, not instruction count — this quadratic is cache-bound,
+  so its instruction ratio stays near 2× while wall is 7×.
+
+### Class-wide quadratic sweep
+
+Swept for the three shapes (`acc ++` growing accumulator, `List.sum`/`foldr` on input-driven lists,
+`.length`-as-emptiness). All known instances are fixed (`writeFrames`→`writeFramesRev`,
+`partitionSearch`→`foldl`, `chunkChannels`→`chunkChannelsAcc`/`isEmpty`, `recombine`/`deinterleaveN`
+csimp-swapped to tail forms); the one live `acc ++ t.get` (`Decode.syncCandidates`) is safe — its
+accumulator is pre-sized and uniquely referenced, so `Array.append` is amortized linear.
+
+### Master-vs-branch measurements (for the report)
+
+On a `master` worktree (16-core Ryzen 9 9950X / Zen 5): the issue-1 24-bit LPC cost cliff reproduces on
+the *reference* decoder (`--decode`/`decodeReference`, non-tail `restoreAux`) at ~20× (24-bit 0.37 s vs
+16-bit 0.02 s), but the predicted stack-overflow *hang* does **not** — a valid frame's max block size
+(65535) does not recurse deep enough to exhaust Lean's main stack, so decode completes. The 24-bit
+`--decode-fast` probe: `master` 31.3 G instr / 1.21 s vs branch 0.98 G / 0.037 s. Issue-5 chunker
+quadratic measured on `master`: block-16 encode ~11× the branch at 4 MB × 8 ch and growing, 34% of the
+run in `List.lengthTR` under `chunkChannels`.
+
+### Open / next
+
+- The full clean benchmark re-measurement pass has not been run on a settled, idle host; the report's
+  key figures were corroborated ad hoc (24-bit cliff, issue-5 quadratic, the 40 KB/244 B/63 B witnesses)
+  but the throughput/micro/coherence-stall tables should be re-taken quietly before the numbers are
+  quoted as final.
+- Still-open August codec findings not closed this session: channel truncation, the Float/exact LPC
+  coefficient divergence, trailing-data all-or-nothing decode, `totalSamples` unverified. The
+  `sampleRate = 0` closure shows the conformance-tightening template generalises to STREAMINFO fields.
+- The `10 - file starting at frame header.flac` "uncommon" IETF case remains a deliberate non-support
+  (no `fLaC`/STREAMINFO), outside the must-decode gate; unrelated to any change here.

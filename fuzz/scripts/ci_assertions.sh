@@ -64,5 +64,22 @@ else
   echo "FAIL: Heuristics.c float search shows 0 covered regions on encode targets (encode corpus stale?)"; fail=1
 fi
 
+echo "== 3. Audio-level encode scales sub-quadratically (paired resource assertion) =="
+# The cost half of the paired bound for the recursion/chunking class (scripts/scaling_assert.py):
+# double the frame count and require the wall-time growth to stay well under a quadratic's 4x.
+# The August "assert exit 0 under a small stack limit" catches the stack half only; a stack fix
+# can still be quadratic in time (it was), and the frame chunker's length-test was separately
+# quadratic (issue 5). Load-sensitive by nature, so it uses a wide threshold and SKIPS rather
+# than fails when it cannot get a usable measurement. Needs the vinyl exe.
+VINYL=../.lake/build/bin/vinyl
+[ -x "$VINYL" ] || { (cd .. && lake build vinyl >/dev/null 2>&1) || true; }
+if [ ! -x "$VINYL" ]; then
+  echo "SKIP: vinyl exe not built; scaling assertion not run"
+else
+  sa_out=$(python3 scripts/scaling_assert.py "$VINYL"); sa_code=$?
+  echo "  $sa_out"
+  [ "$sa_code" -eq 0 ] || fail=1
+fi
+
 [ "$fail" -eq 0 ] && echo "CI-ASSERTIONS: ALL GREEN" || echo "CI-ASSERTIONS: FAILURES ABOVE"
 exit "$fail"

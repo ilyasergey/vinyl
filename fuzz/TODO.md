@@ -18,11 +18,16 @@ bits, so neither bound forces small encode inputs.
 Documented; the detector fires under `FUZZ_STRICT` and is ready to become a strict
 gate once a fix lands.
 
-- **samplerate-zero** — STREAMINFO sample-rate 0 accepted with audio. Fix requires
-  a `0 < sampleRate` conjunct in `Audio.WellFormed` threaded through
-  `readStreamInfo` (both twins) → `readMeta_spec` → the `decode_encode`/`encodePcm16`
-  capstones. Pin: `fz_streaminfo_contradict`. (The `4 ≤ bps` fix for
-  `emit-streaminfo-bps-below-4` threaded exactly this shape and is a worked template.)
+- **samplerate-zero — FIXED at source (2026-09-11).** STREAMINFO sample-rate 0 was
+  accepted with audio. Fixed by adding a `0 < sampleRate` conjunct to
+  `Audio.WellFormed` and a §9.1.7 guard in both `readStreamInfo` twins, threaded
+  through `readStreamInfo_writeStreamInfo` → `readMeta_spec` → the
+  `decode_encode`/`decodePcm16_encodePcm16` capstones, exactly mirroring the
+  `4 ≤ bps` fix. The PCM shape guard `Pcm16ShapeOk` now requires `0 < sampleRate`
+  (the empty-content exception is gone: rate 0 is undecodable regardless). C mirror:
+  `vinyl_checks.c` `bad_rate` now rejects `sr < 1`; `fz_gen_roundtrip`'s
+  `in_checked_domain` already carried `gp.sr > 0`. Pin: `fz_streaminfo_contradict`
+  (Vinyl now rejects, so the §9.1.7 clause no longer fires).
 - **channel-truncation** — silent channel truncation in `recombine` (`zipWith`).
   Fix requires a frame-vs-STREAMINFO channel-count reject in the decode loop,
   threaded through `decodeBytes_spec`/`recombine` proofs. Pin: `fz_self_consistent`

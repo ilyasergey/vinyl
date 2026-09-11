@@ -718,8 +718,8 @@ def readStreamInfo (br : BitReader) : Option (Stream.Info × BitReader) :=
                   match br.readBits 128 with
                   | none => none
                   | some (_, br) =>
-                    -- RFC 9639 Table 3 (see the reference twin in Stream.lean).
-                    if 4 ≤ bm1 + 1 then
+                    -- RFC 9639 Table 3 and §9.1.7 (see the reference twin in Stream.lean).
+                    if 4 ≤ bm1 + 1 ∧ 0 < sr then
                       some (⟨minB, maxB, sr, ch + 1, bm1 + 1, total⟩, br)
                     else none
 
@@ -1334,7 +1334,7 @@ def decodeBytes (bytes : ByteArray) : Option (ByteArray × Nat) :=
           (Flac.Stream.decodeBudget br.data)
           (br.remaining + 1) br.pos
           (ByteArray.emptyWithCapacity
-            (outCapacity (2 * si.channels * si.totalSamples + 64)
+            (outCapacity (((si.bps + 7) / 8) * si.channels * si.totalSamples + 64)
               br.data.size))).map
           (fun out => (out, si.bps))
     else none

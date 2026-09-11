@@ -20,6 +20,7 @@ import Flac.Spec.Decode
 import Flac.Spec.Fixed
 import Flac.Spec.Frame
 import Flac.Spec.Lpc
+import Flac.Spec.Md5
 import Flac.Spec.Heuristics
 import Flac.Spec.Emit
 import Flac.Spec.Encode
