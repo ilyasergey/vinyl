@@ -718,7 +718,10 @@ def readStreamInfo (br : BitReader) : Option (Stream.Info × BitReader) :=
                   match br.readBits 128 with
                   | none => none
                   | some (_, br) =>
-                    some (⟨minB, maxB, sr, ch + 1, bm1 + 1, total⟩, br)
+                    -- RFC 9639 Table 3 (see the reference twin in Stream.lean).
+                    if 4 ≤ bm1 + 1 then
+                      some (⟨minB, maxB, sr, ch + 1, bm1 + 1, total⟩, br)
+                    else none
 
 def skipBlocks : Nat → BitReader → Option BitReader
   | 0, _ => none

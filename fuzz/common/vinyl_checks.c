@@ -192,7 +192,11 @@ void vinyl_self_consistency(const uint8_t *in, size_t n, SelfConsistency *sc) {
   sc->channel_incoherent = (sc->si_ch >= 1 && (int)nchan != sc->si_ch) ||
                            (sc->frame_ch >= 1 && (int)nchan != sc->frame_ch);
   sc->bad_channels = (nchan < 1 || nchan > 8);
-  sc->bad_bps = (bps_ll < 1 || bps_ll > 32);
+  /* Mirrors Audio.WellFormed's bit-depth conjunct, which is RFC 9639 Table 3's
+   * 4-32 (not the 5-bit field's representable 1-32): a bps<4 audio has no
+   * conforming encoding, so `vinyl_encode` returns none and structural_ok must
+   * agree or this cross-check fires spuriously. */
+  sc->bad_bps = (bps_ll < 4 || bps_ll > 32);
   sc->bad_rate = (sr_ll < 0 || sr_ll >= (1LL << 20));
   sc->bad_count = ((long long)num_samples >= (1LL << 36));
   sc->structural_ok =

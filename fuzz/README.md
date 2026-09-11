@@ -142,7 +142,7 @@ or property it contradicts.
 | **fz_trailing_data** | V | reject-where-referees-accept on **ordinary files**: valid stream + trailing bytes (128-byte ID3v1) or frame-boundary truncation. Vinyl returns none where libFLAC/ffmpeg recover the audio. Also an **ID3v2 prefix** before `fLaC` (Vinyl requires the marker at byte 0 — `trailing_id3v2_prefix`). Catalogue; `FUZZ_STRICT>=2` aborts on ID3v1 | Vinyl vs libFLAC + ffmpeg |
 | **fz_gen_roundtrip** | V | **G1** any-depth (1–32) round-trip on Vinyl's OWN proven writer (`Stream.Unchecked.encode`) through the 3-way oracle — the encode-side force-multiplier. An **adversarial `EncoderCfg` chooser** (`../FlacTest/FuzzGen.lean`, escape-coded so output stays bounded) forces LPC orders 9–32, mid/side decorrelation and high partition orders the default chooser never emits; correlated populations (ramp/walk/sine) give real residuals. `set_md5_checking` on the output validates Vinyl's STREAMINFO MD5 convention above 16-bit (`gen_md5_mismatch`). Also emits the stereo out-of-range witness and the Unchecked self-decode check (`gen_self_decode_fail`) | Vinyl vs libFLAC + ffmpeg (`vinyl_gen.c` + `FuzzGen.lean`) |
 | **fz_streaminfo_contradict** | L | deliberate STREAMINFO/frame contradictions (STREAMINFO carries no CRC): **sr=0 with audio** (RFC 9639 §9.1.7 MUST NOT), differing channel count, and a reported bps that does not bound the samples. Referee-free; catalogue + `FUZZ_STRICT>=2` abort | referee-free (`fz_streaminfo_contradict.c`) |
-| **fz_emit_conformance** | C | RFC clauses on Vinyl's **emitted** bytes (not a decoder's tolerance) over G1 at every depth: frame sample-rate/bit-depth code 0 (subset §7), STREAMINFO block/bps bounds (§8.2 / Table 3, catches bps 1–3). Runs the checker on **`Emit.emitFast`** output too (`vinyl_gen_encode_pair`) — the shipped fast writer, not only the reference writer. A standing emit-set gate | conformance (`flac_struct.c` walk) |
+| **fz_emit_conformance** | C | RFC clauses on Vinyl's **emitted** bytes (not a decoder's tolerance) over G1 at every depth: frame sample-rate/bit-depth code 0 (subset §7), STREAMINFO block/bps bounds (§8.2 / Table 3). The Table 3 clause is a **MUST-be-0 pin**: it caught `emit-streaminfo-bps-below-4` (bps 1–3 emitted by the checked encoder, fixed 2026-09-11 by `4 ≤ bps` in `Audio.WellFormed`), and now fires only on an in-spec request — a bps<4 *request* to the deliberately-unvalidating `Unchecked.encode` is counted as `bps_oos_skipped`, not a violation. Runs the checker on **`Emit.emitFast`** output too (`vinyl_gen_encode_pair`) — the shipped fast writer, not only the reference writer. A standing emit-set gate | conformance (`flac_struct.c` walk) |
 | **fz_residual_bound** | C | residual magnitude bound `\|r\|<2^31 ∧ r≠−2^31` (RFC 9639 §9.2.7.3) recomputed from decoded samples (no Rice decode → sound), now over **ALL channels of frame 0** (mono or stereo, any frame count) via a `flac_subframe_bit_offsets` walker — so the `b+1` side channel of mid/side & left/side decorrelation (the most §9.2.7.3-violation-prone spot) is reached, not just a mono subframe. The correlated G1 populations + adversarial chooser give it real FIXED/LPC residuals to analyse (uniform noise → VERBATIM → nothing to bound). Analyses **`Emit.emitFast`** output (`vinyl_gen_encode_pair`). 16-bit self-check must stay 0 | emit-set (`flac_residual.c`) |
 | **fz_encode_pair** | L | the **encoder proven pair**: `Emit.emitFast` == `Stream.Unchecked.encode` (`emitFast_eq_encode`) over G1 at every depth 1–32 and every chooser — the encode-side analogue of `fz_proven_pairs`, and the standing pin on the encode `@[csimp]` that routes the shipped slow encoder through `emitFast`. A byte divergence is a compiler/runtime defect no round-trip or referee oracle can see; aborts unconditionally | on-binary; `emitFast_eq_encode` |
 | **fz_encode_pcm16_eq** | L | the **shipped 16-bit encoder proven pair**: `Encode.encodePcm16` == `Stream.Unchecked.encode ⟨bs,false,fastChooser 16⟩` (`encodePcm16_eq`) on the same packed PCM — the largest missing proven pair, pinning the whole `encodePcm16` path (deinterleave + `fastChooser 16`) byte-for-byte against the Unchecked writer. A byte/length divergence is a compiler/runtime/`@[csimp]` defect; aborts unconditionally. PCM cap lifted to 64 KB with C04 fixed (was 16 KB for the overflow) | on-binary; `encodePcm16_eq` |
@@ -256,8 +256,8 @@ the many "catalogue, don't abort" branches are the garbage-in discipline
   **bps=31** streams Vinyl decodes different PCM than a libFLAC+ffmpeg *consensus*
   (one repro also parses a different frame sample-rate). Pre-existing Vinyl behaviour
   the previously-masked gate hid. Triaged 2026-08-31 as accept-set differences on
-  invalid input, not Vinyl defects (two independent analyses; see `findings/` and
-  `TODO.md`).
+  invalid input, not Vinyl defects (two independent analyses; see
+  `findings/decode-sample-divergence-highbps/`).
 - 12/20-bit reference material comes from the IETF corpus (`--hires`): ffmpeg's
   *encoder* clamps `-bits_per_raw_sample` to 16/24 and the `flac` CLI to 8/16/24/32,
   so 20-bit exists only as a decode seed, not a generated one.
@@ -287,11 +287,17 @@ the many "catalogue, don't abort" branches are the garbage-in discipline
   produced against libFLAC 1.4.2; 1.5.0 changed behaviour (it *rejects* RFC-forbidden
   block size 65536, which 1.4.2 accepted). Any referee-facing counter must be
   version-qualified or re-run against a 1.5.0 build before it is quoted — see
-  `TODO.md` (Referee discipline); `fleet/report.py` records the linked libFLAC version per run.
+  `scripts/flac_version_diff.sh` (the reproducible 1.4.2-vs-1.5.0 accept-set diff); `fleet/report.py` records the linked libFLAC version per run.
 - **Codec findings: some fixed at source, some still documented-only.** Fixed at source
-  (2026-08-30/31) with the detector flipped to a two-way regression pin: the
+  (2026-08-30/31, plus 2026-09-11) with the detector flipped to a two-way regression pin: the
   **encoder-stack-overflow** (C04 — `writeFrames`/`chunkChannels` and the per-sample loops
-  now tail-recursive via `@[csimp]`; `fz_encode_stack` is the prober/pin), the
+  now tail-recursive via `@[csimp]`; `fz_encode_stack` is the prober/pin — note the
+  `writeFrames` accumulator was *also* quadratic in emitted bits until 2026-09-11, when
+  `writeFramesRev` replaced tail-append with `reverseAux` + one final reverse, giving O(1)
+  stack and O(n) time together), **emit-streaminfo-bps-below-4** (`Audio.WellFormed` carried
+  `1 ≤ bps` where RFC 9639 Table 3 requires 4–32, so the *checked* encoder emitted streams
+  `flac` and `ffmpeg` reject and `readStreamInfo` accepted them back; both sides fixed, pin:
+  `fz_emit_conformance` `bps_bad`), the
   **readRiceSeq/readSIntSeq tail twins** (the non-tail `Rice.readRiceSeq`/`readSIntSeq` are
   on the REFERENCE decoder path only — the shipped array decoder uses the already-tail
   `Flac.Decode.readRiceSeqScan`/`readSIntSeqGo`; the `readRiceSeqTR`/`readSIntSeqTR` `@[csimp]`

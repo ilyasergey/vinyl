@@ -2510,3 +2510,94 @@ folded off it, which would delete the float fold entirely — but it changes Ric
 marginal partitions, so the compression ratio must be re-measured before it lands. Coverage
 gaps worth closing first: 24- and 32-bit VERBATIM, RICE2 parameters above 17, LPC order 32,
 8-channel, and a large-input `--encode-slow`.
+
+## 2026-09-10 / 11 — optimizations branch: two resource defects found by triaging a campaign's own output
+
+Two 12 h all-target fuzzing campaigns (1.32 B execs on 2026-09-10, then a 7 h `official`
+post-fix on 2026-09-11) reported zero crashes and zero OOMs. Both nonetheless had real
+defects live in them, because neither is an abort: catalogue-by-default records a finding as
+a counter, and a slow input is not a failure condition at all. Both were found afterwards, by
+reading `artifacts/` and the divergence columns rather than the pass/fail line.
+
+### `writeFrames` was quadratic (fixed)
+
+`writeFramesAcc` — the C04 stack-overflow remediation from `44cc1c4` — accumulated with
+`acc ++ frame`, appending at the *tail*. Lean compiles `List.append` to the reverse-based
+`appendTR`, so every frame recopied the whole prefix: `Θ(E·F)` in emitted bits over frames.
+It fixed the stack and spent time instead, and the theorem could not see it —
+`writeFrames_eq_writeFramesTR` is true, kernel-checked, and says nothing about cost.
+
+Evidence: `perf` put 93.2 % of runtime in `List.reverseAux` under `writeFramesAcc`; doubling
+the frame count cost 1.9x → 2.4x → 4.7x → 5.8x; and **248 of 248** generator-driven
+slow-unit artifacts from the 12 h run select `blockSize=16`. A control profile at a *fast*
+chooser still showed 79.6 % in `reverseAux`, ruling out chooser search cost. Worst case was
+14.1 s from a 9-byte input, reproducible single-threaded.
+
+Not shipped — `writeFrames*` symbols are absent from both binaries and every shipped encode
+path is `@[csimp]`-swapped to `emitFast` — but the one live caller is `FuzzRef.lean`'s
+reference writer, i.e. one side of `fz_encode_pair`, so it was throttling the proven-pair
+oracle.
+
+Fixed by `writeFramesRev`: accumulate with `List.reverseAux`, reverse once at the end. O(1)
+stack *and* O(n) time; `writeFramesRev_eq` restated, the `@[csimp]` statement unchanged.
+14.81 s → 0.80 s on the witness, doubling now costs 1.97x, `reverseAux` gone from the
+profile, `fz_encode_stack` still `overflow=0`. Reverting was never an option: `master`'s
+`writeFrames` is linear in time but overflows the stack.
+
+### `Audio.WellFormed` admitted bit depths below 4 (fixed, NOVEL)
+
+RFC 9639 Table 3 restricts the STREAMINFO bit-depth field to 4–32. `WellFormed` required
+only `1 ≤ bps`, and `encodeCheckedCfg` adds no bound of its own, so the **checked** encoder
+emitted streams `flac 1.5.0` ("bits per sample is 3, must be 4-32") and `ffmpeg` ("invalid
+bps: 3") both reject, while Vinyl decoded them back — `readStreamInfo` validated nothing
+either. The round-trip capstone was never false; it simply ranged over artifacts that are
+not FLAC.
+
+`fz_emit_conformance` had carried the Table 3 clause all along and fired it **11,532 times**
+in one campaign, dumping 1062 reproducers, without anyone triaging the directory.
+
+Fixed on both sides: `4 ≤ a.bps` in `WellFormed`, and a Table 3 guard in both
+`readStreamInfo` twins. `readStreamInfo_writeStreamInfo` and `readMeta_spec` take the
+strengthened hypothesis; `encode_cost_le_budget` keeps `1 ≤ bps`, bridged by `omega`;
+`readStreamInfo_sim` splits the new `if` (`Option.map` does not commute with it
+definitionally) and `readMeta_pos8` discharges it by case analysis. The decoder tightening
+is safe in the required direction — the encoder can no longer emit one — and rejects nothing
+valid: IETF must-decode still 61/61. Filed as
+`fuzz/findings/emit-streaminfo-bps-below-4/` with two reproducers.
+
+### `WellFormed`'s bounds are mirrored in C, in two places
+
+Both had to move with it, and both were caught by running things rather than by review.
+`common/vinyl_checks.c`'s `bad_bps` cross-checks `structural_ok` against `vinyl_encode` and
+aborted `fz_self_consistent` immediately. `fz_gen_roundtrip`'s `in_checked_domain` guard was
+subtler: it read `gp.bps >= 1`, so it counted the decoder's now-correct rejection of an
+unconformable depth as a self-decode failure, surfacing only as a new `gen_self_decode_fail`
+class (7534 dumps) in the next campaign. A third site (`vinyl_checks.c:142,161`) is *not* a
+mirror — it guards `1LL << (bps - 1)` and is right to keep `>= 1`.
+
+`fz_emit_conformance` now gates its Table 3 clause on an in-spec request
+(`bps_oos_skipped`), so `bps_bad` is a true MUST-be-0 pin rather than a running tally.
+
+### Rig
+
+`fleet/launch.py` claimed run directories with `exist_ok=True`, so two campaigns started in
+the same second shared one and the second to finish overwrote the first's `SUMMARY.md` —
+observed when `encode-pcm` and `encode-stack` ran side by side. Now claimed exclusively with
+a numeric suffix on collision.
+
+Post-fix campaign (`runs/20260911_103128`, 560.9 M execs): zero crashes, zero OOMs, zero
+timeouts, **no artifact files at all**, `emit_si_bps` gone as a class, and every
+generator-driven encode target faster at an unchanged schedule — `fz_encode_pair` 2.06x,
+`fz_encode_pcm16_eq` 1.78x, `fz_residual_bound` 1.61x, `fz_gen_roundtrip` 1.53x.
+
+### Next
+
+The remaining four campaigns of the 2026-09-11 schedule (`contract`, `modes-deep`,
+`default`, `encode-pcm`/`encode-stack`) have not been run post-fix: the campaign was stopped
+~40 min into `contract` because free space on the shared host filesystem was falling ~30 GB/h
+from a consumer outside this container. `fz_md5`, `fz_float_exact` and `fz_overlong_utf8` are
+therefore unexercised against the fixed tree. The open codec findings are unchanged —
+sample-rate-0, channel truncation, `decodeBytes` under-allocation, Float-LPC divergence; the
+`4 ≤ bps` change is a worked template for the `0 < sampleRate` conjunct that sample-rate-0
+needs, since it threads the same shape through `readStreamInfo` → `readMeta_spec` → the
+capstones.

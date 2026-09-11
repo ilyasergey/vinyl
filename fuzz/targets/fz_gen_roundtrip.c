@@ -84,13 +84,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
    * proven theorem violation to abort on unconditionally. We restrict to the
    * IN-RANGE population (gp.in_range: non-adversarial, or the in-envelope
    * adversarial advkind 0 whose alternating +/- half-scale samples still fit
-   * FitsSInt bps) AND assert it is inside the checked encoder's domain (bps 1-32,
+   * FitsSInt bps) AND assert it is inside the checked encoder's domain (bps 4-32,
    * ch 1-8, sr>0, blockSize <= 4608, in-range audio -- vinyl_gen guarantees all of
    * these), so the finding is sound: on that domain the checked encoder round-trips
    * by decode_encode, and Unchecked diverging from it is exactly the §2.5 class.
-   * Abort only under a validated must-agree run (FUZZ_STRICT). */
+   * Abort only under a validated must-agree run (FUZZ_STRICT).
+   *
+   * The lower bound tracks `Audio.WellFormed`, which is RFC 9639 Table 3's 4-32.
+   * It read `>= 1` while WellFormed did; a bps<4 audio has no conforming encoding,
+   * so the unchecked writer emits a stream the decoder is right to reject and
+   * `decode_encode` says nothing about it -- counting that as a self-decode
+   * failure is an oracle error, not a codec one. */
   const int in_checked_domain =
-      gp.bps >= 1 && gp.bps <= 32 && gp.ch >= 1 && gp.ch <= 8 && gp.sr > 0 && gp.bs <= 4608;
+      gp.bps >= 4 && gp.bps <= 32 && gp.ch >= 1 && gp.ch <= 8 && gp.sr > 0 && gp.bs <= 4608;
   if (gp.in_range && in_checked_domain && vin.rc != DEC_OK) {
     g_self_decode_fail++;
     oracle_dump_write("gen_self_decode_fail", flac, flen);

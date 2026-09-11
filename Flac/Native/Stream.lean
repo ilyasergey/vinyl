@@ -806,7 +806,15 @@ def readStreamInfo (s : BitStream) : Option (Info × BitStream) :=
                   match readBits 128 s with
                   | none => none
                   | some (_, s) =>
-                    some (⟨minB, maxB, sr, ch + 1, bm1 + 1, total⟩, s)
+                    -- RFC 9639 Table 3: the bit depth field is 4-32. The 5-bit
+                    -- encoding can represent 1-3, but no conforming stream uses
+                    -- them; libFLAC and ffmpeg both reject. Rejecting here keeps
+                    -- the decoder's accept set inside the format, and is safe for
+                    -- the round-trip capstone because `Audio.WellFormed` now
+                    -- carries `4 ≤ bps`, so the encoder never emits one.
+                    if 4 ≤ bm1 + 1 then
+                      some (⟨minB, maxB, sr, ch + 1, bm1 + 1, total⟩, s)
+                    else none
 
 /-- Drop `n` bits (skipping metadata content by declared length). -/
 def skipBits (n : Nat) (s : BitStream) : Option BitStream :=
@@ -865,45 +873,51 @@ def writeFrames (b : Nat) (varBlk : Bool) (blockSize : Nat)
       (chooser fr) fr ++
     writeFrames b varBlk blockSize chooser (i + 1) frs
 
-/-- `writeFrames` with the serialized bits collected in an accumulator, so the
-    recursive call is in tail position: frame count is attacker-chosen (a frame
-    can be ~13 bytes), so the append-after-return form kept one native stack
-    frame alive per frame and overflowed on ordinary inputs (audit finding C04 —
-    `fuzz/findings/encoder-stack-overflow-CONFIRMED` — the encode-side analogue
-    of the P6 decode-loop swaps). -/
-def writeFramesAcc (b : Nat) (varBlk : Bool) (blockSize : Nat)
+/-- `writeFrames` with the serialized bits collected **reversed** in an
+    accumulator, so the recursive call is in tail position: frame count is
+    attacker-chosen (a frame can be ~13 bytes), so the append-after-return form
+    kept one native stack frame alive per frame and overflowed on ordinary
+    inputs (audit finding C04 — `fuzz/findings/encoder-stack-overflow-CONFIRMED`
+    — the encode-side analogue of the P6 decode-loop swaps).
+
+    The accumulator is extended with `List.reverseAux`, never `acc ++ …`.
+    Appending each frame to the *tail* of a growing accumulator is also tail
+    recursive, but recopies the whole prefix per frame and costs `Θ(E·F)` for
+    `E` emitted bits over `F` frames; `writeFramesTR` reverses once at the end
+    instead, so the loop stays linear. -/
+def writeFramesRev (b : Nat) (varBlk : Bool) (blockSize : Nat)
     (chooser : List (List Int) → Frame.ChannelAsg) (acc : BitStream) :
     Nat → List (List (List Int)) → BitStream
   | _, [] => acc
   | i, fr :: frs =>
-    writeFramesAcc b varBlk blockSize chooser
-      (acc ++ Frame.write b varBlk (if varBlk then i * blockSize else i) (chooser fr) fr)
+    writeFramesRev b varBlk blockSize chooser
+      ((Frame.write b varBlk (if varBlk then i * blockSize else i) (chooser fr) fr).reverseAux acc)
       (i + 1) frs
 
-/-- The bridging equation: the accumulator loop computes `writeFrames` with the
-    already-serialized prefix spliced onto the front. -/
-theorem writeFramesAcc_eq (b : Nat) (varBlk : Bool) (blockSize : Nat)
+/-- The bridging equation: the loop leaves the frames' bits reversed in front of
+    whatever was already accumulated. -/
+theorem writeFramesRev_eq (b : Nat) (varBlk : Bool) (blockSize : Nat)
     (chooser : List (List Int) → Frame.ChannelAsg) (acc : BitStream) (i : Nat)
     (frs : List (List (List Int))) :
-    writeFramesAcc b varBlk blockSize chooser acc i frs
-      = acc ++ writeFrames b varBlk blockSize chooser i frs := by
+    writeFramesRev b varBlk blockSize chooser acc i frs
+      = (writeFrames b varBlk blockSize chooser i frs).reverse ++ acc := by
   induction frs generalizing acc i with
-  | nil => simp [writeFramesAcc, writeFrames]
+  | nil => simp [writeFramesRev, writeFrames]
   | cons fr frs ih =>
-    rw [writeFramesAcc, writeFrames, ih]
-    simp [List.append_assoc]
+    rw [writeFramesRev, writeFrames, ih, List.reverseAux_eq, List.reverse_append,
+      List.append_assoc]
 
 def writeFramesTR (b : Nat) (varBlk : Bool) (blockSize : Nat)
     (chooser : List (List Int) → Frame.ChannelAsg) (i : Nat)
     (frs : List (List (List Int))) : BitStream :=
-  writeFramesAcc b varBlk blockSize chooser [] i frs
+  (writeFramesRev b varBlk blockSize chooser [] i frs).reverse
 
 /-- Swap the compiled `writeFrames` for the tail form; every theorem keeps the
     structural definition via the kernel. -/
 @[csimp] theorem writeFrames_eq_writeFramesTR : @writeFrames = @writeFramesTR := by
   funext b varBlk blockSize chooser i frs
   unfold writeFramesTR
-  rw [writeFramesAcc_eq]
+  rw [writeFramesRev_eq]
   simp
 
 /-- Decode frames until the stream is exhausted. Fuel bounds the loop
@@ -1103,13 +1117,20 @@ structure Audio where
 def Audio.numSamples (a : Audio) : Nat := (a.channels.headD []).length
 
 /-- Well-formedness — exactly "this audio is representable as a FLAC
-    stream": 1–8 equal-length channels, bit depth 1–32, samples in range
+    stream": 1–8 equal-length channels, bit depth 4–32, samples in range
     for the bit depth, and the STREAMINFO field bounds on sample rate
     (20 bits) and total sample count (36 bits). Decidable, so encoders can
-    check it at runtime (`Flac.encodeChecked`). -/
+    check it at runtime (`Flac.encodeChecked`).
+
+    The bit depth lower bound is 4, not 1: RFC 9639 Table 3 restricts the
+    STREAMINFO bit-depth field to 4–32, so a `bps < 4` audio has no
+    conforming encoding. Admitting it made `encodeChecked` emit streams that
+    both reference decoders reject (`flac`: "bits per sample is 3, must be
+    4-32"; `ffmpeg`: "invalid bps: 3") while Vinyl decoded them back, so the
+    round-trip capstone held over artifacts that were not FLAC. -/
 def Audio.WellFormed (a : Audio) : Prop :=
   1 ≤ a.channels.length ∧ a.channels.length ≤ 8 ∧
-  1 ≤ a.bps ∧ a.bps ≤ 32 ∧
+  4 ≤ a.bps ∧ a.bps ≤ 32 ∧
   (∀ c ∈ a.channels, c.length = a.numSamples) ∧
   (∀ c ∈ a.channels, ∀ x ∈ c, FitsSInt a.bps x) ∧
   a.sampleRate < 2 ^ 20 ∧ a.numSamples < 2 ^ 36

@@ -11,7 +11,76 @@ make coverage                           # llvm-cov over Flac/Native (cov/report/
 python3 cov/structural_zero.py --validate   # refresh the never-executable classifier; 0 contradictions expected
 ```
 
-## 2026-09-08 — 72 h all-target campaign: `official` 66 h + `contract` 6 h (current reference)
+## 2026-09-11 — post-fix `official` 7 h (current reference)
+
+| field | value |
+|---|---|
+| recorded | 2026-09-11 |
+| runs | `runs/20260911_103128` (`official`, 25200 s) — all 27 targets, 31 cores / 27 jobs |
+| total executions | **560,936,222** |
+| **crashes / OOMs / timeouts** | **0 / 0 / 0**; **no artifact files at all** (the 12 h run of 2026-09-10 produced 267) |
+| findings | none new in the codec; one **rig** regression found and fixed (below) |
+
+First campaign on binaries carrying the 2026-09-11 fixes: the linear `writeFramesRev`
+accumulator, `4 ≤ bps` in `Audio.WellFormed`, and the RFC 9639 Table 3 guard in both
+`readStreamInfo` twins. Both fixes are visible in the counters.
+
+`emit_si_bps` **disappeared as a class** (11,532 hits on 2026-09-10 → absent), and
+`fz_emit_conformance` reports `bps_bad=0` with `bps_oos_skipped=232`. The quadratic repair
+shows up as throughput on every generator-driven encode target, at an unchanged schedule:
+
+| target | 2026-09-10 (7 h) | 2026-09-11 (7 h) | change |
+|---|---|---|---|
+| `fz_encode_pair` | 93,803 | 193,164 | **2.06x** |
+| `fz_encode_pcm16_eq` | 164,524 | 292,968 | 1.78x |
+| `fz_residual_bound` | 83,445 | 133,948 | 1.61x |
+| `fz_gen_roundtrip` | 99,396 | 152,072 | 1.53x |
+| `fz_emit_conformance` | 142,178 | 196,658 | 1.38x |
+
+Invariants held: `md5_mismatch=0`, `ground_mismatch=0`, `out_of_contract=0`,
+`emitFast == encode` and `encodePcm16` byte-identical (`len_diff=0 byte_diff=0`),
+`16bit_violations=0`, both bounded-stack pins `overflow=0`.
+
+**The one regression, and it was in the rig, not the codec.** A new class
+`gen_self_decode_fail` appeared (7534 dumps; 0 the day before). All sampled witnesses carry
+emitted bps ∈ {1,2,3}: `fz_gen_roundtrip`'s `in_checked_domain` guard still read `bps >= 1`,
+mirroring `Audio.WellFormed` *before* the Table 3 fix, so it counted the decoder's now-correct
+rejection of an unconformable depth as a self-decode failure. Guard corrected to `bps >= 4`;
+`self_decode_fail` back to 0. `common/vinyl_checks.c`'s `bad_bps` was the same stale mirror,
+caught earlier by `fz_self_consistent` aborting. **Lesson: `Audio.WellFormed`'s bounds are
+mirrored in C in more than one place — change them together.**
+
+The schedule's remaining campaigns (`contract`, `modes-deep`, `default`, `encode-pcm`,
+`encode-stack`) were **not run**: the campaign was stopped ~40 min into `contract` because
+free space on the shared host filesystem was falling ~30 GB/h from a consumer outside this
+container (`df` used 757 GB against ~124 GB visible from inside). `runs/20260911_173141`
+holds partial `contract` data and no summary.
+
+## 2026-09-10 — 12 h all-target campaign, 5 campaigns (pre-fix baseline)
+
+| field | value |
+|---|---|
+| recorded | 2026-09-10 |
+| runs | `runs/20260910_055312` (`official` 7 h), `_125319` (`contract` 2 h), `_145323` (`modes-deep` 1.5 h), `_162327` (`default` 1 h), `_172332` (`encode-pcm` + `encode-stack` 0.5 h) |
+| total executions | **1,317,340,986** across 62 jobs / all 27 targets |
+| **crashes / OOMs** | **0 / 0** |
+| findings | none by abort; **two** by reading the artifacts afterwards (below) |
+
+The last campaign before the 2026-09-11 fixes, and the one that produced the evidence for
+them. It reported clean, and two real defects were nonetheless present in its output:
+
+- **267 artifact files** — 261 `slow-unit` + 6 `timeout`, no crash/oom/leak. **248 of 248**
+  generator-driven ones select `blockSize=16`; worst case 14.1 s from a 9-byte input,
+  reproducible single-threaded. Root cause: `writeFramesAcc`'s tail-append, `Θ(E·F)`.
+  The remaining 19 replay in 0.21–2.5 s and were genuine core contention.
+- **`emit_si_bps` = 11,532 hits, 1062 dumped reproducers** — RFC 9639 Table 3 violations
+  emitted by the *checked* encoder, catalogued by a clause the target had carried all along.
+
+Both were invisible to the pass/fail gate because neither is an abort: catalogue-by-default
+turns a finding into a counter. After a campaign, read the divergence columns and
+`artifacts/`, not only the crash count.
+
+## 2026-09-08 — 72 h all-target campaign: `official` 66 h + `contract` 6 h
 
 | field | value |
 |---|---|

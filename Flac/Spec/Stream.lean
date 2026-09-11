@@ -469,7 +469,7 @@ theorem frameCostTotal_le (frs : List (List (List Int))) (ch n : Nat)
 theorem readStreamInfo_writeStreamInfo (bs sr ch b total md5 : Nat)
     (tail : BitStream) (hbs : bs < 2 ^ 16) (hsr : sr < 2 ^ 20)
     (hch1 : 1 ≤ ch) (hch8 : ch ≤ 8)
-    (hb1 : 1 ≤ b) (hb2 : b ≤ 32) (htot : total < 2 ^ 36) :
+    (hb1 : 4 ≤ b) (hb2 : b ≤ 32) (htot : total < 2 ^ 36) :
     readStreamInfo (writeStreamInfo bs sr ch b total md5 ++ tail)
       = some (⟨bs, bs, sr, ch, b, total⟩, tail) := by
   simp only [writeStreamInfo, readStreamInfo, List.append_assoc,
@@ -479,14 +479,15 @@ theorem readStreamInfo_writeStreamInfo (bs sr ch b total md5 : Nat)
     readBits_writeBits _ _ _ (show ch - 1 < 2 ^ 3 by omega),
     readBits_writeBits _ _ _ (by omega : b - 1 < 2 ^ 5),
     readBits_writeBits _ _ _ htot,
-    readBits_writeBits_append 128 md5,
-    Option.some.injEq, Prod.mk.injEq, Info.mk.injEq]
+    readBits_writeBits_append 128 md5]
+  rw [if_pos (by omega : 4 ≤ b - 1 + 1)]
+  simp only [Option.some.injEq, Prod.mk.injEq, Info.mk.injEq]
   refine ⟨⟨trivial, trivial, trivial, by omega, by omega, trivial⟩, trivial⟩
 
 theorem readMeta_spec (fuel : Nat) (bs sr ch b total md5 : Nat)
     (tail : BitStream) (hbs : bs < 2 ^ 16) (hsr : sr < 2 ^ 20)
     (hch1 : 1 ≤ ch) (hch8 : ch ≤ 8)
-    (hb1 : 1 ≤ b) (hb2 : b ≤ 32) (htot : total < 2 ^ 36) :
+    (hb1 : 4 ≤ b) (hb2 : b ≤ 32) (htot : total < 2 ^ 36) :
     readMeta fuel (writeBits 1 1 ++ (writeBits 7 0 ++ (writeBits 24 34 ++
         (writeStreamInfo bs sr ch b total md5 ++ tail))))
       = some (⟨bs, bs, sr, ch, b, total⟩, tail) := by
@@ -709,7 +710,8 @@ theorem decodeReference_encode (cfg : EncoderCfg) (a : Audio)
       exact hfit corig hcorig x (hsub x hx)
     exact ⟨h3, by omega,
       orVerbatim_valid (by omega) h2 (by omega) (by omega) hfitfr, hfitfr⟩
-  have hcap := encode_cost_le_budget cfg a hch1 hch8 hb1 heq' hfit hbs1 hbs2
+  have hb1' : 1 ≤ a.bps := by omega
+  have hcap := encode_cost_le_budget cfg a hch1 hch8 hb1' heq' hfit hbs1 hbs2
   unfold Unchecked.encode decodeReference
   rw [bytesToBits_bitsToBytes _ (writeStream_length_dvd cfg a)]
   unfold writeStream

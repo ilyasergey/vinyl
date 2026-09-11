@@ -29,14 +29,15 @@
 static unsigned long g_execs, g_gen_ok, g_streams_checked;
 /* Per-clause violation counts (streams, or frames where noted). */
 static unsigned long g_sr_code0, g_bps_code0, g_bs_code67, g_si_block_bad, g_si_bps_bad,
-    g_si_varblock_bad, g_no_frames;
+    g_si_bps_oos, g_si_varblock_bad, g_no_frames;
 
 static void report(FILE *o) {
   fprintf(o,
           "[emit] execs=%lu gen_ok=%lu checked=%lu | frame_sr_code0=%lu frame_bps_code0=%lu "
-          "bs_code6or7=%lu | §8.2 block_bad=%lu bps_bad=%lu varblock_bad=%lu no_frames=%lu\n",
+          "bs_code6or7=%lu | §8.2 block_bad=%lu bps_bad=%lu (MUST be 0) bps_oos_skipped=%lu "
+          "varblock_bad=%lu no_frames=%lu\n",
           g_execs, g_gen_ok, g_streams_checked, g_sr_code0, g_bps_code0, g_bs_code67, g_si_block_bad,
-          g_si_bps_bad, g_si_varblock_bad, g_no_frames);
+          g_si_bps_bad, g_si_bps_oos, g_si_varblock_bad, g_no_frames);
 }
 
 FUZZ_TARGET(.name = "fz_emit_conformance",
@@ -83,8 +84,15 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     g_si_block_bad++;
     fatal |= strict_abort("emit_si_block", flac, flen, "STREAMINFO block-size bounds violate §8.2");
   }
-  /* Table 3: 4 ≤ bps ≤ 32. */
-  if (si_bps < 4 || si_bps > 32) {
+  /* Table 3: 4 ≤ bps ≤ 32. Only meaningful when the generator asked for a depth
+   * that HAS a conforming encoding: this lane drives Stream.Unchecked.encode,
+   * which by contract does not validate, so a bps<4 request faithfully emits a
+   * bps<4 STREAMINFO and that is the caller's error, not the emitter's. The
+   * checked entry points reject it -- Audio.WellFormed carries `4 ≤ bps`, which
+   * is what closes the gap this counter used to catalogue by the thousand. */
+  if (gp.bps < 4 || gp.bps > 32) {
+    g_si_bps_oos++;
+  } else if (si_bps < 4 || si_bps > 32) {
     g_si_bps_bad++;
     fatal |= strict_abort("emit_si_bps", flac, flen, "STREAMINFO bps outside [4,32] (Table 3)");
   }

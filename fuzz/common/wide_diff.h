@@ -1,8 +1,9 @@
 /* wide_diff.h -- the ANY-DEPTH sample-level differential, the fix for the codec's
  * 16-bit-only test blind spot: the whole rig otherwise tests only at
- * 16 bits while the codec claims 1-32. This oracle compares decoded SAMPLES
- * (int planes), not s16le bytes, so it works at every bit depth libFLAC can
- * emit (4-32). It is additive: a new module + target, touching no existing one.
+ * 16 bits while the codec claims 4-32 (RFC 9639 Table 3, `Audio.WellFormed`).
+ * This oracle compares decoded SAMPLES (int planes), not s16le bytes, so it
+ * works at every bit depth libFLAC can emit (4-32). It is additive: a new
+ * module + target, touching no existing one.
  *
  * Vinyl side: Flac.Decode.decodeArrays (any depth) -> List (Array Int); a sample
  *   that arrives as a GMP bignum (does not fit int64) is flagged `overflow` and

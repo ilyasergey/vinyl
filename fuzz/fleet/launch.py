@@ -131,8 +131,23 @@ def run_fleet(campaign: str, seconds: int, run_root: Path | None = None) -> int:
         raise FileNotFoundError(f"campaign {campaign}: binaries not built: {', '.join(missing)} "
                                 f"(run `make` in {FUZZ_ROOT})")
     ts = time.strftime("%Y%m%d_%H%M%S")
-    root = run_root or (FUZZ_ROOT / "runs" / ts)
-    root.mkdir(parents=True, exist_ok=True)
+    if run_root:
+        root = run_root
+        root.mkdir(parents=True, exist_ok=True)
+    else:
+        # Two campaigns launched in the same second (e.g. a small one run
+        # alongside another) would otherwise share a run dir, and the second to
+        # finish would overwrite the first's SUMMARY.md. Claim the directory
+        # exclusively and suffix on collision.
+        base = FUZZ_ROOT / "runs" / ts
+        root, n = base, 1
+        while True:
+            try:
+                root.mkdir(parents=True, exist_ok=False)
+                break
+            except FileExistsError:
+                root = base.with_name(f"{base.name}-{n}")
+                n += 1
     shutil.copy(FLEET_TOML, root / "fleet.snapshot.toml")
     report.write_build_info(root)
 
